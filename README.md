@@ -74,6 +74,9 @@ Being straight with you, because you will find these anyway:
 
 ## Playing it
 
+**Full instructions, including how to remove it again, are in
+[INSTALL.md](INSTALL.md).** The short version:
+
 **You need to own Arx Fatalis.** This mod contains no game content at all -
 no art, no sound, no levels. Buy it on
 [GOG](https://www.gog.com/game/arx_fatalis) or
