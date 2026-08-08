@@ -53,3 +53,6 @@ git hub pic/
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# Packaged releases - these go on the GitHub releases page, not in the repo
+release/
