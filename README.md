@@ -19,15 +19,16 @@ the open source version of Arkane Studios' *Arx Fatalis*.
 
 Arx Fatalis is a single player game. This makes it a two player one.
 
-You start in the same cell, wake up in the same world, and play through it
-together - the same dungeon, the same story, the same monsters, at the same
-time. One of you hosts, the other joins.
+You can join anywhere in the game, not just at the beginning - whatever point
+the host is at, you turn up there and carry on together.
+
+One warning: if you join partway through for the first time, your character is
+still level 1, and you will be dropped somewhere you are not ready for. Starting
+from the beginning together is much better.
 
 ![Waking up together](docs/screenshots/waking-up.png)
 
 ## Honest words about who made this
-
-I made this for fun, and because I wanted to play Arx with a friend.
 
 **I do not know how to code.** I built this by working with AI, step by step,
 over a long time - testing, breaking things, finding out why, and going again.
@@ -48,7 +49,8 @@ last one is worth more than you would think.
 
 ## What Properly works
 
-- **Playing the whole game together** - one hosts, one joins, both play
+- **Playing the whole game together** - though nobody has finished a full
+  playthrough yet, so treat that as untested rather than proven
 - **Seeing each other** - position, animation, the weapon in their hand
 - **Fighting together** - creatures notice both of you and fight both of you
 - **Items** - picking up, dropping, throwing, carrying

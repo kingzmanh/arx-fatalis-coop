@@ -10,7 +10,9 @@
 #include <al.h>
 #include <alc.h>
 
+#if ARX_HAVE_OPUS
 #include <opus.h>
+#endif
 
 #include "core/Config.h"
 #include "core/GameTime.h"
@@ -24,6 +26,35 @@
 
 namespace coop {
 namespace voice {
+
+#if !ARX_HAVE_OPUS
+
+/*
+ * Built without Opus, so there is no voice chat. Everything still answers, and
+ * answers honestly: the menu shows why rather than offering a switch that does
+ * nothing, and no microphone is ever opened.
+ */
+bool start() { return false; }
+void stop() { }
+void update() { }
+void onPacket(const u8 *, size_t) { }
+bool enabled() { return false; }
+void setEnabled(bool) { }
+bool openMic() { return false; }
+void setOpenMic(bool) { }
+bool transmitting() { return false; }
+void setTesting(bool) { }
+bool testing() { return false; }
+float level() { return 0.f; }
+int deviceCount() { return 0; }
+const char * deviceName(int) { return "NONE"; }
+int device() { return -1; }
+void setDevice(int) { }
+int nextDevice() { return -1; }
+bool available() { return false; }
+const char * problem() { return "BUILT WITHOUT VOICE CHAT"; }
+
+#else
 
 namespace {
 
@@ -682,6 +713,8 @@ bool available() {
 const char * problem() {
 	return g_problem;
 }
+
+#endif // ARX_HAVE_OPUS
 
 } // namespace voice
 } // namespace coop

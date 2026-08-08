@@ -415,11 +415,25 @@ if(PC_Opus_FOUND)
 else()
 	find_path(OPUS_INCLUDE_DIR opus/opus.h)
 	find_library(OPUS_LIBRARY NAMES opus)
-	if(NOT OPUS_INCLUDE_DIR OR NOT OPUS_LIBRARY)
-		message(FATAL_ERROR "Opus not found - needed for co-op voice chat")
+	if(OPUS_INCLUDE_DIR AND OPUS_LIBRARY)
+		include_directories(SYSTEM "${OPUS_INCLUDE_DIR}/opus")
+		list(APPEND ARX_LIBRARIES ${OPUS_LIBRARY})
+		set(ARX_HAVE_OPUS 1)
 	endif()
-	include_directories(SYSTEM "${OPUS_INCLUDE_DIR}/opus")
-	list(APPEND ARX_LIBRARIES ${OPUS_LIBRARY})
+endif()
+
+# Voice chat is a nicety, not a requirement. Without Opus the rest of the game
+# and all of the co-op still build - the microphone simply stays shut. Making
+# it fatal meant an optional feature could stop the whole thing compiling on a
+# machine that had every dependency that actually matters.
+if(PC_Opus_FOUND)
+	set(ARX_HAVE_OPUS 1)
+endif()
+if(ARX_HAVE_OPUS)
+	add_definitions(-DARX_HAVE_OPUS=1)
+else()
+	message(STATUS "Opus not found - building without co-op voice chat")
+	add_definitions(-DARX_HAVE_OPUS=0)
 endif()
 
 # FreeType
