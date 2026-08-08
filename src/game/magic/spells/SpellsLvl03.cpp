@@ -44,6 +44,8 @@
 #include "scene/Object.h"
 
 #include "util/Cast.h"
+#include "net/CoopNet.h"
+#include "net/CoopPlayer.h"
 
 
 SpeedSpell::SpeedTrail::SpeedTrail(VertexId vertex)
@@ -193,6 +195,10 @@ void FireballSpell::Launch() {
 			const Vec3f & end = entityTarget->pos;
 			float d = glm::distance(getXZ(end), getXZ(start));
 			anglea = glm::degrees(getAngle(start.y, start.z, end.y, end.z + d));
+		} else if(coop::isAvatarEntity(caster)) {
+			// The other player's aim has a vertical component their body
+			// angle carries; without it their fireballs fly level here.
+			anglea = coop::avatar().angle.getPitch();
 		}
 		angleb = caster->angle.getYaw();
 	}
@@ -252,6 +258,8 @@ void FireballSpell::Update() {
 				p2.y -= 60.f;
 				float d = glm::distance(getXZ(p2), getXZ(*p1));
 				afAlpha = 360.f - (glm::degrees(getAngle(p1->y, p1->z, p2.y, p2.z + d)));
+			} else if(coop::isAvatarEntity(caster)) {
+				afAlpha = coop::avatar().angle.getPitch();
 			}
 			
 		}
@@ -320,9 +328,14 @@ void CreateFoodSpell::Launch() {
 	
 	if(m_caster == EntityHandle_Player || m_target == EntityHandle_Player) {
 		player.hunger = 100;
+	} else if(coop::isAvatarEntity(entities.get(m_caster))
+	          || coop::isAvatarEntity(entities.get(m_target))) {
+		// The stomach this fills is on the other machine.
+		coop::reportPartnerEffect(coop::PartnerFxFillHunger, 100.f);
 	}
 	
-	m_pos = player.pos;
+	m_pos = (m_caster == EntityHandle_Player) ? player.pos
+	        : (entities.get(m_caster) ? entities.get(m_caster)->pos : player.pos);
 	
 	m_particles.SetPos(m_pos);
 	
@@ -333,7 +346,11 @@ void CreateFoodSpell::End() { }
 
 void CreateFoodSpell::Update() {
 	
-	m_pos = entities.player()->pos;
+	if(Entity * caster = entities.get(m_caster); caster && caster != entities.player()) {
+		m_pos = caster->pos;
+	} else {
+		m_pos = entities.player()->pos;
+	}
 	
 	GameDuration timeRemaining = m_duration - m_elapsed;
 	

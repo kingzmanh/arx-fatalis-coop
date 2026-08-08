@@ -50,6 +50,7 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 #include <boost/algorithm/string/predicate.hpp>
 
 #include "game/Entity.h"
+#include "net/CoopPlayer.h"
 #include "platform/Platform.h"
 #include "util/String.h"
 
@@ -147,6 +148,16 @@ Entity * EntityManager::getById(std::string_view idString, Entity * self) const 
 		return self;
 	}
 	if(idString == "player") {
+		/*
+		 * During script execution caused by the other co-op player - stepping
+		 * into a trigger zone, striking something - the word means them: the
+		 * script is describing what happens to whoever did it, and whoever did
+		 * it is not this machine's player. Everywhere else it keeps its
+		 * original meaning.
+		 */
+		if(Entity * partner = coop::scriptContextPlayer()) {
+			return partner;
+		}
 		return player();
 	}
 	

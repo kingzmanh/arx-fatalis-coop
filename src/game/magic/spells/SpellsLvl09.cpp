@@ -37,6 +37,8 @@
 #include "physics/Collisions.h"
 #include "scene/GameSound.h"
 #include "scene/Interactive.h"
+#include "net/CoopNet.h"
+#include "net/CoopPlayer.h"
 
 void SummonCreatureSpell::GetTargetAndBeta(Vec3f & target, float & beta) {
 	
@@ -163,6 +165,13 @@ void SummonCreatureSpell::Update() {
 		
 		m_requestSummon = false;
 		ARX_SOUND_PlaySFX(g_snd.SPELL_ELECTRIC, &m_targetPos);
+
+		if(coop::isReplica()) {
+			// Only the authority brings creatures into a shared area; the
+			// real one arrives through entity replication a beat later, and
+			// a locally invented copy would exist on this screen alone.
+			return;
+		}
 		
 		Cylinder phys = Cylinder(m_targetPos, 50, -200);
 		
@@ -398,7 +407,8 @@ void NegateMagicSpell::LaunchAntiMagicField() {
 		
 		if(closerThan(spell.getPosition(), target->pos, 600.f)) {
 			if(spell.m_type != SPELL_CREATE_FIELD
-			   || (target == entities.player() && spell.m_caster == EntityHandle_Player)) {
+			   || ((target == entities.player() || coop::isAvatarEntity(target))
+			       && spell.m_caster == EntityHandle_Player)) {
 				spells.endSpell(&spell);
 			}
 		}

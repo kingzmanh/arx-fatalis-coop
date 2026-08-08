@@ -135,6 +135,10 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 #include "math/Rectangle.h"
 #include "math/Vector.h"
 
+#include "net/CoopNet.h"
+#include "net/CoopPlayer.h"
+#include "net/CoopWorld.h"
+
 #include "physics/Attractors.h"
 
 #include "io/fs/FilePath.h"
@@ -1066,6 +1070,12 @@ void ArxGame::onDroppedFile(const Window & /* window */, const fs::path & path) 
 	g_saveToLoad = path;
 }
 
+void ARX_RequestLoadSaveFile(const fs::path & savefile) {
+	// The same door drag-and-drop uses: queue the file, the frame loop loads
+	// it - from the menu or from inside a game, the engine's own way.
+	g_saveToLoad = savefile;
+}
+
 /*!
  * \brief Message-processing loop. Idle time is used to render the scene.
  */
@@ -1076,14 +1086,24 @@ void ArxGame::run() {
 		ARX_PROFILE(Main Loop);
 		
 		platform::reapZombies();
-		
-		if(m_MainWindow->isVisible() && !m_MainWindow->isMinimized() && m_bReady) {
+
+		/*
+		 * Normally the game sleeps on the event queue while its window is
+		 * hidden, since nobody is watching. That is exactly wrong during a
+		 * co-op session: the other player is still playing, and a host that
+		 * stops running is a host that stops answering, so their world would
+		 * freeze the moment this one alt-tabbed away. While a session is up we
+		 * keep stepping regardless of whether anyone here is looking.
+		 */
+		bool onScreen = m_MainWindow->isVisible() && !m_MainWindow->isMinimized();
+
+		if(m_bReady && (onScreen || coop::isActive())) {
 			doFrame();
 			m_MainWindow->processEvents(/*waitForEvent = */false);
 		} else {
 			m_MainWindow->processEvents(/*waitForEvent = */true);
 		}
-		
+
 	}
 	
 	benchmark::begin(benchmark::Shutdown);
@@ -1125,7 +1145,26 @@ void ArxGame::doFrame() {
 	}
 	
 	ARX_PROFILE_FUNC();
-	
+
+	/*
+	 * A fullscreen window minimises itself when it loses focus, which would
+	 * hide the game behind the check in run() above and stop it dead. Suppress
+	 * that for as long as a session is running, and put the player's own
+	 * preference back when it ends.
+	 */
+	{
+		static bool suppressingMinimize = false;
+		bool suppress = coop::isActive();
+		if(suppress != suppressingMinimize) {
+			suppressingMinimize = suppress;
+			m_MainWindow->setMinimizeOnFocusLost(suppress ? false : config.window.minimizeOnFocusLost);
+		}
+	}
+
+	// Take delivery of everything the other player sent before this frame reads
+	// any of it, so a frame never sees half of an update.
+	coop::poll();
+
 	updateTime();
 
 	updateInput();
@@ -1158,7 +1197,8 @@ void ArxGame::doFrame() {
 	           && GInput->actionPressed(CONTROLS_CUST_JUMP)))) {
 		// TODO allow binding the same key to multiple actions so that we can have a separate binding for this
 		benchmark::begin(benchmark::LoadLevel);
-		LogDebug("teleport to " << g_teleportToArea << " " << TELEPORT_TO_POSITION << " " << TELEPORT_TO_ANGLE);
+		LogWarning << "[coop-chain] consuming travel: area " << g_teleportToArea
+		           << " target '" << TELEPORT_TO_POSITION << "'";
 		CHANGE_LEVEL_ICON = NoChangeLevel;
 		ARX_CHANGELEVEL_Change(g_teleportToArea, TELEPORT_TO_POSITION, float(TELEPORT_TO_ANGLE));
 		g_teleportToArea = { };
@@ -1214,6 +1254,61 @@ void ArxGame::doFrame() {
 		cinematicLaunchWaiting();
 		render();
 		m_MainWindow->showFrame();
+	}
+
+	// Publish this frame's results last, so what the other player receives is
+	// the world as it stands after everything has moved, not halfway through.
+	coop::flush();
+
+	/*
+	 * Render probe. A black screen has four usual suspects - nothing drawn, a
+	 * stuck fade, a paused clock, a lost camera - and they are indistinguishable
+	 * from a screenshot. One log line every few seconds names the culprit
+	 * outright instead of leaving it to guesswork.
+	 */
+	if(coop::isActive()) {
+
+		/*
+		 * Stuck-fade breaker.
+		 *
+		 * Level scripts black the screen out with `worldfade out` and fade it
+		 * back in from a script timer a moment later. A guest sharing the
+		 * host's area does not run script timers - that is what keeps it from
+		 * simulating the world twice - so it would get the fade out and wait
+		 * forever for a fade in that is never coming. No legitimate fade lasts
+		 * anywhere near this long; one that does is a curtain nobody is going
+		 * to raise, so raise it ourselves.
+		 */
+		static PlatformInstant fadeOutSince = 0;
+		PlatformInstant now = platform::getTime();
+		if(FADEDIR == -1) {
+			if(fadeOutSince == 0) {
+				fadeOutSince = now;
+			} else if(now - fadeOutSince > 5s) {
+				LogWarning << "[coop] a fade to black was never faded back in; clearing it";
+				fadeReset();
+				fadeOutSince = 0;
+			}
+		} else {
+			fadeOutSince = 0;
+		}
+
+		static PlatformInstant lastProbe = 0;
+		if(now - lastProbe > 5s) {
+			lastProbe = now;
+			RoomHandle camRoom = ARX_PORTALS_GetRoomNumForPosition(g_playerCamera.m_pos, RoomPositionForCamera);
+			LogInfo << "[coop-render] polys=" << EERIEDrawnPolys
+			        << " campos=" << g_playerCamera.m_pos.x << "," << g_playerCamera.m_pos.y
+			        << "," << g_playerCamera.m_pos.z
+			        << " camroom=" << camRoom
+			        << " zclip=" << g_currentFogParameters.zclip
+			        << " cdepth=" << g_playerCamera.cdepth
+			        << " fade=" << FADEDIR
+			        << " paused=" << u32(g_gameTime.isPaused())
+			        << " menumode=" << int(ARXmenu.mode())
+			        << " levelinit=" << g_requestLevelInit
+			        << " area=" << g_currentArea;
+		}
 	}
 }
 
@@ -1447,7 +1542,8 @@ void ArxGame::handlePlayerDeath() {
 		GameDuration startTime = 2s;
 		GameDuration endTime = 7s;
 
-		float DeadCameraDistance = startDistance + (mdist - startDistance) * ((player.DeadTime - startTime) / (endTime - startTime));
+		float deathProgress = glm::clamp((player.DeadTime - startTime) / (endTime - startTime), 0.f, 1.f);
+		float DeadCameraDistance = startDistance + (mdist - startDistance) * deathProgress;
 		
 		VertexId id  = entities.player()->obj->fastaccess.view_attach;
 		Vec3f targetpos = id ? entities.player()->obj->vertexWorldPositions[id].v : player.pos;
@@ -1603,9 +1699,19 @@ void ArxGame::updateLevel() {
 	arx_assert(entities.player());
 	
 	ARX_PROFILE_FUNC();
-	
+
 	g_renderBatcher.clear();
-	
+
+	/*
+	 * When we are the guest and the host is standing in the same area, that
+	 * area is theirs to run. Giving every enemy in it a second brain here would
+	 * produce two versions of the same fight that disagree with each other, so
+	 * the local simulation of the world steps aside and the replicated state
+	 * takes its place. Everything about our own character - movement, camera,
+	 * inventory, spells - keeps running normally either way.
+	 */
+	const bool worldIsRemote = coop::isReplica();
+
 	if(!player.m_paralysed) {
 		manageEditorControls();
 
@@ -1613,7 +1719,7 @@ void ArxGame::updateLevel() {
 			managePlayerControls();
 		}
 	}
-	
+
 	{
 		ARX_PROFILE("Entity preprocessing");
 		
@@ -1683,7 +1789,16 @@ void ArxGame::updateLevel() {
 	}
 
 	updateFirstPersonCamera();
-	
+
+	/*
+	 * Script timers run on replicas too. The levels drive their own player
+	 * rituals through them - hole arrivals teleport via a 50ms timer, fades,
+	 * invulnerability windows, cutscene sequencing - and a guest with frozen
+	 * timers is left stranded mid-ritual (parked on the void marker above the
+	 * crypt, stuck under a fade that never comes back). Whatever a local timer
+	 * does to world entities is reconciled by the host's snapshots, the same
+	 * as script events, which always ran on replicas.
+	 */
 	ARX_SCRIPT_Timer_Check();
 
 	speechControlledCinematic();
@@ -1713,9 +1828,22 @@ void ArxGame::updateLevel() {
 		ARX_INTERACTIVE_Show_Hide_1st(entities.player(), true);
 	}
 	
+	// Give the other player a body, move it to where they say they are, and
+	// play whatever they are playing. Done before the treat zone is built so
+	// that the body is already in place when the zone is decided.
+	coop::updateAvatar();
+
 	PrepareIOTreatZone();
-	ARX_PHYSICS_Apply();
-	
+
+	if(!worldIsRemote) {
+		ARX_PHYSICS_Apply();
+	} else {
+		coop::smoothReplicatedEntities();
+		// Still run the physics here, but only over what this player owns -
+		// ARX_PHYSICS_Apply() skips the rest of the world when replicating.
+		ARX_PHYSICS_Apply();
+	}
+
 	PrecalcIOLighting(g_camera->m_pos, g_camera->cdepth * 0.6f);
 	
 	ARX_SCENE_Update();
@@ -1724,7 +1852,9 @@ void ArxGame::updateLevel() {
 
 	ARX_FOGS_Render();
 
-	TreatBackgroundActions();
+	if(!worldIsRemote) {
+		TreatBackgroundActions();
+	}
 
 	// Checks Magic Flares Drawing
 	if(!player.m_paralysed) {
@@ -1876,6 +2006,7 @@ void ArxGame::renderLevel() {
 	   !BLOCK_PLAYER_CONTROLS &&
 	   !(player.Interface & INTER_PLAYERBOOK)) {
 		g_miniMap.showPlayerMiniMap(getMapLevelForArea(g_currentArea));
+		coop::drawPartnerHud();
 	}
 	
 	ARX_INTERFACE_RenderCursor(false);
@@ -1996,12 +2127,30 @@ void ArxGame::render() {
 	
 	if(ARXmenu.mode() == Mode_InGame) {
 		ARX_SCRIPT_AllowInterScriptExec();
-		ARX_SCRIPT_EventStackExecute();
-		// Updates Damages Spheres
-		ARX_DAMAGES_UpdateAll();
-		ARX_MISSILES_Update();
+		/*
+		 * Script side effects, damage fields and zone triggers all belong to
+		 * whoever owns the area. Running them on a guest as well would fire
+		 * every trap twice and burn the guest with their own copy of a fire
+		 * field the host is already burning them with.
+		 */
+		if(!coop::isReplica()) {
+			ARX_SCRIPT_EventStackExecute();
+			// Updates Damages Spheres
+			ARX_DAMAGES_UpdateAll();
+			ARX_MISSILES_Update();
 
-		ARX_PATH_UpdateAllZoneInOutInside();
+			ARX_PATH_UpdateAllZoneInOutInside();
+		} else {
+			/*
+			 * A replica does not run OTHER entities' zones - but its own
+			 * player's crossings run locally, the same vanilla path the host
+			 * uses for itself. Doors and their travel never touch the wire.
+			 * The report still goes out so the authority fires the zone for
+			 * this player's story and AI purposes too.
+			 */
+			ARX_PATH_UpdatePlayerZone();
+			coop::reportLocalZone();
+		}
 	}
 
 	LastMouseClick = EERIEMouseButton;

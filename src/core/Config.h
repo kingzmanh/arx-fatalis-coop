@@ -79,6 +79,8 @@ enum ControlAction {
 	CONTROLS_CUST_TOGGLE_FULLSCREEN,
 	CONTROLS_CUST_CONSOLE,
 	CONTROLS_CUST_DEBUG,
+	//! Hold to speak to the other player. Added last so no existing binding moves.
+	CONTROLS_CUST_COOP_TALK,
 	NUM_ACTION_KEY
 };
 

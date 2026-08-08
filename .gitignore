@@ -1,7 +1,55 @@
-.*
-!.gitignore
-!.editorconfig
-!/.mailmap
-!/.travis.yml
-!/.github
-/build
+# The game's own content. NEVER commit this.
+#
+# The code in this repository is free software and may be shared. Arx Fatalis'
+# art, sound, levels and speech are Arkane Studios' and may not. Players must
+# use their own copy of the game. Committing any of it here is the one mistake
+# that could get this repository taken down - and because git keeps history,
+# deleting it afterwards would not undo it.
+game/
+data/
+*.pak
+*.ftl
+*.tea
+*.dlf
+*.fts
+*.llf
+
+# Build output
+build/
+*.exe
+*.dll
+*.o
+*.obj
+*.a
+*.lib
+
+# Local snapshots and older working copies - large, and history covers it now
+backups/
+best/
+best-2/
+best-3/
+best-4/
+*.rar
+*.zip
+*.7z
+
+# Working files that mean nothing on anyone else's machine
+*.log
+arx.log
+cfg.ini
+*.sav
+coop-profile-*.bin
+coop-transfer.sav
+
+# The screenshots live in docs/screenshots; this is the folder they came from
+git hub pic/
+
+# Editors and operating systems
+.vs/
+.vscode/
+.idea/
+*.swp
+*~
+Thumbs.db
+desktop.ini
+.DS_Store

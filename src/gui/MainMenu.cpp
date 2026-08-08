@@ -71,6 +71,10 @@
 
 #include "io/log/Logger.h"
 
+#include "net/CoopNet.h"
+#include "net/CoopVoice.h"
+#include "net/CoopProtocol.h"
+
 #include "platform/Platform.h"
 
 #include "scene/GameSound.h"
@@ -1560,12 +1564,20 @@ public:
 	
 protected:
 	
-	void addControlRow(ControlAction controlAction, std::string_view text) {
+	/*
+	 *  fallback is used when the key is not in the locale files at all,
+	 * which is the case for anything this mod adds - the original game never
+	 * had a word for it in any language.
+	 */
+	void addControlRow(ControlAction controlAction, std::string_view text,
+	                   std::string_view fallback = std::string_view()) {
 		
 		auto panel = std::make_unique<PanelWidget>();
 		
 		{
-			auto txt = std::make_unique<TextWidget>(hFontControls, getLocalised(text));
+			std::string_view label = fallback.empty() ? getLocalised(text)
+			                                          : getLocalised(text, fallback);
+			auto txt = std::make_unique<TextWidget>(hFontControls, label);
 			txt->setEnabled(false);
 			panel->add(std::move(txt));
 		}
@@ -1657,6 +1669,8 @@ public:
 		addControlRow(CONTROLS_CUST_LOOKDOWN,     "system_menus_options_input_customize_controls_look_down");
 		
 		addControlRow(CONTROLS_CUST_MINIMAP,      "system_menus_options_input_customize_controls_minimap");
+		addControlRow(CONTROLS_CUST_COOP_TALK,   "system_menus_options_input_customize_controls_coop_talk",
+		              "Talk to partner");
 		
 		if(config.input.allowConsole) {
 			addControlRow(CONTROLS_CUST_CONSOLE, "system_menus_options_input_customize_controls_console");
@@ -1743,6 +1757,377 @@ public:
 	
 };
 
+/*!
+ * Host or join a two player game.
+ *
+ * Everything here is deliberately one screen with no wizard: hosting is one
+ * click, joining is an address and one click. The line at the bottom is a live
+ * readout rather than a one-shot message, because connecting happens over
+ * several seconds and without it a player who mistyped an address would sit
+ * looking at an unchanged menu wondering whether anything was happening.
+ */
+class CoopMenuPage final : public MenuPage {
+
+	TextInputWidget * m_address = nullptr;
+	TextInputWidget * m_port = nullptr;
+	TextWidget * m_hostButton = nullptr;
+	TextWidget * m_joinButton = nullptr;
+	TextWidget * m_leaveButton = nullptr;
+	CheckboxWidget * m_portCheckbox = nullptr;
+	CheckboxWidget * m_micTest = nullptr;
+	TextWidget * m_micMeter = nullptr;
+	TextWidget * m_micDevice = nullptr;
+	TextWidget * m_portLabel = nullptr;
+
+	/*
+	 * Most people never need to think about the port. Playing over a virtual
+	 * LAN - Radmin, Hamachi, ZeroTier - there is nothing to forward and nothing
+	 * to choose: type the address your friend's VPN gave them and go. The port
+	 * box only earns its place when the standard one is taken or a router was
+	 * set up by hand, so it starts switched off and out of the way.
+	 */
+	bool m_customPort = false;
+
+public:
+
+	CoopMenuPage()
+		: MenuPage(Page_Coop)
+	{ }
+
+	void init() override {
+
+		reserveTop();
+		reserveBottom();
+
+		{
+			auto txt = std::make_unique<TextWidget>(hFontMenu, "CO-OPERATIVE PLAY");
+			txt->setEnabled(false);
+			addCenter(std::move(txt));
+		}
+
+		{
+			auto txt = std::make_unique<TextWidget>(hFontControls, "IP address");
+			txt->setEnabled(false);
+			txt->forceDisplay(TextWidget::Disabled);
+			addCenter(std::move(txt));
+		}
+
+		{
+			auto txt = std::make_unique<TextInputWidget>(hFontMenu, "127.0.0.1", m_rect);
+			txt->setMaxLength(64);
+			m_address = txt.get();
+			addCenter(std::move(txt));
+		}
+
+		{
+			// The label is its own centred line, like every other label on this
+			// page, and it says which way the switch is currently set. A
+			// checkbox given the page's full width - which is what the options
+			// menu wants - would push the words to the far left and the box to
+			// the far right, with the room between them empty.
+			auto txt = std::make_unique<TextWidget>(hFontControls, portLabelText(false));
+			txt->clicked = [this](Widget * /* widget */) {
+				if(m_portCheckbox && m_portCheckbox->isEnabled()) {
+					m_portCheckbox->setChecked(!m_portCheckbox->checked());
+					setCustomPort(m_portCheckbox->checked());
+				}
+			};
+			m_portLabel = txt.get();
+			addCenter(std::move(txt));
+		}
+
+		{
+			float box = checkboxSize().y;
+			auto cb = std::make_unique<CheckboxWidget>(Vec2f(box, box), hFontControls, "");
+			cb->setChecked(false);
+			cb->stateChanged = [this](bool checked) {
+				setCustomPort(checked);
+			};
+			m_portCheckbox = cb.get();
+			addCenter(std::move(cb));
+		}
+
+		{
+			auto txt = std::make_unique<TextInputWidget>(hFontMenu,
+			                                             std::to_string(coop::DefaultPort), m_rect);
+			txt->setMaxLength(5);
+			m_port = txt.get();
+			addCenter(std::move(txt));
+		}
+
+		{
+			/*
+			 * Voice, and how it opens. Both live here rather than in the audio
+			 * options because they only mean anything with another player in
+			 * the world, and this is the page you are on when you invite one.
+			 */
+			auto cb = std::make_unique<CheckboxWidget>(checkboxSize(), hFontControls,
+			                                           "VOICE CHAT");
+			cb->setChecked(coop::voice::enabled());
+			cb->stateChanged = [](bool checked) {
+				coop::voice::setEnabled(checked);
+			};
+			addCenter(std::move(cb));
+		}
+
+		{
+			auto cb = std::make_unique<CheckboxWidget>(checkboxSize(), hFontControls,
+			                                           "OPEN MIC");
+			cb->setChecked(coop::voice::openMic());
+			cb->stateChanged = [](bool checked) {
+				coop::voice::setOpenMic(checked);
+			};
+			addCenter(std::move(cb));
+		}
+
+		{
+			/*
+			 * Somewhere to find out whether the microphone works without having
+			 * to arrange a game first. It opens the microphone on its own and
+			 * shows what it hears; nothing is sent anywhere.
+			 */
+			auto cb = std::make_unique<CheckboxWidget>(checkboxSize(), hFontControls,
+			                                           "MIC TEST");
+			cb->setChecked(coop::voice::testing());
+			cb->stateChanged = [](bool checked) {
+				coop::voice::setTesting(checked);
+			};
+			m_micTest = cb.get();
+			addCenter(std::move(cb));
+		}
+
+		{
+			/*
+			 * The talk key, changeable here rather than only in the controls
+			 * menu. This is the page someone is on when they are setting up
+			 * voice, and being sent to another menu to change the one key that
+			 * matters is exactly the sort of thing that stops people bothering.
+			 */
+			auto panel = std::make_unique<PanelWidget>();
+
+			{
+				auto txt = std::make_unique<TextWidget>(hFontControls, "TALK KEY");
+				txt->setEnabled(false);
+				panel->add(std::move(txt));
+			}
+
+			auto keybind = std::make_unique<KeybindWidget>(CONTROLS_CUST_COOP_TALK, 0,
+			                                              hFontControls);
+			keybind->keyChanged = [](KeybindWidget * bind) {
+				config.setActionKey(bind->action(), bind->index(), bind->key());
+			};
+			keybind->setPosition(RATIO_2(Vec2f(150.f, 0.f)));
+			panel->add(std::move(keybind));
+
+			addCenter(std::move(panel), false);
+		}
+
+		{
+			/*
+			 * Which microphone. Click to move to the next one.
+			 *
+			 * Not a nicety - this machine offers three microphones and all three
+			 * are virtual devices, only one of which carries a voice. Nothing in
+			 * software can tell which, so the player picks and watches the meter.
+			 */
+			auto txt = std::make_unique<TextWidget>(hFontControls, " ");
+			txt->clicked = [this](Widget * /* widget */) {
+				coop::voice::nextDevice();
+				if(!coop::voice::testing()) {
+					// Choosing a microphone means wanting to hear it.
+					coop::voice::setTesting(true);
+					if(m_micTest) {
+						m_micTest->setChecked(true);
+					}
+				}
+			};
+			m_micDevice = txt.get();
+			addCenter(std::move(txt));
+		}
+
+		{
+			// The meter, and the key to hold. Both blank until they matter.
+			auto txt = std::make_unique<TextWidget>(hFontControls, " ");
+			txt->setEnabled(false);
+			txt->forceDisplay(TextWidget::Disabled);
+			m_micMeter = txt.get();
+			addCenter(std::move(txt));
+		}
+
+		{
+			auto txt = std::make_unique<TextWidget>(hFontMenu, "HOST GAME");
+			txt->clicked = [this](Widget * /* widget */) {
+				if(m_port) {
+					m_port->unfocus();
+				}
+				if(m_address) {
+					m_address->unfocus();
+				}
+				coop::startHost(chosenPort());
+			};
+			m_hostButton = txt.get();
+			addCenter(std::move(txt));
+		}
+
+		{
+			auto txt = std::make_unique<TextWidget>(hFontMenu, "JOIN GAME");
+			txt->clicked = [this](Widget * /* widget */) {
+				if(m_address) {
+					m_address->unfocus();
+					if(m_port) {
+						m_port->unfocus();
+					}
+					// An address that already names a port keeps it; otherwise
+					// the port box decides, so the two players only ever have
+					// to agree on one number.
+					std::string address = m_address->text();
+					if(address.find(':') == std::string::npos) {
+						address += ':' + std::to_string(chosenPort());
+					}
+					coop::startClient(address);
+				}
+			};
+			m_joinButton = txt.get();
+			addCenter(std::move(txt));
+		}
+
+		{
+			auto txt = std::make_unique<TextWidget>(hFontMenu, "LEAVE SESSION");
+			txt->clicked = [](Widget * /* widget */) {
+				coop::stop();
+			};
+			m_leaveButton = txt.get();
+			addCenter(std::move(txt));
+		}
+
+		addBackButton(Page_None);
+
+		refresh();
+
+	}
+
+	//! What the line above the box reads, which says which way it is set.
+	static const char * portLabelText(bool on) {
+		return on ? "PORT IS ON" : "PORT ARE DISABLE";
+	}
+
+	//! Switch between the standard port and one the player types.
+	void setCustomPort(bool custom) {
+
+		m_customPort = custom;
+
+		if(m_portLabel) {
+			m_portLabel->setText(portLabelText(custom));
+		}
+
+		if(!custom && m_port) {
+			// Back to the standard port, so nobody is left hosting on a number
+			// they typed and then switched off.
+			m_port->unfocus();
+			m_port->setText(std::to_string(coop::DefaultPort));
+		}
+
+	}
+
+	//! The port typed in the box, or the standard one if it reads as nonsense.
+	unsigned short chosenPort() const {
+
+		if(m_port && m_customPort) {
+			if(auto parsed = util::toInt(m_port->text())) {
+				if(*parsed > 0 && *parsed < 65536) {
+					return static_cast<unsigned short>(*parsed);
+				}
+			}
+		}
+
+		return coop::DefaultPort;
+
+	}
+
+	//! Pulled every frame by the main menu so the readout is actually live.
+	void refresh() {
+
+		bool active = coop::isActive();
+
+		if(m_hostButton) {
+			m_hostButton->setEnabled(!active);
+		}
+		if(m_joinButton) {
+			m_joinButton->setEnabled(!active);
+		}
+		if(m_leaveButton) {
+			m_leaveButton->setEnabled(active);
+		}
+
+		if(m_micDevice) {
+
+			/*
+			 * Device names run long - "Headset Microphone (HyperX Virtual
+			 * Surround Sound)" is fifty characters - and this menu runs off the
+			 * screen well before that, so the tail is what gets kept: the part
+			 * in brackets is what tells two headsets apart.
+			 */
+			std::string name = coop::voice::deviceName(coop::voice::device());
+			const size_t room = 26;
+			if(name.size() > room) {
+				name = ".." + name.substr(name.size() - (room - 2));
+			}
+			m_micDevice->setText(coop::voice::enabled() ? ("MIC: " + name)
+			                                            : std::string(" "));
+
+		}
+
+		if(m_micMeter) {
+
+			/*
+			 * A bar drawn out of blocks, because there is no meter widget and a
+			 * number tells a player nothing. What matters is that it moves when
+			 * they speak - that is the whole question being asked.
+			 */
+			std::string line;
+
+			if(!coop::voice::enabled()) {
+				line = " ";
+			} else if(coop::voice::testing() || active) {
+
+				const char * fault = coop::voice::problem();
+				if(fault && *fault) {
+					line = fault;
+				} else {
+					int filled = int(std::min(1.f, coop::voice::level() * 4.f) * 12.f);
+					line = "[";
+					for(int i = 0; i < 12; i++) {
+						line += (i < filled) ? "|" : ".";
+					}
+					line += "]";
+					if(coop::voice::transmitting()) {
+						line += " SENDING";
+					}
+				}
+
+			} else {
+				// Idle: the key is shown by the binding widget above, so there
+				// is nothing useful to put here.
+				line = " ";
+			}
+
+			m_micMeter->setText(line);
+
+		}
+
+		if(m_portCheckbox) {
+			m_portCheckbox->setEnabled(!active);
+		}
+		if(m_port) {
+			// Live only when it is being used, so nobody joining over a
+			// virtual LAN has to wonder what a port is.
+			m_port->setEnabled(m_customPort && !active);
+		}
+
+	}
+
+};
+
 class QuitConfirmMenuPage final : public MenuPage {
 	
 public:
@@ -1808,9 +2193,11 @@ void MainMenu::initWindowPages() {
 	m_window->add(std::make_unique<ControlOptionsMenuPage1>());
 	m_window->add(std::make_unique<ControlOptionsMenuPage2>());
 	
+	m_window->add(std::make_unique<CoopMenuPage>());
+
 	m_window->add(std::make_unique<QuitConfirmMenuPage>());
 	m_window->add(std::make_unique<LocalizationMenuPage>());
-	
+
 }
 
 
@@ -1868,6 +2255,15 @@ void MainMenu::init() {
 	{
 		auto txt = std::make_unique<TextWidget>(hFontMainMenu, getLocalised("system_menus_main_editquest"));
 		txt->setTargetPage(Page_LoadOrSave);
+		txt->setPosition(pos);
+		m_widgets.add(std::move(txt));
+	}
+	pos.y += yOffset;
+	{
+		// Not localised: the base game has no string for it, and an English
+		// label everyone can read beats a missing-key placeholder.
+		auto txt = std::make_unique<TextWidget>(hFontMainMenu, "CO-OP");
+		txt->setTargetPage(Page_Coop);
 		txt->setPosition(pos);
 		m_widgets.add(std::move(txt));
 	}
@@ -1946,7 +2342,15 @@ void MainMenu::update() {
 		}
 		m_window->setCurrentPage(m_requestedPage);
 	}
-	
+
+	// Connecting takes a few seconds and can fail. Refresh the co-op readout
+	// every frame so the player watches it happen instead of guessing.
+	if(m_window && m_window->currentPageId() == Page_Coop) {
+		if(MenuPage * page = m_window->getPage(Page_Coop)) {
+			static_cast<CoopMenuPage *>(page)->refresh();
+		}
+	}
+
 	m_widgets.update();
 	
 	if(m_selected) {

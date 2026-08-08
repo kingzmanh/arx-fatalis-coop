@@ -169,6 +169,22 @@ struct IO_NPCDATA {
 	long reachedtarget; // Is target in REACHZONE?
 	Entity * weapon; // Linked Weapon (r-hand)
 	long detect;
+
+	/*!
+	 * Which of the two co-op players this creature currently has in sight.
+	 *
+	 * `detect` above is a single flag with a single edge, and ON DETECTPLAYER
+	 * only fires when it flips from 0 to 1. With two players that is not
+	 * enough: a creature that had already seen the first would never produce an
+	 * edge when the second walked into view, so the script deciding to attack
+	 * was never run for them - the "ignores player two until hit" bug.
+	 *
+	 * These two are runtime-only and deliberately kept out of the savegame;
+	 * `detect` stays their OR so the save format is unchanged. After a load
+	 * they are re-derived on the first sight check.
+	 */
+	bool m_seenPlayer = false;
+	bool m_seenPartner = false;
 	MoveMode movemode;
 	float armor_class;
 	float absorb;
@@ -270,5 +286,14 @@ float getEntityRadius(const Entity & entity);
 Cylinder getEntityCylinder(const Entity & entity);
 
 bool isEnemy(const Entity * entity);
+
+/*!
+ * Point a fighting creature at whichever of the two players it should be after.
+ *
+ * Scripts can only say "target player", which names the first player alone, so
+ * without this every enemy in the game commits to them and ignores the second
+ * even while being cut down by them.
+ */
+void ARX_NPC_CoopRetarget(Entity * io);
 
 #endif // ARX_GAME_NPC_H

@@ -44,6 +44,7 @@
 #include "scene/Object.h"
 
 #include "util/Range.h"
+#include "net/CoopPlayer.h"
 
 bool MagicSightSpell::CanLaunch() {
 	return spells.getSpellByCaster(m_caster, m_type) == nullptr;
@@ -142,6 +143,12 @@ void MagicMissileSpell::Launch() {
 	} else {
 		pitch = 0.f;
 		yaw = entities[m_caster]->angle.getYaw();
+		if(coop::isAvatarEntity(entities[m_caster])) {
+			// The other player's aim has a vertical component their body
+			// angle carries; without it their missiles fly level here and
+			// land somewhere they did not aim.
+			pitch = coop::avatar().angle.getPitch();
+		}
 		if(!m_hand_group) {
 			startPos = entities[m_caster]->pos;
 		}
@@ -352,7 +359,8 @@ void IgnitSpell::Launch() {
 			continue;
 		}
 		
-		if(m_caster == EntityHandle_Player && (light->extras & EXTRAS_NO_IGNIT)) {
+		if((m_caster == EntityHandle_Player || coop::isAvatarEntity(entities.get(m_caster)))
+		   && (light->extras & EXTRAS_NO_IGNIT)) {
 			continue;
 		}
 		

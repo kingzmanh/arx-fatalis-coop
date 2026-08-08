@@ -35,6 +35,8 @@
 #include "io/log/Logger.h"
 #include "scene/GameSound.h"
 #include "scene/Interactive.h"
+#include "net/CoopNet.h"
+#include "net/CoopPlayer.h"
 
 
 HealSpell::HealSpell()
@@ -134,6 +136,10 @@ void HealSpell::Update() {
 			if(!BLOCK_PLAYER_CONTROLS) {
 				player.lifePool.current = std::min(player.lifePool.current + gain, player.lifePool.max);
 			}
+		} else if(coop::isAvatarEntity(&npc)) {
+			// The body is a puppet; the health belongs to the player behind
+			// it, one machine away.
+			coop::reportPartnerHeal(gain);
 		} else {
 			npc._npcdata->lifePool.current = std::min(npc._npcdata->lifePool.current + gain, npc._npcdata->lifePool.max);
 		}

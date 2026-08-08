@@ -41,6 +41,8 @@
 #include "scene/GameSound.h"
 #include "scene/Object.h"
 #include "scene/Scene.h"
+#include "net/CoopNet.h"
+#include "net/CoopPlayer.h"
 
 extern PlatformInstant SLID_START;
 bool bOldLookToggle;
@@ -569,6 +571,10 @@ void LightningStrikeSpell::Update() {
 	if(m_caster == EntityHandle_Player) {
 		falpha = -player.angle.getPitch();
 		fBeta = player.angle.getYaw();
+	} else if(caster && coop::isAvatarEntity(caster)) {
+		// The other player's vertical aim rides their body angle.
+		falpha = -coop::avatar().angle.getPitch();
+		fBeta = caster->angle.getYaw();
 	} else {
 		fBeta = caster ? caster->angle.getYaw() : 0.f;
 		if(caster && entities.get(caster->targetinfo) && caster->targetinfo != m_caster) {

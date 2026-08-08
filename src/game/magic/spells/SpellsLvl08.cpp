@@ -36,6 +36,8 @@
 
 #include "scene/GameSound.h"
 #include "scene/Interactive.h"
+#include "net/CoopNet.h"
+#include "net/CoopPlayer.h"
 
 bool InvisibilitySpell::CanLaunch() {
 	return spells.getSpellByCaster(m_caster, m_type) == nullptr;
@@ -165,7 +167,7 @@ void ExplosionSpell::Launch() {
 	m_hasDuration = true;
 	
 	Vec3f target = entities[m_caster]->pos;
-	if(m_caster == EntityHandle_Player) {
+	if(m_caster == EntityHandle_Player || coop::isAvatarEntity(entities[m_caster])) {
 		target.y += 60.f;
 	} else {
 		target.y -= 60.f;

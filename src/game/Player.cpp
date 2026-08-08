@@ -115,6 +115,9 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 #include "math/Random.h"
 #include "math/Vector.h"
 
+#include "net/CoopNet.h"
+#include "net/CoopPlayer.h"
+
 #include "physics/Collisions.h"
 #include "physics/Attractors.h"
 #include "physics/Projectile.h"
@@ -219,6 +222,9 @@ void ARX_KEYRING_Init() {
 
 //! Add a key to Keyring
 void ARX_KEYRING_Add(std::string_view key) {
+	// A locked door is only locked once. Whoever finds the key, both of them
+	// can open it, or one player ends up shut out of half the fortress.
+	coop::reportKey(key);
 	g_playerKeyring.emplace_back(key);
 }
 
@@ -347,6 +353,9 @@ void ARX_Player_Rune_Remove(RuneFlag rune) {
 
 //! Add quest "quest" to player Questbook
 void ARX_PLAYER_Quest_Add(std::string_view quest) {
+	// One story, one journal. It does not matter which of them was standing
+	// there when it happened; they are both playing the same playthrough.
+	coop::reportQuest(quest);
 	g_playerQuestLogEntries.emplace_back(quest);
 	g_playerBook.clearJournal();
 }
@@ -904,9 +913,17 @@ static void ARX_PLAYER_LEVEL_UP() {
  * \brief Modify player XP by adding "val" to it
  */
 void ARX_PLAYER_Modify_XP(long val) {
-	
+
+	/*
+	 * Experience is earned individually and awarded to both. Each player keeps
+	 * their own total and levels on their own schedule - they may not even have
+	 * started at the same level - but neither is left behind because the other
+	 * happened to land the killing blow or open the chest.
+	 */
+	coop::reportReward(val, 0);
+
 	player.xp += val;
-	
+
 	for(short i = player.level + 1; i < 11; i++) {
 		if(player.xp >= GetXPforLevel(i)) {
 			ARX_PLAYER_LEVEL_UP();
@@ -2232,6 +2249,13 @@ static void PlayerMovementIterate(float DeltaTime) {
 
 void ARX_PLAYER_Manage_Movement() {
 	
+	if(coop::travelHoldActive()) {
+		// Suspended mid-air while a travel completes - the same stillness a
+		// level load imposes. No motion, no landing, no fall damage.
+		return;
+	}
+	
+	
 	ARX_PROFILE_FUNC();
 	
 	// Is our player able to move ?
@@ -2284,6 +2308,12 @@ void ARX_PLAYER_Manage_Death() {
 	player.m_paralysed = false;
 	float ratio = (player.DeadTime - 2s) / 5s;
 
+	if(coop::updateReviveOpportunity()) {
+		// Death is not the end while the other player still stands: hold the
+		// fade short of the menu and wait for them to come stand by the body.
+		ratio = std::min(ratio, 0.8f);
+	}
+
 	if(ratio >= 1.f) {
 		ARX_MENU_Launch(false);
 		player.DeadTime = 0;
@@ -2334,6 +2364,9 @@ void ARX_PLAYER_PutPlayerInNormalStance() {
  * \brief Add gold to player purse
  */
 void ARX_PLAYER_AddGold(long _lValue) {
+	// Split the find rather than race for it: both purses grow by the same
+	// amount, so picking up a pile is never something to fall out over.
+	coop::reportReward(0, _lValue);
 	player.gold += _lValue;
 	g_hudRoot.purseIconGui.requestHalo();
 }
@@ -2354,6 +2387,8 @@ void ARX_PLAYER_AddGold(Entity * gold) {
 void ARX_PLAYER_Start_New_Quest() {
 	
 	LogInfo << "Starting a new playthrough";
+	
+	coop::clearStoryLedger();
 	
 	DanaeClearLevel();
 	SetEditMode();

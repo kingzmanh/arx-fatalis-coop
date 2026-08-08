@@ -1,0 +1,144 @@
+diff --git a/src/net.c b/src/net.c
+index ad1151d..d5e4126 100644
+--- a/src/net.c
++++ b/src/net.c
+@@ -85,28 +85,87 @@ error:
+ 
+ int net_get_default_gateway(int family, addr_record_t *record) {
+ #if defined(_WIN32)
++	/*
++	 * Ask Windows which route it would really use, instead of taking the first
++	 * default route in the table.
++	 *
++	 * A machine with Radmin VPN, Hamachi or ZeroTier installed has more than
++	 * one default route. The VPN's is often listed first even though its metric
++	 * marks it as a last resort, so picking the first one means asking the VPN
++	 * to forward a port - which it will never do, and the real router is never
++	 * asked at all. GetBestRoute2 applies the same selection the network stack
++	 * applies to an outgoing packet, metrics and all.
++	 */
++	SOCKADDR_INET destination;
++	memset(&destination, 0, sizeof(destination));
++	destination.si_family = (ADDRESS_FAMILY)family;
++	if (family == AF_INET) {
++		// A landmark on the public internet. Nothing is sent to it; it only
++		// says "a route that leaves this network", which is the one we want.
++		destination.Ipv4.sin_family = AF_INET;
++		destination.Ipv4.sin_addr.s_addr = htonl(0x08080808u); // 8.8.8.8
++	} else if (family == AF_INET6) {
++		destination.Ipv6.sin6_family = AF_INET6;
++		// 2001:4860:4860::8888
++		unsigned char *b = destination.Ipv6.sin6_addr.s6_addr;
++		memset(b, 0, 16);
++		b[0] = 0x20; b[1] = 0x01; b[2] = 0x48; b[3] = 0x60;
++		b[4] = 0x48; b[5] = 0x60; b[15] = 0x88; b[14] = 0x88;
++	}
++
++	if (family == AF_INET || family == AF_INET6) {
++		MIB_IPFORWARD_ROW2 best;
++		SOCKADDR_INET bestSource;
++		memset(&best, 0, sizeof(best));
++		memset(&bestSource, 0, sizeof(bestSource));
++		if (GetBestRoute2(NULL, 0, NULL, &destination, 0, &best, &bestSource) == NO_ERROR) {
++			SOCKADDR_INET *nextHop = &best.NextHop;
++			if (nextHop->si_family == AF_INET) {
++				addr_set_binary(AF_INET, &nextHop->Ipv4.sin_addr, 0, record);
++				return 0;
++			}
++			if (nextHop->si_family == AF_INET6) {
++				addr_set_binary(AF_INET6, &nextHop->Ipv6.sin6_addr, 0, record);
++				return 0;
++			}
++		}
++		PLUM_LOG_DEBUG("GetBestRoute2 gave no usable gateway, falling back to the route table");
++	}
++
+ 	MIB_IPFORWARD_TABLE2 *table;
+ 	if (GetIpForwardTable2(family, &table) != NO_ERROR) {
+ 		PLUM_LOG_WARN("GetIpForwardTable2 failed");
+ 		return -1;
+ 	}
+ 
++	// Lowest metric wins, rather than whichever happens to be listed first.
++	MIB_IPFORWARD_ROW2 *chosen = NULL;
+ 	for (ULONG n = 0; n < table->NumEntries; ++n) {
+ 		MIB_IPFORWARD_ROW2 *row = table->Table + n;
+-		if (row->DestinationPrefix.PrefixLength == 0) {
+-			SOCKADDR_INET *nextHop = &row->NextHop;
+-			switch (nextHop->si_family) {
+-			case AF_INET:
+-				addr_set_binary(AF_INET, &nextHop->Ipv4.sin_addr, 0, record);
+-				return 0;
+-			case AF_INET6:
+-				addr_set_binary(AF_INET6, &nextHop->Ipv6.sin6_addr, 0, record);
+-				return 0;
+-			default:
+-				PLUM_LOG_WARN("GetIpForwardTable2 returned unexpected address family");
+-				break;
+-			}
++		if (row->DestinationPrefix.PrefixLength != 0) {
++			continue;
++		}
++		if (row->NextHop.si_family != AF_INET && row->NextHop.si_family != AF_INET6) {
++			continue;
++		}
++		if (!chosen || row->Metric < chosen->Metric) {
++			chosen = row;
++		}
++	}
++
++	if (chosen) {
++		SOCKADDR_INET *nextHop = &chosen->NextHop;
++		int found = -1;
++		if (nextHop->si_family == AF_INET) {
++			addr_set_binary(AF_INET, &nextHop->Ipv4.sin_addr, 0, record);
++			found = 0;
++		} else if (nextHop->si_family == AF_INET6) {
++			addr_set_binary(AF_INET6, &nextHop->Ipv6.sin6_addr, 0, record);
++			found = 0;
+ 		}
++		// The table is the caller's to release on every path out, not just this one.
++		FreeMibTable(table);
++		return found;
+ 	}
+ 
+ 	PLUM_LOG_WARN("No default route found");
+diff --git a/src/upnp.c b/src/upnp.c
+index ba1f9e6..0dc03af 100644
+--- a/src/upnp.c
++++ b/src/upnp.c
+@@ -52,6 +52,34 @@ int upnp_init(protocol_state_t *state) {
+ 		goto error;
+ 	}
+ 
++	/*
++	 * Send the discovery out of the interface that actually reaches the
++	 * internet.
++	 *
++	 * The socket is bound to any address, so without this the multicast leaves
++	 * by whichever interface the routing table happens to offer first. On a
++	 * machine with Radmin VPN, Hamachi or ZeroTier installed that is often the
++	 * VPN, and the search never reaches the router at all - it looks exactly
++	 * like a router with UPnP switched off.
++	 */
++	{
++		addr_record_t iface;
++		if (net_get_default_interface(AF_INET, &iface) >= 0
++		    && iface.addr.ss_family == AF_INET) {
++			const struct in_addr *out = &((const struct sockaddr_in *)&iface.addr)->sin_addr;
++			if (setsockopt(impl->sock, IPPROTO_IP, IP_MULTICAST_IF, (const char *)out,
++			               sizeof(*out)) < 0) {
++				// Not fatal: the default interface may still be the right one.
++				PLUM_LOG_DEBUG("Could not pin SSDP to the default interface, errno=%d",
++				               sockerrno);
++			} else {
++				char shown[ADDR_MAX_STRING_LEN];
++				addr_record_to_string(&iface, shown, sizeof(shown));
++				PLUM_LOG_DEBUG("SSDP will go out via %s", shown);
++			}
++		}
++	}
++
+ 	return PROTOCOL_ERR_SUCCESS;
+ 
+ error:

@@ -52,6 +52,7 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 #include "game/Damage.h"
 #include "game/Player.h"
+#include "net/CoopPlayer.h"
 
 #include "graphics/Color.h"
 #include "graphics/GraphicsTypes.h"
@@ -173,7 +174,12 @@ void ARX_MISSILES_Update() {
 		
 		bool hit = false;
 		
-		if(closerThan(player.pos, dest, 200.f) || (ep && ep->center.y < dest.y) || (epp && epp->center.y > dest.y)) {
+		// A missile bursts when it nears a player - either player; the second
+		// one's body must not be flown through as if nobody were there.
+		Entity * partner = coop::avatarEntity();
+		if(closerThan(player.pos, dest, 200.f)
+		   || (partner && closerThan(partner->pos, dest, 200.f))
+		   || (ep && ep->center.y < dest.y) || (epp && epp->center.y > dest.y)) {
 			hit = true;
 		} else {
 			RaycastResult ray = raycastScene(orgn, dest);

@@ -72,6 +72,8 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 #include "math/Angle.h"
 #include "math/Vector.h"
 
+#include "net/CoopNet.h"
+
 #include "physics/Physics.h"
 
 #include "platform/Platform.h"
@@ -164,30 +166,41 @@ void PutInFrontOfPlayer(Entity * io) {
 	if(g_draggedEntity == io) {
 		setDraggedEntity(nullptr);
 	}
-	
+
 	io->setOwner(nullptr);
-	
+
 	io->angle = Anglef();
 	io->show = SHOW_FLAG_IN_SCENE;
-	
+
 	Sphere limit(player.pos + Vec3f(0.f, 20.f, 0.f), 80);
 	Vec3f dir = angleToVectorXZ(player.angle.getYaw());
 	EntityDragResult result = findSpotForDraggedEntity(limit.origin, dir, io, limit);
-	
+
+	Vec3f where = result.foundSpot ? result.pos - toXZ(result.offset) : player.pos;
+
 	if(!result.foundSpot) {
+		// Nowhere to put it: set down at the player's feet, no impulse.
 		ARX_INTERACTIVE_Teleport(io, player.pos, true);
+		coop::reportItemDropped(*io, player.pos, Vec3f(0.f));
 		return;
 	}
-	
-	ARX_INTERACTIVE_Teleport(io, result.pos - toXZ(result.offset), true);
-	
+
+	ARX_INTERACTIVE_Teleport(io, where, true);
+
+	Vec3f launched = Vec3f(0.f);
+
 	if(io->obj && io->obj->pbox) {
 		Vec3f vector = Vec3f(0.f, 100.f, 0.f);
 		io->soundtime = 0;
 		io->soundcount = 0;
 		EERIE_PHYSICS_BOX_Launch(io->obj, io->pos, io->angle, vector);
+		launched = vector;
 	}
-	
+
+	// Tell the other player it is there - and with what push - or they will
+	// walk past it, or watch it hang in the air.
+	coop::reportItemDropped(*io, where, launched);
+
 }
 
 std::ostream & operator<<(std::ostream & strm, InventoryPos p) {
@@ -389,28 +402,73 @@ InventoryPos Inventory::insertAtImpl(Entity & item, s16 bag, Vec2f pos, Inventor
 	return insertImpl(item, fallback);
 }
 
+/*!
+ * Note an item passing out of the shared world into this player's own pack.
+ *
+ * Called before the insertion, because afterwards there is no way to tell a
+ * thing that was lying on the floor from one that was already carried and is
+ * only being moved between bags. Only the first case is anyone else's business.
+ */
+static void reportPickup(const Entity * item, const Entity * owner) {
+
+	if(!item || !coop::isActive() || owner != entities.player()) {
+		return;
+	}
+
+	/*
+	 * Did this come out of the world, or is it just moving between bags?
+	 *
+	 * Asked by inventory position rather than by show state. The obvious test -
+	 * "is it still SHOW_FLAG_IN_SCENE" - looks right and is wrong: dragging an
+	 * item over the inventory sets it to SHOW_FLAG_ON_PLAYER a frame before it
+	 * is inserted, so by the time we are asked, an item picked up off the floor
+	 * no longer says it was ever in the scene. An item already in the PLAYER'S
+	 * OWN inventory is just being rearranged and is nobody else's business. But
+	 * one sitting in any other entity's inventory - a corpse being searched, a
+	 * chest - is still part of the shared world: taking it must be reported, or
+	 * the same corpse yields its loot once to each player.
+	 */
+	InventoryPos held = locateInInventories(item);
+	if(held && held.container == entities.player()) {
+		return;
+	}
+
+	coop::requestTake(*item);
+
+}
+
 bool Inventory::insert(Entity * item, InventoryPos pos) {
-	
+
+	// Before insertGold(), because a coin pile is consumed on the spot and
+	// there would be nothing left to report afterwards - which is exactly how
+	// the same gold gets collected twice, once by each player.
+	reportPickup(item, owner());
+
 	if(insertGold(item)) {
 		return true;
 	}
-	
+
 	if(item && (item->ioflags & IO_ITEM) && !(item->ioflags & IO_MOVABLE)) {
 		if(InventoryPos newPos = insertImpl(*item, pos)) {
 			ARX_INVENTORY_Declare_InventoryIn(get(newPos).entity, owner());
 			return true;
 		}
 	}
-	
+
 	return false;
 }
 
 bool Inventory::insertAt(Entity * item, s16 bag, Vec2f pos, InventoryPos fallback) {
-	
+
+	// Before insertGold(), because a coin pile is consumed on the spot and
+	// there would be nothing left to report afterwards - which is exactly how
+	// the same gold gets collected twice, once by each player.
+	reportPickup(item, owner());
+
 	if(insertGold(item)) {
 		return true;
 	}
-	
+
 	if(item && (item->ioflags & IO_ITEM) && !(item->ioflags & IO_MOVABLE)) {
 		if(InventoryPos newPos = insertAtImpl(*item, bag, pos, fallback)) {
 			ARX_SOUND_PlayInterface(g_snd.INVSTD);
@@ -418,7 +476,7 @@ bool Inventory::insertAt(Entity * item, s16 bag, Vec2f pos, InventoryPos fallbac
 			return true;
 		}
 	}
-	
+
 	return false;
 }
 

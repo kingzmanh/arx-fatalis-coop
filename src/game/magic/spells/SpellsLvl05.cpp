@@ -389,7 +389,7 @@ void RepelUndeadSpell::Launch() {
 	m_duration = m_hasDuration ? m_launchDuration : 0;
 	m_fManaCostPerSecond = 1.f;
 	
-	m_pos = player.pos;
+	m_pos = entities.get(m_target) ? entities.get(m_target)->pos : player.pos;
 	m_yaw = 0.f;
 	tex_p2 = TextureContainer::Load("graph/obj3d/textures/(fx)_tsu_blueting");
 }

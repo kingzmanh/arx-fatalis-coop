@@ -179,6 +179,8 @@ constexpr const ActionKey actions[NUM_ACTION_KEY] = {
 	ActionKey((Keyboard::Key_LeftAlt << 16) | Keyboard::Key_Enter, (Keyboard::Key_RightAlt << 16) | Keyboard::Key_Enter), // TOGGLE_FULLSCREEN
 	ActionKey(Keyboard::Key_Grave), // CONSOLE
 	ActionKey(Keyboard::Key_ScrollLock, Keyboard::Key_Backslash), // DEBUG
+	ActionKey(Keyboard::Key_V), // COOP_TALK - V was unbound, and is where most
+	                            // players already expect push to talk to be
 };
 
 } // namespace Default
@@ -320,6 +322,7 @@ constexpr const std::string_view actions[NUM_ACTION_KEY] = {
 	"toggle_fullscreen",
 	"console",
 	"debug",
+	"coop_talk",
 };
 
 // Misc options

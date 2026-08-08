@@ -94,6 +94,10 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 #include "math/Random.h"
 #include "math/RandomVector.h"
 
+#include "net/CoopNet.h"
+#include "net/CoopPlayer.h"
+#include "net/CoopWorld.h"
+
 #include "physics/Collisions.h"
 #include "platform/profiler/Profiler.h"
 
@@ -301,7 +305,31 @@ static ScriptParameters getHitEventParameters(float dmg, Entity * source, Spell 
 	ScriptParameters parameters(dmg);
 	
 	// Second parameter: weapon category
-	if(source == entities.player()) {
+	if(coop::isAvatarEntity(source)) {
+
+		/*
+		 * A blow from the second player has to look to the script exactly like
+		 * a blow from the first, or the creature will not treat it as one. What
+		 * it was struck with lives on the other machine; the class of weapon
+		 * hanging off the body here is enough to name it.
+		 */
+		if(spell || (type & DAMAGE_TYPE_FAKESPELL)) {
+			parameters.emplace_back("spell");
+		} else if(Entity * weapon = source->_npcdata ? source->_npcdata->weapon : nullptr) {
+			if(weapon->type_flags & OBJECT_TYPE_DAGGER) {
+				parameters.emplace_back("dagger");
+			} else if(weapon->type_flags & OBJECT_TYPE_2H) {
+				parameters.emplace_back("2h");
+			} else if(weapon->type_flags & OBJECT_TYPE_BOW) {
+				parameters.emplace_back("arrow");
+			} else {
+				parameters.emplace_back("1h");
+			}
+		} else {
+			parameters.emplace_back("bare");
+		}
+
+	} else if(source == entities.player()) {
 		if(spell || (type & DAMAGE_TYPE_FAKESPELL)) {
 			parameters.emplace_back("spell");
 		} else {
@@ -431,6 +459,12 @@ float damagePlayer(float dmg, DamageType type, Entity * source) {
 		entities.player()->dmg_sum = 0.f;
 	}
 	
+	if(coop::localPlayerArrivalProtected()) {
+		// Fresh out of a loading screen: a moment of calm before anything can
+		// hurt them, the way every co-op game shields an arrival.
+		dmg = 0.f;
+	}
+	
 	if(dmg > 0.f) {
 		
 		if(source) {
@@ -459,6 +493,7 @@ float damagePlayer(float dmg, DamageType type, Entity * source) {
 		if(player.lifePool.current <= 0.f) {
 			player.lifePool.current = 0.f;
 			if(wasAlive) {
+				coop::reportDeath();
 				ARX_PLAYER_BecomesDead();
 				if((type & DAMAGE_TYPE_FIRE) || (type & DAMAGE_TYPE_FAKEFIRE)) {
 					ARX_SOUND_PlayInterface(g_snd.PLAYER_DEATH_BY_FIRE);
@@ -570,13 +605,22 @@ static float ARX_DAMAGES_DrainMana(Entity * io, float dmg) {
 }
 
 void damageProp(Entity & prop, float dmg, Entity * source, Spell * spell, DamageType type) {
-	
+
 	arx_assert(prop.ioflags & IO_FIX);
-	
+
 	if((prop.ioflags & IO_INVULNERABILITY) || !prop.script.valid) {
 		return;
 	}
-	
+
+	// Same rule as for creatures: on a guest, the scenery is the host's, so our
+	// blows are forwarded and everything else is left to them.
+	if(coop::isReplica() && !coop::isApplyingRemote()) {
+		if(source == entities.player() && dmg > 0.f) {
+			coop::requestHit(prop, dmg, u32(type));
+		}
+		return;
+	}
+
 	prop.dmg_sum += dmg;
 	
 	GameDuration elapsed = g_gameTime.now() - prop.ouch_time;
@@ -702,11 +746,24 @@ static void pushEntity(Entity & entity, const Entity & source, float power) {
 }
 
 void damageCharacter(Entity & entity, float dmg, Entity & source, Spell * spell, DamageType flags, Vec3f * pos) {
-	
+
 	if(flags & DAMAGE_TYPE_PER_SECOND) {
 		dmg = dmg * (g_gameTime.lastFrameDuration() / 1s);
 	}
-	
+
+	/*
+	 * A hit on the other player - a sword swing, a fireball, a poison cloud -
+	 * is settled on their machine, which is where their health, their poison
+	 * resistance and their armour actually are. Everything about it that we
+	 * could compute here would be computed from the wrong character sheet.
+	 */
+	if(coop::isAvatarEntity(&entity)) {
+		if(dmg > 0.f && !coop::isApplyingRemote()) {
+			coop::reportPlayerDamage(dmg, u32(flags));
+		}
+		return;
+	}
+
 	float damagesdone;
 	if(entity == *entities.player()) {
 		
@@ -773,14 +830,40 @@ void damageCharacter(Entity & entity, float dmg, Entity & source, Spell * spell,
 }
 
 float damageNpc(Entity & npc, float dmg, Entity * source, Spell * spell, DamageType type, const Vec3f * pos) {
-	
+
 	arx_assert(npc.ioflags & IO_NPC);
 	arx_assert(npc != *entities.player());
-	
+
 	if((npc.ioflags & IO_INVULNERABILITY)) {
 		return 0.f;
 	}
-	
+
+	/*
+	 * The other player's body is not an NPC with a health bar of its own - it
+	 * is a stand-in for a character whose real health lives on their machine.
+	 * Applying the hit here would drain a copy nobody reads. Send it to them
+	 * instead, and let their own damagePlayer() decide what it costs them.
+	 */
+	if(coop::isAvatarEntity(&npc)) {
+		if(dmg > 0.f && !coop::isApplyingRemote()) {
+			coop::reportPlayerDamage(dmg, u32(type));
+		}
+		return 0.f;
+	}
+
+	/*
+	 * On a guest sharing the host's area the enemies belong to the host. Our
+	 * own blows are forwarded so they land once, on the copy that counts;
+	 * anything else reaching here is our echo of damage the host is already
+	 * applying, and applying it again would kill everything twice as fast.
+	 */
+	if(coop::isReplica() && !coop::isApplyingRemote()) {
+		if(source == entities.player() && dmg > 0.f) {
+			coop::requestHit(npc, dmg, u32(type));
+		}
+		return 0.f;
+	}
+
 	if(npc._npcdata->lifePool.current <= 0.f) {
 		if((source != entities.player() || entities.get(player.equiped[EQUIP_SLOT_WEAPON]))
 		   && dmg >= npc._npcdata->lifePool.max * 0.4f && pos) {

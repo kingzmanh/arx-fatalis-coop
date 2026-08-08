@@ -71,6 +71,9 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 #include "scene/ChangeLevel.h"
 #include "scene/GameSound.h"
+#include "net/CoopNet.h"
+#include "net/CoopWorld.h"
+
 #include "scene/Interactive.h"
 #include "scene/Light.h"
 #include "scene/LinkedObject.h"
@@ -251,6 +254,14 @@ res::path Entity::instancePath() const {
 
 void Entity::setOwner(Entity * owner) {
 	
+	if(m_owner && !ValidIOAddress(m_owner)) {
+		// The owner is already freed memory: there is nothing to cleanly
+		// detach from, and dereferencing it was this bug's whole crash
+		// family. Forget it instead of touching it.
+		LogWarning << "[coop] " << idString() << " lost its owner; detaching";
+		m_owner = nullptr;
+	}
+	
 	if(m_owner != owner) {
 		
 		if(m_owner) {
@@ -279,6 +290,20 @@ void Entity::setOwner(Entity * owner) {
 }
 
 void Entity::updateOwner() {
+	
+	if(m_owner && !ValidIOAddress(m_owner)) {
+		/*
+		 * The owner is already gone - a teardown sweep freed it before us.
+		 * Crashing here taught us nothing; healing and NAMING the pair in the
+		 * log is how the real bookkeeping bug gets found.
+		 */
+		LogWarning << "[coop] " << idString() << " had a dangling owner; clearing it";
+		m_owner = nullptr;
+		if(show == SHOW_FLAG_LINKED || show == SHOW_FLAG_ON_PLAYER) {
+			show = SHOW_FLAG_IN_SCENE;
+		}
+		return;
+	}
 	
 	if(m_owner) {
 		
@@ -317,6 +342,19 @@ void Entity::updateOwner() {
 }
 
 void Entity::cleanReferences() {
+	
+	/*
+	 * Anything that still calls us owner lets go here, while we are still a
+	 * whole entity to detach from - not later, as freed memory. Vanilla only
+	 * ever destroyed entities at level teardown, where order never mattered;
+	 * a shared world removes NPCs mid-play, and their held weapons survived
+	 * with a dangling owner (long_sword_0021, found by the crash guards).
+	 */
+	for(Entity & other : entities) {
+		if(&other != this && other.owner() == this) {
+			other.setOwner(nullptr);
+		}
+	}
 	
 	ARX_INTERACTIVE_DestroyIOdelayedRemove(this);
 	
@@ -361,9 +399,33 @@ void Entity::cleanReferences() {
 }
 
 void Entity::destroy() {
-	
+
 	LogDebug("destroying entity " << idString());
-	
+
+	// [coop-item] Every death of something a player is carrying or wearing,
+	// named at the moment it happens.
+	if((ioflags & IO_ITEM) && entities.player()) {
+		bool worn = false;
+		for(EntityHandle equipped : player.equiped) {
+			if(equipped != EntityHandle() && equipped == index()) {
+				worn = true;
+				break;
+			}
+		}
+		InventoryPos where = locateInInventories(this);
+		bool carried = where && where.container == entities.player();
+		if(worn || carried) {
+			LogWarning << "[coop-item] destroying " << idString()
+			           << (worn ? " (WORN by this player)" : " (in this player's pack)")
+			           << " remote=" << coop::isApplyingRemote()
+			           << " durability=" << durability;
+		}
+	}
+
+	// Say so while there is still an id to say it with: past this point the
+	// entity is being taken apart and, at the end of it, deleted.
+	coop::reportEntityDestroyed(*this);
+
 	if(instance() > 0 && !(ioflags & IO_NOSAVE)) {
 		if(scriptload) {
 			// In case we previously saved this entity...

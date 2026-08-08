@@ -1,224 +1,130 @@
-            _______________________
-           /\                      \
-           \_|         Arx         |
-             |      Libertatis     |
-             |   __________________|__
-              \_/____________________/
+# Arx Fatalis Co-op
 
+**Two players, one Arx.** A co-op mod for [Arx Libertatis](https://arx-libertatis.org/),
+the open source version of Arkane Studios' *Arx Fatalis*.
 
-Cross-platform port of Arx Fatalis, a first-person role-playing game
+> ### ⚠️ WORK IN PROGRESS - EXPECT ANYTHING
+>
+> This is early. It will have problems. Things will break in ways nobody has
+> seen yet, because almost nobody has played it yet. If that sounds like fun,
+> read on. If you want something polished, come back later.
 
-Arx Libertatis is based on the publicly released [Arx Fatalis source code](https://web.archive.org/web/20180105233341/https://www.arkane-studios.com/uk/arx_downloads.php).
-The source code is available under the GPLv3+ license with some additional terms - see the COPYING and LICENSE files for details.
+![Both players, both screens](docs/screenshots/two-players.png)
 
-## Contact
+*One room, two screens. Each player sees the other move, fight, and pick things up.*
 
-Website: [arx-libertatis.org](https://arx-libertatis.org/)
+---
 
-Bug Tracker: [bugs.arx-libertatis.org](https://bugs.arx-libertatis.org/)
+## What this is
 
-IRC: \#arx on libera.chat
+Arx Fatalis is a single player game. This makes it a two player one.
 
-Wiki: [wiki.arx-libertatis.org](https://wiki.arx-libertatis.org/)
+You start in the same cell, wake up in the same world, and play through it
+together - the same dungeon, the same story, the same monsters, at the same
+time. One of you hosts, the other joins.
 
-Reddit: [/r/ArxFatalis/](https://old.reddit.com/r/ArxFatalis/)
+![Waking up together](docs/screenshots/waking-up.png)
 
-## Dependencies
+## Honest words about who made this
 
-* A **C++ 17** compiler (GCC 7+, Clang 5+, MSVC 19.15+ aka Visual Studio 2017 15.8+)
-* **[CMake](https://cmake.org/) 3.12**+ (compile-time only)
-* **[zlib](https://zlib.net/)**
-* **[Boost](https://www.boost.org/) 1.58**+ (headers only¹)
-* **[GLM](https://glm.g-truc.net/) 0.9.9.7**+
-* **[FreeType](https://freetype.org/) 2.3.0**+
-* **OpenAL 1.1**+ ([OpenAL Soft](https://openal-soft.org/) strongly recommended!)
-* **iconutil** (from Xcode) or **[icnsutil](https://github.com/pornel/libicns)** (macOS only)
+I made this for fun, and because I wanted to play Arx with a friend.
 
-1. Systems without Win32 or POSIX filesystem support will also need the `filesystem` and `system` libraries from Boost.
+**I do not know how to code.** I built this by working with AI, step by step,
+over a long time - testing, breaking things, finding out why, and going again.
+It took far longer than I expected. There is a file in this repository called
+[FIXES.md](FIXES.md) that lists every problem found and how it was solved,
+which is probably the most honest record of how this was actually built.
 
-### Renderer
+So: this is not the work of an experienced engine programmer. It is the work of
+someone stubborn with good tools. It runs, two people can play it, and I am
+proud of that - but there will be things in here that make a real developer
+wince.
 
-There is currently a single rendering backend for OpenGL:
+**If anyone wants to help, I would genuinely appreciate it.** Bug reports,
+fixes, or just telling me what broke and what you were doing at the time. That
+last one is worth more than you would think.
 
-* **[SDL](https://libsdl.org/)** **1.2.10**+ *or* **2.0.0**+
-* **OpenGL 1.5**+ (OpenGL 2.1 or newer is recommended) *or* **OpenGL ES-CM 1.x**¹
-* **[libepoxy](https://github.com/anholt/libepoxy) 1.2**+ (recommended) *or* **[GLEW](http://glew.sourceforge.net/) 1.5.2**+
+![The story, together](docs/screenshots/the-story.png)
 
-1. OpenGL ES support requires libepoxy
+## What works
 
-### Crash Reporter
+- **Playing the whole game together** - one hosts, one joins, both play
+- **Seeing each other** - position, animation, the weapon in their hand
+- **Fighting together** - creatures notice both of you and fight both of you
+- **Items** - picking up, dropping, throwing, carrying
+- **Doors, levers, and travelling between areas** together
+- **Both health bars** on screen, so you can see when your friend is in trouble
+- **Proximity voice chat** - speak and it comes out of your character's mouth,
+  fading with distance and coming from the direction you are standing in
+- **Automatic port forwarding** - most routers will open the port by themselves,
+  so hosting usually needs no setup
 
-Arx Libertatis comes with an optional gui crash reporter which has additional dependencies:
+## What does not work yet
 
-* **[Qt](https://www.qt.io/) 4.7**+, **5** or **6** (`QtCore`, `QtConcurrent`¹, `QtGui` and `QtWidgets`¹ libraries)
-* **[libcurl](https://curl.haxx.se/libcurl/) 7.20.0**+ (not required on Windows)
-* **GDB** (Linux-only, optional, run-time only)
-* **DbgHelp** (Windows-only)
+Being straight with you, because you will find these anyway:
 
-1. Qt 5 only
+- **Never properly tested over the internet.** Almost all testing has been two
+  windows on one computer. Real latency will find bugs that local testing cannot.
+- **Loot can duplicate** in some cases - both players may find their own copy.
+- **Some quest flags only move on one machine**, which can leave the two of you
+  out of step on story progress.
+- **What the second player does alone is not always remembered** if they explore
+  away from the host.
+- **Enemies sometimes pick the wrong target** after one player leaves a room.
 
-While the crash reporter can be run without GDB, it's main usefulness comes from generating and submitting detailed back-traces in the event of a crash. On non-Windows systems we use GDB, the GNU Debugger, to accomplish that. If you want to help out the arx project, please install GDB before running arx. GDB is however purely a run-time dependency and is not needed when building the crash reporter.
+## Playing it
 
-### Tests
+**You need to own Arx Fatalis.** This mod contains no game content at all -
+no art, no sound, no levels. Buy it on
+[GOG](https://www.gog.com/game/arx_fatalis) or
+[Steam](https://store.steampowered.com/app/1560/Arx_Fatalis/), then point this
+at your installation the same way you would Arx Libertatis.
 
-Building and running tests has additional dependencies:
+**To host:** open the co-op menu, press HOST GAME, and give your friend your IP
+address. The mod will try to open the port on your router automatically.
 
-* **[CppUnit](https://freedesktop.org/wiki/Software/cppunit/)**
+**To join:** type their address and press JOIN GAME.
 
-### Git Build Dependencies
+**If it will not connect:** some internet providers put you behind a second
+router that you cannot open ports on. The simple answer is a free virtual LAN
+like [Radmin VPN](https://www.radmin-vpn.com/) or Hamachi - both players install
+it, join the same network, and use the address it gives you.
 
-Building checkouts from git on their own requires additional dependencies:
-* **[Inkscape](https://inkscape.org/)**
-* **[ImageMagick](https://imagemagick.org/)**
-* **[OptiPNG](http://optipng.sourceforge.net/)**
+![Two of you](docs/screenshots/together.png)
 
-These are needed to render and scale the SVG icons, which currently only render correctly in Inkscape. Release and development snapshot source tarballs include pre-built icon files and do not need these dependencies to build.
+## Voice chat
 
-To avoid the Inkscape (as well as ImageMagick and OptiPNG) dependency for git builds, pre-built icons can be downloaded from https://arx-libertatis.org/files/data/ or the [ArxLibertatisData](https://github.com/arx/ArxLibertatisData/) repository. The required data version is listed in the VERSION file. Place `arx-libertatis-data-$version` directory into the build directory or tell the build system about it's location using the `DATA_FILES` CMake variable (`-DDATA_FILES=…` on the command-line).
+Turn on VOICE CHAT in the co-op menu and hold **V** to speak.
 
-Alternatively, icons can be disabled by setting the `ICON_TYPE` CMake variable to `none`. See **OPTIONS.md** for other supported icon type values.
+It is proximity based, not a phone call. Your voice comes out of your character,
+so it gets quieter the further apart you are and arrives from the direction you
+are standing in. Walk far enough away and your friend cannot hear you at all.
 
-## Compile and install
+There is a **MIC TEST** on the same menu with a level meter, so you can check
+your microphone before you rely on it. If nothing moves, click **MIC:** to try
+a different microphone - modern machines are full of ones that look real and
+are not.
 
-For Linux run:
+## Credits
 
-    $ mkdir build && cd build
-    $ cmake ..
-    $ make
+This is built on other people's work, and a lot of it. See
+**[CREDITS.md](CREDITS.md)** for the full list - but the short version:
 
-The default build settings are tuned for users - if you plan to make changes to Arx Libertatis you should append the `-DDEVELOPER=1` option to the `cmake` command to enable tests, debug checks and fast incremental builds.
+**[Arx Libertatis](https://arx-libertatis.org/)** is the reason this exists at
+all. A team of volunteers spent over a decade rebuilding Arx Fatalis into
+something that still runs and can still be changed. Every line of co-op here
+sits on top of that. Thank you.
 
-To install the binaries system-wide, run as root:
+**[Arkane Studios](https://www.arkane-studios.com/)** made Arx Fatalis in 2002,
+and it is still unlike anything else.
 
-    # make install
+## Licence
 
-Alternatively you can run the game by specifying the full path to the `arx` binary in the `build` directory.
+GPL v3, the same as Arx Libertatis - see [LICENSE](LICENSE). That means the
+source is here, and anything built from it must stay open too.
 
-The wiki has more detailed instructions on [compiling under Linux](https://wiki.arx-libertatis.org/Downloading_and_Compiling_under_Linux).
+---
 
-Getting all the dependencies set up for Windows is more tricky. Pre-built dependencies are available in the [ArxWindows repository](https://github.com/arx/ArxWindows) and [instructions on how to use them](https://wiki.arx-libertatis.org/Downloading_and_Compiling_under_Windows) are available on the wiki.
-
-### Build options:
-
-* `BUILD_TOOLS` (default: `ON`): Build tools
-* `BUILD_TOOLS_MERGED` (default: `ON`): Merge tools into a single binary
-* `BUILD_IO_LIBRARY` (default: `ON`): Build helper library for the Blender plugin
-* `BUILD_CRASHHANDLER` (default: `ON`): Enable the built-in crash handler (default OFF for macOS)
-* `BUILD_CRASHREPORTER` (default: `ON`): Build the Qt crash reporter gui - requires `BUILD_CRASHHANDLER` (default OFF for macOS)
-* `BUILD_PROFILER` (default: `OFF`¹): Build the profiler GUI
-* `BUILD_TESTS` (default: `OFF`²): Build tests that can be run using `make check`
-* `BUILD_ALL` (default: `OFF`): Enable all the BUILD_* options above by default - they can still be disabled individually
-* `UNITY_BUILD` (default: `ON`): Unity build (faster build, better optimizations but no incremental build)
-* `CMAKE_BUILD_TYPE` (default: `Release`): Set to `Debug` for debug binaries
-* `DEBUG` (default: `OFF`³): Enable debug output and runtime checks
-* `DEBUG_GL` (default: `OFF`⁴): Enable OpenGL debug output by default
-* `DEBUG_EXTRA` (default: `OFF`): Expensive debug options
-* `RUN_TESTS` (default: `OFF`⁵): Automatically run tests
-* `RUN_TARGET` (default: (none): Wrapper to run binaries produced in the build process
-* `DEVELOPER` (default: `OFF`): Enable build options suitable for developers⁶
-* `BUILD_PROFILER_INSTRUMENT` (default: `OFF`): Add profiling instructions to the main arx binary
-
-1. Enabled automatically if `BUILD_ALL` or `BUILD_PROFILER_INSTRUMENT` is enabled
-2. Enabled automatically if `BUILD_ALL` or `DEVELOPER` is enabled
-3. Enabled automatically if `CMAKE_BUILD_TYPE` is set to `Debug` or if `DEVELOPER` is enabled.
-4. Enabled automatically if `DEBUG` is enabled. If disabled, OpenGL debug output can be enabled at run-time using the `--debug-gl` command-line option.
-5. Enabled automatically if `DEVELOPER` is enabled unless cross-compiling without `RUN_TARGET` set
-6. Currently this disables `UNITY_BUILD` and enables `DEBUG`, `BUILD_TESTS`, `RUN_TESTS` and `FASTLINK` for faster incremental builds and improved debug checks, unless those options have been explicitly specified by the user.
-
-Install options:
-
-* `CMAKE_INSTALL_PREFIX` (default: `/usr/local` on UNIX and `C:/Program Files` on Windows): Where to install Arx Libertatis
-
-Set options by passing `-D<option>=<value>` to `cmake`.
-
-Backends that are not available are disabled by default. The `cmake` run should display a summary of the enabled backends at the end.
-
-Advanced options not listed here are documented in **OPTIONS.md**.
-
-## Data file, config and savegame locations
-
-You will need to [get either the full game or demo data of Arx Fatalis](https://arx.vg/data).
-
-Where arx will look for data files and write config and save files depends on the operating system and environment - the wiki has a page detailing the [full data directory detection algorithm](https://arx.vg/paths).
-
-**For Unix-like systems**:
-The game will try to rename all used files in the user directory (but not the data directory) to lowercase on the first run. System-wide installations with case-sensitive filesystems always need to manually rename the files to lowercase. The `arx-install-data` script can be used to install the data files, convert them to lowercase and verify that all required files are present.
-
-To print all directories searched by arx, run
-
-    $ arx --list-dirs
-
-By default, user, config and data files will be loaded from and saved to standard system locations depending on the OS:
-
-**Windows**:
-* user and config dir:<br>
-*XP*: `%USERPROFILE%\My Documents\My Games\Arx Libertatis`<br>
-*Vista* and up: `%USERPROFILE%\Saved Games\Arx Libertatis`
-* data dir: location stored in `HKCU\Software\ArxLibertatis\DataDir` or `HKLM\Software\ArxLibertatis\DataDir` registry keys
-
-**macOS**:
-* user and config dir: `~/Library/Application Support/ArxLibertatis/`
-* data dir: `/Applications/ArxLibertatis/`
-
-**Linux** and others:
-* user dir: `~/.local/share/arx/`
-* config dir: `~/.config/arx/`
-* data dir: `/usr/share/games/arx/`, `/usr/local/share/games/arx/` and more
-
-Arx will also try to load data files from the directory containing the game executable.
-
-To use the current working directory for user, config and data files (e.g. for a portable install) run the game as
-
-    $ arx --no-data-dir --user-dir=. --config-dir=.
-
-## Run
-
-Provided the data files are installed at the correct location, you can simply play the game using the installed shortcut or by running
-
-    $ arx
-
-See the `arx --help` and `man arx` output for more details.
-
-## Tools
-
-* `arxunpak [options] <pakfile> [<pakfile>...]` <br>
-  Extracts Arx Fatalis .pak files containing the game assets. <br>
-  See the `arxunpak --help` and `man arxunpak` output for more details.
-
-* `arxunpak [options] [--all]` <br>
-  Extracts all game assets. <br>
-  See the `arxunpak --help` and `man arxunpak` output for more details.
-
-* `arxsavetool <command> <savefile> [<options>...]` - commands are:
-  * `extract <savefile>` <br>
-    Extract the contents of the given savefile to the current directory
-  * `add <savefile> [<files>...]` <br>
-    Add files to a savefile, create it if needed
-  * `fix <savefile>` <br>
-    Fix savegame issues created by previous builds of Arx Libertatis
-  * `view <savefile> [<ident>]` <br>
-    Print savegame information - leave out `<ident>` to list root files
-
-## Scripts
-
-The `arx-install-data` script can extract and install the game data under Linux and FreeBSD from the CD, demo, [GOG.com](https://www.gog.com/) installer or any Arx Fatalis install (such as on Steam) - simply run it and follow the GUI dialogs. Also see the [wiki page on installing the game data under non-Windows systems](https://arx.vg/install-data).
-
-Or, if you prefer a command-line interface, run it as
-
-    $ arx-install-data --cli
-
-More options and required tools (depending on the source file) are documented in the help output:
-
-    $ arx-install-data --help
-
-## Developer information
-
-New contributors should first read the CONTRIBUTING.md file.
-
-To build developer documentation (doxygen), run this from the build directory:
-
-    $ make doc
-
-To check for coding style problems, run the following: (requires python)
-
-    $ make style
+*This is an unofficial fan project. Not affiliated with, endorsed by, or
+connected to Arkane Studios or Bethesda Softworks. Arx Fatalis is their
+trademark.*

@@ -356,6 +356,72 @@ endif()
 include_directories(SYSTEM ${ZLIB_INCLUDE_DIRS})
 list(APPEND ARX_LIBRARIES ${ZLIB_LIBRARIES})
 
+# ENet, the transport for two player co-op
+list(APPEND ARX_LIBRARIES enet)
+if(WIN32)
+	# ENet needs Winsock and the multimedia timer on Windows
+	list(APPEND ARX_LIBRARIES ws2_32 winmm)
+endif()
+
+# libplum, so a host's router opens the co-op port by itself instead of the
+# host having to forward it by hand. Built straight into the executable rather
+# than linked as a library, so there is no extra DLL to ship.
+#
+# This copy carries thirdparty/libplum-multihomed.patch: upstream picks the
+# first default route and sends its UPnP discovery out of whatever interface
+# the routing table offers first, which on a machine running Radmin VPN or
+# Hamachi is the VPN rather than the real router.
+set(PLUM_DIR "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/libplum")
+file(GLOB PLUM_SOURCES "${PLUM_DIR}/src/*.c")
+add_library(plum STATIC ${PLUM_SOURCES})
+target_include_directories(plum PUBLIC "${PLUM_DIR}/include")
+target_include_directories(plum PRIVATE "${PLUM_DIR}/src")
+# Its own sources include "plum.h" unqualified, so that folder is on the path
+# too; only the parent is public, so the game says <plum/plum.h> as it should.
+target_include_directories(plum PRIVATE "${PLUM_DIR}/include/plum")
+target_compile_definitions(plum PUBLIC PLUM_STATIC)
+target_compile_definitions(plum PRIVATE PLUM_EXPORTS)
+find_package(Threads REQUIRED)
+target_link_libraries(plum PRIVATE Threads::Threads)
+if(WIN32)
+	target_compile_definitions(plum PRIVATE WIN32_LEAN_AND_MEAN)
+	# iphlpapi for the routing table, bcrypt for the random numbers UPnP needs
+	target_link_libraries(plum PRIVATE ws2_32 iphlpapi bcrypt)
+	list(APPEND ARX_LIBRARIES iphlpapi bcrypt)
+	# The rest of the game is compiled for Windows XP, but libplum needs calls
+	# that arrived with Vista - inet_pton, WSAPoll, condition variables. Raise
+	# the target for this one library only, so nothing else changes. These go
+	# through compile options rather than definitions because the undefine has
+	# to land before the redefine, and CMake puts options after definitions.
+	if(MSVC)
+		target_compile_options(plum PRIVATE /U_WIN32_WINNT /D_WIN32_WINNT=0x0600
+		                                    /UWINVER /DWINVER=0x0600)
+	else()
+		target_compile_options(plum PRIVATE -U_WIN32_WINNT -D_WIN32_WINNT=0x0600
+		                                    -UWINVER -DWINVER=0x0600)
+	endif()
+endif()
+include_directories(SYSTEM "${PLUM_DIR}/include")
+list(APPEND ARX_LIBRARIES plum)
+
+# Opus, the codec proximity voice speaks through. Built for exactly this: voice
+# at a low bitrate, in short frames, designed to survive lost packets.
+find_package(PkgConfig QUIET)
+pkg_check_modules(PC_Opus opus)
+if(PC_Opus_FOUND)
+	include_directories(SYSTEM ${PC_Opus_INCLUDE_DIRS})
+	link_directories(${PC_Opus_LIBRARY_DIRS})
+	list(APPEND ARX_LIBRARIES ${PC_Opus_LIBRARIES})
+else()
+	find_path(OPUS_INCLUDE_DIR opus/opus.h)
+	find_library(OPUS_LIBRARY NAMES opus)
+	if(NOT OPUS_INCLUDE_DIR OR NOT OPUS_LIBRARY)
+		message(FATAL_ERROR "Opus not found - needed for co-op voice chat")
+	endif()
+	include_directories(SYSTEM "${OPUS_INCLUDE_DIR}/opus")
+	list(APPEND ARX_LIBRARIES ${OPUS_LIBRARY})
+endif()
+
 # FreeType
 use_static_libs(Freetype)
 find_package(Freetype REQUIRED)
@@ -1142,6 +1208,15 @@ set(MATH_SOURCES
 	src/math/Random.cpp
 )
 
+set(NET_SOURCES
+	src/net/CoopInterp.cpp
+	src/net/CoopNet.cpp
+	src/net/CoopPortMap.cpp
+	src/net/CoopVoice.cpp
+	src/net/CoopPlayer.cpp
+	src/net/CoopWorld.cpp
+)
+
 set(PHYSICS_SOURCES
 	src/physics/Attractors.cpp
 	src/physics/Collisions.cpp
@@ -1407,6 +1482,7 @@ set(ARX_SOURCES
 	${INPUT_SOURCES}
 	${IO_SOURCES}
 	${MATH_SOURCES}
+	${NET_SOURCES}
 	${PHYSICS_SOURCES}
 	${PLATFORM_SOURCES}
 	${PLATFORM_GUI_SOURCES}

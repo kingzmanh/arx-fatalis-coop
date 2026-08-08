@@ -79,11 +79,13 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 #include "graphics/particle/ParticleEffects.h"
 #include "graphics/particle/Spark.h"
 
+#include "io/log/Logger.h"
 #include "io/resource/ResourcePath.h"
 
 #include "math/Random.h"
 #include "math/Vector.h"
 
+#include "net/CoopPlayer.h"
 #include "physics/Collisions.h"
 
 #include "platform/Platform.h"
@@ -691,7 +693,23 @@ bool ARX_EQUIPMENT_Strike_Check(Entity * io_source, Entity * io_weapon, float ra
 							}
 						}
 
-						if(io_source == entities.player()) {
+						/*
+						 * A weapon wears against the world, never against your
+						 * companion.
+						 *
+						 * This charge is levied once per FRAME the blade is
+						 * inside a target - about three points across a single
+						 * swing. In the original game the only bodies in reach
+						 * were enemies you meant to hit, so that was fair. The
+						 * other player, though, stands beside you constantly,
+						 * and an ordinary swing at empty air clips them: three
+						 * points a swing against a bone, which has four, so it
+						 * shattered in your hands for nothing.
+						 */
+						if(io_source == entities.player() && !coop::isAvatarEntity(target)) {
+							LogWarning << "[coop-wear] IN-TARGET " << target->idString()
+							           << " charge=" << (g_framedelay * 0.006f)
+							           << " durability=" << io_weapon->durability;
 							ARX_DAMAGES_DurabilityCheck(io_weapon, g_framedelay * 0.006f);
 						}
 					}
@@ -767,6 +785,8 @@ bool ARX_EQUIPMENT_Strike_Check(Entity * io_source, Entity * io_weapon, float ra
 
 					if(HIT_SPARK) {
 						if(!io_source->isHit) {
+							LogWarning << "[coop-wear] HARD-OBJECT " << target->idString()
+							           << " charge=1.0 durability=" << io_weapon->durability;
 							ARX_DAMAGES_DurabilityCheck(io_weapon, 1.f);
 							io_source->isHit = true;
 							
@@ -789,6 +809,8 @@ bool ARX_EQUIPMENT_Strike_Check(Entity * io_source, Entity * io_weapon, float ra
 		if(ep) {
 			if(io_source == entities.player()) {
 				if(!io_source->isHit) {
+					LogWarning << "[coop-wear] LEVEL-GEOMETRY charge=1.0 durability="
+					           << io_weapon->durability;
 					ARX_DAMAGES_DurabilityCheck(io_weapon, 1.f);
 					io_source->isHit = true;
 					

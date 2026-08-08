@@ -1,0 +1,3733 @@
+diff --git a/.gitignore b/.gitignore
+index fa1a081..6dabb25 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -5,3 +5,20 @@
+ !/.travis.yml
+ !/.github
+ /build
++
++# NEVER PUBLISH THESE.
++#
++# /game holds a playable copy of Arx Fatalis - the .pak archives, the level
++# data, the speech - which belongs to Arkane Studios / ZeniMax. Our code is
++# GPLv3 and public; their data is neither, and uploading it would be piracy,
++# not a mod release. Players bring their own copy from Steam or GOG.
++/game
++/best
++/best-2
++/best-3
++/best-4
++*.pak
++
++# Local test artefacts, not part of the work.
++/coop_sync
++/coop_join
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index af0a0eb..f9c71b1 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -356,6 +356,13 @@ endif()
+ include_directories(SYSTEM ${ZLIB_INCLUDE_DIRS})
+ list(APPEND ARX_LIBRARIES ${ZLIB_LIBRARIES})
+ 
++# ENet, the transport for two player co-op
++list(APPEND ARX_LIBRARIES enet)
++if(WIN32)
++	# ENet needs Winsock and the multimedia timer on Windows
++	list(APPEND ARX_LIBRARIES ws2_32 winmm)
++endif()
++
+ # FreeType
+ use_static_libs(Freetype)
+ find_package(Freetype REQUIRED)
+@@ -1142,6 +1149,13 @@ set(MATH_SOURCES
+ 	src/math/Random.cpp
+ )
+ 
++set(NET_SOURCES
++	src/net/CoopInterp.cpp
++	src/net/CoopNet.cpp
++	src/net/CoopPlayer.cpp
++	src/net/CoopWorld.cpp
++)
++
+ set(PHYSICS_SOURCES
+ 	src/physics/Attractors.cpp
+ 	src/physics/Collisions.cpp
+@@ -1407,6 +1421,7 @@ set(ARX_SOURCES
+ 	${INPUT_SOURCES}
+ 	${IO_SOURCES}
+ 	${MATH_SOURCES}
++	${NET_SOURCES}
+ 	${PHYSICS_SOURCES}
+ 	${PLATFORM_SOURCES}
+ 	${PLATFORM_GUI_SOURCES}
+diff --git a/src/ai/Paths.cpp b/src/ai/Paths.cpp
+index 954d72a..1f4f1cd 100644
+--- a/src/ai/Paths.cpp
++++ b/src/ai/Paths.cpp
+@@ -64,12 +64,16 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+ 
+ #include "math/Random.h"
+ 
++#include "net/CoopNet.h"
++#include "net/CoopPlayer.h"
++
+ #include "platform/Platform.h"
+ #include "platform/profiler/Profiler.h"
+ 
+ #include "scene/GameSound.h"
+ 
+ #include "script/Script.h"
++#include "io/log/Logger.h"
+ 
+ std::vector<Zone> g_zones;
+ std::vector<Path> g_paths;
+@@ -146,32 +150,75 @@ static Zone * ARX_PATH_CheckPlayerInZone() {
+ 	return ARX_PATH_CheckInZone(player.pos + Vec3f(0.f, 160.f, 0.f));
+ }
+ 
++/*!
++ * The name a zone controller should know this entity by.
++ *
++ * Zone scripts guard everything with `IF (^$PARAM1 != PLAYER) ACCEPT`: traps,
++ * ambushes, pressure plates all fire for a player and for nobody else. The
++ * second player's body is an entity named coop_player_0001, a name no zone
++ * script has heard of, so every trigger in the game let them walk through
++ * untouched. To the zones, both of them are "player".
++ */
++static std::string zoneIdString(const Entity * io) {
++
++	if(coop::isAvatarEntity(io)) {
++		return "player";
++	}
++
++	return io->idString();
++}
++
+ static void EntityEnteringCurrentZone(Entity * io, Zone * current) {
+-	
++
+ 	io->inzone_show = io->show;
+-	
++
+ 	SendIOScriptEvent(nullptr, io, SM_ENTERZONE, current->name);
+-	
++
+ 	if(Entity * controller = entities.getById(current->controled)) {
+ 		ScriptParameters parameters;
+-		parameters.push_back(io->idString());
++		parameters.push_back(zoneIdString(io));
+ 		parameters.push_back(current->name);
++		// While the controller script runs, "player" means whoever actually
++		// stepped in - so DODAMAGE PLAYER in a trap script burns the player
++		// standing on it, not the other one across the level.
++		coop::ScopedPlayerContext context(io);
+ 		SendIOScriptEvent(nullptr, controller, SM_CONTROLLEDZONE_ENTER, parameters);
+ 	}
+-	
++
+ }
+ 
+ static void EntityLeavingLastZone(Entity * io, Zone * last) {
+-	
++
++	// The first player's travel icon is cleared by the engine when they leave
++	// any zone; the second player's travel offer is withdrawn the same way.
++	if(coop::isAvatarEntity(io)) {
++		coop::sendTravelCancel();
++	}
++
+ 	SendIOScriptEvent(nullptr, io, SM_LEAVEZONE, last->name);
+-	
++
+ 	if(Entity * controller = entities.getById(last->controled)) {
+ 		ScriptParameters parameters;
+-		parameters.push_back(io->idString());
++		parameters.push_back(zoneIdString(io));
+ 		parameters.push_back(last->name);
++		coop::ScopedPlayerContext context(io);
+ 		SendIOScriptEvent(nullptr, controller, SM_CONTROLLEDZONE_LEAVE, parameters);
+ 	}
+-	
++
++}
++
++Zone * ARX_PATH_GetPlayerZone() {
++	return ARX_PATH_CheckPlayerInZone();
++}
++
++void ARX_PATH_EntityEnterZone(Entity * io, Zone * zone) {
++	EntityEnteringCurrentZone(io, zone);
++	io->inzone = zone;
++}
++
++void ARX_PATH_EntityLeaveZone(Entity * io, Zone * zone) {
++	EntityLeavingLastZone(io, zone);
++	io->inzone = nullptr;
+ }
+ 
+ void ARX_PATH_UpdateAllZoneInOutInside() {
+@@ -195,6 +242,11 @@ void ARX_PATH_UpdateAllZoneInOutInside() {
+ 			
+ 			if(   count < entities.size()
+ 			   && io
++			   // The other player's body is driven by their reported crossings
++			   // (MsgZoneEnter), which are frame-exact; detecting it here from
++			   // the lag-smoothed replicated position would double-fire every
++			   // zone a few hundred milliseconds late.
++			   && !coop::isAvatarEntity(io)
+ 			   && io->ioflags & (IO_NPC | IO_ITEM)
+ 			   && io->show != SHOW_FLAG_MEGAHIDE
+ 			) {
+@@ -224,38 +276,51 @@ void ARX_PATH_UpdateAllZoneInOutInside() {
+ 		}
+ 	}
+ 
+-	// player check*************************************************
+-	{
+-		Zone * current = ARX_PATH_CheckPlayerInZone();
+-		Zone * last = entities.player()->inzone;
++	ARX_PATH_UpdatePlayerZone();
++	
++}
+ 
+-		if(current != last) {
+-			
+-			if(last) {
+-				CHANGE_LEVEL_ICON = NoChangeLevel;
+-				EntityLeavingLastZone(entities.player(), last);
++/*!
++ * The local player's own zone crossings, exactly as vanilla runs them.
++ *
++ * In co-op this runs on EVERY machine for its OWN player - doors, ambiances
++ * and fog belong to whoever walks through them, and routing them through the
++ * other machine was the root of every hole-travel bug: a chain that never
++ * needed to cross the wire kept getting lost crossing it.
++ */
++void ARX_PATH_UpdatePlayerZone() {
++	
++	Zone * current = ARX_PATH_CheckPlayerInZone();
++	Zone * last = entities.player()->inzone;
++
++	if(current != last) {
++		
++		if(last) {
++			LogWarning << "[coop-chain] player left zone '" << last->name << "'";
++			CHANGE_LEVEL_ICON = NoChangeLevel;
++			EntityLeavingLastZone(entities.player(), last);
++		}
++		
++		if(current) {
++			if(!current->ambiance.empty()) {
++				ARX_SOUND_PlayZoneAmbiance(current->ambiance, ARX_SOUND_PLAY_LOOPED, current->amb_max_vol * 0.01f);
+ 			}
+-			
+-			if(current) {
+-				if(!current->ambiance.empty()) {
+-					ARX_SOUND_PlayZoneAmbiance(current->ambiance, ARX_SOUND_PLAY_LOOPED, current->amb_max_vol * 0.01f);
+-				}
+-				if(current->flags & PATH_FARCLIP) {
+-					g_desiredFogParameters.flags |= GMOD_ZCLIP;
+-					g_desiredFogParameters.zclip = current->farclip;
+-				}
+-				if(current->flags & PATH_RGB) {
+-					g_desiredFogParameters.flags |= GMOD_DCOLOR;
+-					g_desiredFogParameters.depthcolor = current->rgb;
+-				}
+-				EntityEnteringCurrentZone(entities.player(), current);
++			if(current->flags & PATH_FARCLIP) {
++				g_desiredFogParameters.flags |= GMOD_ZCLIP;
++				g_desiredFogParameters.zclip = current->farclip;
+ 			}
+-			
++			if(current->flags & PATH_RGB) {
++				g_desiredFogParameters.flags |= GMOD_DCOLOR;
++				g_desiredFogParameters.depthcolor = current->rgb;
++			}
++			LogWarning << "[coop-chain] player entered zone '" << current->name
++			           << "' (controller '" << current->controled << "')";
++			EntityEnteringCurrentZone(entities.player(), current);
+ 		}
+ 		
+-		entities.player()->inzone = current;
+ 	}
+ 	
++	entities.player()->inzone = current;
+ }
+ 
+ Zone::Zone(std::string && _name, const Vec3f & _pos) noexcept
+diff --git a/src/ai/Paths.h b/src/ai/Paths.h
+index f46feb5..5ae418e 100644
+--- a/src/ai/Paths.h
++++ b/src/ai/Paths.h
+@@ -151,6 +151,21 @@ extern std::vector<Zone> g_zones;
+ extern std::vector<Path> g_paths;
+ 
+ void ARX_PATH_UpdateAllZoneInOutInside();
++void ARX_PATH_UpdatePlayerZone();
++
++//! The zone the local player is standing in right now, or nullptr.
++[[nodiscard]] Zone * ARX_PATH_GetPlayerZone();
++
++/*!
++ * Fire the zone enter/leave machinery for one entity against one zone.
++ *
++ * Used by co-op to apply the other player's *reported* zone crossings: their
++ * machine knows the exact frame their body crossed, while our replicated copy
++ * of that body trails by a few hundred milliseconds. The reported crossing
++ * runs the same events the local detection would have.
++ */
++void ARX_PATH_EntityEnterZone(Entity * io, Zone * zone);
++void ARX_PATH_EntityLeaveZone(Entity * io, Zone * zone);
+ long ARX_PATH_IsPosInZone(const Zone * ap, Vec3f pos);
+ void ARX_PATH_ClearAllUsePath();
+ void ARX_PATH_ReleaseAllPath();
+diff --git a/src/cinematic/CinematicController.cpp b/src/cinematic/CinematicController.cpp
+index e26393c..34fcb81 100644
+--- a/src/cinematic/CinematicController.cpp
++++ b/src/cinematic/CinematicController.cpp
+@@ -41,6 +41,7 @@
+ #include "input/Input.h"
+ 
+ #include "window/RenderWindow.h"
++#include "net/CoopNet.h"
+ 
+ enum CinematicState {
+ 	Cinematic_Stopped,
+@@ -94,6 +95,23 @@ void cinematicLaunchWaiting() {
+ 		return;
+ 	}
+ 
++	/*
++	 * The guest never plays lockout cinematics. Story beats belong to the
++	 * host's screen; on the guest they arrive by side effect of shared state
++	 * (joining a fresh game replayed the opening dream over the player, with
++	 * their controls locked under it). Skipping means performing the ENDING
++	 * instantly - the scripts that froze the player are waiting for
++	 * SM_CINE_END to let go, and they get it on the spot.
++	 */
++	if(coop::isGuest() && coop::isPlaying() && !CINE_PRELOAD) {
++		LogInfo << "[coop] skipping cinematic " << WILL_LAUNCH_CINE << " on the guest";
++		LAST_LAUNCHED_CINE = WILL_LAUNCH_CINE;
++		WILL_LAUNCH_CINE.clear();
++		ARX_SPEECH_Reset();
++		SendMsgToAllIO(nullptr, SM_CINE_END, LAST_LAUNCHED_CINE);
++		return;
++	}
++
+ 	LogDebug("LaunchWaitingCine " << CINE_PRELOAD);
+ 	
+ 	if(g_camera) {
+diff --git a/src/core/ArxGame.cpp b/src/core/ArxGame.cpp
+index b430ed8..0e9e866 100644
+--- a/src/core/ArxGame.cpp
++++ b/src/core/ArxGame.cpp
+@@ -135,6 +135,10 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+ #include "math/Rectangle.h"
+ #include "math/Vector.h"
+ 
++#include "net/CoopNet.h"
++#include "net/CoopPlayer.h"
++#include "net/CoopWorld.h"
++
+ #include "physics/Attractors.h"
+ 
+ #include "io/fs/FilePath.h"
+@@ -1066,6 +1070,12 @@ void ArxGame::onDroppedFile(const Window & /* window */, const fs::path & path)
+ 	g_saveToLoad = path;
+ }
+ 
++void ARX_RequestLoadSaveFile(const fs::path & savefile) {
++	// The same door drag-and-drop uses: queue the file, the frame loop loads
++	// it - from the menu or from inside a game, the engine's own way.
++	g_saveToLoad = savefile;
++}
++
+ /*!
+  * \brief Message-processing loop. Idle time is used to render the scene.
+  */
+@@ -1076,14 +1086,24 @@ void ArxGame::run() {
+ 		ARX_PROFILE(Main Loop);
+ 		
+ 		platform::reapZombies();
+-		
+-		if(m_MainWindow->isVisible() && !m_MainWindow->isMinimized() && m_bReady) {
++
++		/*
++		 * Normally the game sleeps on the event queue while its window is
++		 * hidden, since nobody is watching. That is exactly wrong during a
++		 * co-op session: the other player is still playing, and a host that
++		 * stops running is a host that stops answering, so their world would
++		 * freeze the moment this one alt-tabbed away. While a session is up we
++		 * keep stepping regardless of whether anyone here is looking.
++		 */
++		bool onScreen = m_MainWindow->isVisible() && !m_MainWindow->isMinimized();
++
++		if(m_bReady && (onScreen || coop::isActive())) {
+ 			doFrame();
+ 			m_MainWindow->processEvents(/*waitForEvent = */false);
+ 		} else {
+ 			m_MainWindow->processEvents(/*waitForEvent = */true);
+ 		}
+-		
++
+ 	}
+ 	
+ 	benchmark::begin(benchmark::Shutdown);
+@@ -1125,7 +1145,26 @@ void ArxGame::doFrame() {
+ 	}
+ 	
+ 	ARX_PROFILE_FUNC();
+-	
++
++	/*
++	 * A fullscreen window minimises itself when it loses focus, which would
++	 * hide the game behind the check in run() above and stop it dead. Suppress
++	 * that for as long as a session is running, and put the player's own
++	 * preference back when it ends.
++	 */
++	{
++		static bool suppressingMinimize = false;
++		bool suppress = coop::isActive();
++		if(suppress != suppressingMinimize) {
++			suppressingMinimize = suppress;
++			m_MainWindow->setMinimizeOnFocusLost(suppress ? false : config.window.minimizeOnFocusLost);
++		}
++	}
++
++	// Take delivery of everything the other player sent before this frame reads
++	// any of it, so a frame never sees half of an update.
++	coop::poll();
++
+ 	updateTime();
+ 
+ 	updateInput();
+@@ -1158,7 +1197,8 @@ void ArxGame::doFrame() {
+ 	           && GInput->actionPressed(CONTROLS_CUST_JUMP)))) {
+ 		// TODO allow binding the same key to multiple actions so that we can have a separate binding for this
+ 		benchmark::begin(benchmark::LoadLevel);
+-		LogDebug("teleport to " << g_teleportToArea << " " << TELEPORT_TO_POSITION << " " << TELEPORT_TO_ANGLE);
++		LogWarning << "[coop-chain] consuming travel: area " << g_teleportToArea
++		           << " target '" << TELEPORT_TO_POSITION << "'";
+ 		CHANGE_LEVEL_ICON = NoChangeLevel;
+ 		ARX_CHANGELEVEL_Change(g_teleportToArea, TELEPORT_TO_POSITION, float(TELEPORT_TO_ANGLE));
+ 		g_teleportToArea = { };
+@@ -1215,6 +1255,61 @@ void ArxGame::doFrame() {
+ 		render();
+ 		m_MainWindow->showFrame();
+ 	}
++
++	// Publish this frame's results last, so what the other player receives is
++	// the world as it stands after everything has moved, not halfway through.
++	coop::flush();
++
++	/*
++	 * Render probe. A black screen has four usual suspects - nothing drawn, a
++	 * stuck fade, a paused clock, a lost camera - and they are indistinguishable
++	 * from a screenshot. One log line every few seconds names the culprit
++	 * outright instead of leaving it to guesswork.
++	 */
++	if(coop::isActive()) {
++
++		/*
++		 * Stuck-fade breaker.
++		 *
++		 * Level scripts black the screen out with `worldfade out` and fade it
++		 * back in from a script timer a moment later. A guest sharing the
++		 * host's area does not run script timers - that is what keeps it from
++		 * simulating the world twice - so it would get the fade out and wait
++		 * forever for a fade in that is never coming. No legitimate fade lasts
++		 * anywhere near this long; one that does is a curtain nobody is going
++		 * to raise, so raise it ourselves.
++		 */
++		static PlatformInstant fadeOutSince = 0;
++		PlatformInstant now = platform::getTime();
++		if(FADEDIR == -1) {
++			if(fadeOutSince == 0) {
++				fadeOutSince = now;
++			} else if(now - fadeOutSince > 5s) {
++				LogWarning << "[coop] a fade to black was never faded back in; clearing it";
++				fadeReset();
++				fadeOutSince = 0;
++			}
++		} else {
++			fadeOutSince = 0;
++		}
++
++		static PlatformInstant lastProbe = 0;
++		if(now - lastProbe > 5s) {
++			lastProbe = now;
++			RoomHandle camRoom = ARX_PORTALS_GetRoomNumForPosition(g_playerCamera.m_pos, RoomPositionForCamera);
++			LogInfo << "[coop-render] polys=" << EERIEDrawnPolys
++			        << " campos=" << g_playerCamera.m_pos.x << "," << g_playerCamera.m_pos.y
++			        << "," << g_playerCamera.m_pos.z
++			        << " camroom=" << camRoom
++			        << " zclip=" << g_currentFogParameters.zclip
++			        << " cdepth=" << g_playerCamera.cdepth
++			        << " fade=" << FADEDIR
++			        << " paused=" << u32(g_gameTime.isPaused())
++			        << " menumode=" << int(ARXmenu.mode())
++			        << " levelinit=" << g_requestLevelInit
++			        << " area=" << g_currentArea;
++		}
++	}
+ }
+ 
+ void ArxGame::updateFirstPersonCamera() {
+@@ -1447,7 +1542,8 @@ void ArxGame::handlePlayerDeath() {
+ 		GameDuration startTime = 2s;
+ 		GameDuration endTime = 7s;
+ 
+-		float DeadCameraDistance = startDistance + (mdist - startDistance) * ((player.DeadTime - startTime) / (endTime - startTime));
++		float deathProgress = glm::clamp((player.DeadTime - startTime) / (endTime - startTime), 0.f, 1.f);
++		float DeadCameraDistance = startDistance + (mdist - startDistance) * deathProgress;
+ 		
+ 		VertexId id  = entities.player()->obj->fastaccess.view_attach;
+ 		Vec3f targetpos = id ? entities.player()->obj->vertexWorldPositions[id].v : player.pos;
+@@ -1603,9 +1699,19 @@ void ArxGame::updateLevel() {
+ 	arx_assert(entities.player());
+ 	
+ 	ARX_PROFILE_FUNC();
+-	
++
+ 	g_renderBatcher.clear();
+-	
++
++	/*
++	 * When we are the guest and the host is standing in the same area, that
++	 * area is theirs to run. Giving every enemy in it a second brain here would
++	 * produce two versions of the same fight that disagree with each other, so
++	 * the local simulation of the world steps aside and the replicated state
++	 * takes its place. Everything about our own character - movement, camera,
++	 * inventory, spells - keeps running normally either way.
++	 */
++	const bool worldIsRemote = coop::isReplica();
++
+ 	if(!player.m_paralysed) {
+ 		manageEditorControls();
+ 
+@@ -1613,7 +1719,7 @@ void ArxGame::updateLevel() {
+ 			managePlayerControls();
+ 		}
+ 	}
+-	
++
+ 	{
+ 		ARX_PROFILE("Entity preprocessing");
+ 		
+@@ -1683,7 +1789,16 @@ void ArxGame::updateLevel() {
+ 	}
+ 
+ 	updateFirstPersonCamera();
+-	
++
++	/*
++	 * Script timers run on replicas too. The levels drive their own player
++	 * rituals through them - hole arrivals teleport via a 50ms timer, fades,
++	 * invulnerability windows, cutscene sequencing - and a guest with frozen
++	 * timers is left stranded mid-ritual (parked on the void marker above the
++	 * crypt, stuck under a fade that never comes back). Whatever a local timer
++	 * does to world entities is reconciled by the host's snapshots, the same
++	 * as script events, which always ran on replicas.
++	 */
+ 	ARX_SCRIPT_Timer_Check();
+ 
+ 	speechControlledCinematic();
+@@ -1713,9 +1828,19 @@ void ArxGame::updateLevel() {
+ 		ARX_INTERACTIVE_Show_Hide_1st(entities.player(), true);
+ 	}
+ 	
++	// Give the other player a body, move it to where they say they are, and
++	// play whatever they are playing. Done before the treat zone is built so
++	// that the body is already in place when the zone is decided.
++	coop::updateAvatar();
++
+ 	PrepareIOTreatZone();
+-	ARX_PHYSICS_Apply();
+-	
++
++	if(!worldIsRemote) {
++		ARX_PHYSICS_Apply();
++	} else {
++		coop::smoothReplicatedEntities();
++	}
++
+ 	PrecalcIOLighting(g_camera->m_pos, g_camera->cdepth * 0.6f);
+ 	
+ 	ARX_SCENE_Update();
+@@ -1724,7 +1849,9 @@ void ArxGame::updateLevel() {
+ 
+ 	ARX_FOGS_Render();
+ 
+-	TreatBackgroundActions();
++	if(!worldIsRemote) {
++		TreatBackgroundActions();
++	}
+ 
+ 	// Checks Magic Flares Drawing
+ 	if(!player.m_paralysed) {
+@@ -1876,6 +2003,7 @@ void ArxGame::renderLevel() {
+ 	   !BLOCK_PLAYER_CONTROLS &&
+ 	   !(player.Interface & INTER_PLAYERBOOK)) {
+ 		g_miniMap.showPlayerMiniMap(getMapLevelForArea(g_currentArea));
++		coop::drawPartnerHud();
+ 	}
+ 	
+ 	ARX_INTERFACE_RenderCursor(false);
+@@ -1996,12 +2124,30 @@ void ArxGame::render() {
+ 	
+ 	if(ARXmenu.mode() == Mode_InGame) {
+ 		ARX_SCRIPT_AllowInterScriptExec();
+-		ARX_SCRIPT_EventStackExecute();
+-		// Updates Damages Spheres
+-		ARX_DAMAGES_UpdateAll();
+-		ARX_MISSILES_Update();
+-
+-		ARX_PATH_UpdateAllZoneInOutInside();
++		/*
++		 * Script side effects, damage fields and zone triggers all belong to
++		 * whoever owns the area. Running them on a guest as well would fire
++		 * every trap twice and burn the guest with their own copy of a fire
++		 * field the host is already burning them with.
++		 */
++		if(!coop::isReplica()) {
++			ARX_SCRIPT_EventStackExecute();
++			// Updates Damages Spheres
++			ARX_DAMAGES_UpdateAll();
++			ARX_MISSILES_Update();
++
++			ARX_PATH_UpdateAllZoneInOutInside();
++		} else {
++			/*
++			 * A replica does not run OTHER entities' zones - but its own
++			 * player's crossings run locally, the same vanilla path the host
++			 * uses for itself. Doors and their travel never touch the wire.
++			 * The report still goes out so the authority fires the zone for
++			 * this player's story and AI purposes too.
++			 */
++			ARX_PATH_UpdatePlayerZone();
++			coop::reportLocalZone();
++		}
+ 	}
+ 
+ 	LastMouseClick = EERIEMouseButton;
+diff --git a/src/core/Core.h b/src/core/Core.h
+index 6448676..db5135a 100644
+--- a/src/core/Core.h
++++ b/src/core/Core.h
+@@ -120,6 +120,10 @@ extern Vec3f LastValidPlayerPos;
+ void SetEditMode();
+ 
+ void DANAE_StartNewQuest();
++extern bool START_NEW_QUEST;
++
++namespace fs { class path; }
++void ARX_RequestLoadSaveFile(const fs::path & savefile);
+ bool AdjustUI();
+ 
+ void levelInit();
+diff --git a/src/game/Damage.cpp b/src/game/Damage.cpp
+index ab6a8b3..7df37b3 100644
+--- a/src/game/Damage.cpp
++++ b/src/game/Damage.cpp
+@@ -94,6 +94,10 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+ #include "math/Random.h"
+ #include "math/RandomVector.h"
+ 
++#include "net/CoopNet.h"
++#include "net/CoopPlayer.h"
++#include "net/CoopWorld.h"
++
+ #include "physics/Collisions.h"
+ #include "platform/profiler/Profiler.h"
+ 
+@@ -301,7 +305,31 @@ static ScriptParameters getHitEventParameters(float dmg, Entity * source, Spell
+ 	ScriptParameters parameters(dmg);
+ 	
+ 	// Second parameter: weapon category
+-	if(source == entities.player()) {
++	if(coop::isAvatarEntity(source)) {
++
++		/*
++		 * A blow from the second player has to look to the script exactly like
++		 * a blow from the first, or the creature will not treat it as one. What
++		 * it was struck with lives on the other machine; the class of weapon
++		 * hanging off the body here is enough to name it.
++		 */
++		if(spell || (type & DAMAGE_TYPE_FAKESPELL)) {
++			parameters.emplace_back("spell");
++		} else if(Entity * weapon = source->_npcdata ? source->_npcdata->weapon : nullptr) {
++			if(weapon->type_flags & OBJECT_TYPE_DAGGER) {
++				parameters.emplace_back("dagger");
++			} else if(weapon->type_flags & OBJECT_TYPE_2H) {
++				parameters.emplace_back("2h");
++			} else if(weapon->type_flags & OBJECT_TYPE_BOW) {
++				parameters.emplace_back("arrow");
++			} else {
++				parameters.emplace_back("1h");
++			}
++		} else {
++			parameters.emplace_back("bare");
++		}
++
++	} else if(source == entities.player()) {
+ 		if(spell || (type & DAMAGE_TYPE_FAKESPELL)) {
+ 			parameters.emplace_back("spell");
+ 		} else {
+@@ -431,6 +459,12 @@ float damagePlayer(float dmg, DamageType type, Entity * source) {
+ 		entities.player()->dmg_sum = 0.f;
+ 	}
+ 	
++	if(coop::localPlayerArrivalProtected()) {
++		// Fresh out of a loading screen: a moment of calm before anything can
++		// hurt them, the way every co-op game shields an arrival.
++		dmg = 0.f;
++	}
++	
+ 	if(dmg > 0.f) {
+ 		
+ 		if(source) {
+@@ -459,6 +493,7 @@ float damagePlayer(float dmg, DamageType type, Entity * source) {
+ 		if(player.lifePool.current <= 0.f) {
+ 			player.lifePool.current = 0.f;
+ 			if(wasAlive) {
++				coop::reportDeath();
+ 				ARX_PLAYER_BecomesDead();
+ 				if((type & DAMAGE_TYPE_FIRE) || (type & DAMAGE_TYPE_FAKEFIRE)) {
+ 					ARX_SOUND_PlayInterface(g_snd.PLAYER_DEATH_BY_FIRE);
+@@ -570,13 +605,22 @@ static float ARX_DAMAGES_DrainMana(Entity * io, float dmg) {
+ }
+ 
+ void damageProp(Entity & prop, float dmg, Entity * source, Spell * spell, DamageType type) {
+-	
++
+ 	arx_assert(prop.ioflags & IO_FIX);
+-	
++
+ 	if((prop.ioflags & IO_INVULNERABILITY) || !prop.script.valid) {
+ 		return;
+ 	}
+-	
++
++	// Same rule as for creatures: on a guest, the scenery is the host's, so our
++	// blows are forwarded and everything else is left to them.
++	if(coop::isReplica() && !coop::isApplyingRemote()) {
++		if(source == entities.player() && dmg > 0.f) {
++			coop::requestHit(prop, dmg, u32(type));
++		}
++		return;
++	}
++
+ 	prop.dmg_sum += dmg;
+ 	
+ 	GameDuration elapsed = g_gameTime.now() - prop.ouch_time;
+@@ -702,11 +746,24 @@ static void pushEntity(Entity & entity, const Entity & source, float power) {
+ }
+ 
+ void damageCharacter(Entity & entity, float dmg, Entity & source, Spell * spell, DamageType flags, Vec3f * pos) {
+-	
++
+ 	if(flags & DAMAGE_TYPE_PER_SECOND) {
+ 		dmg = dmg * (g_gameTime.lastFrameDuration() / 1s);
+ 	}
+-	
++
++	/*
++	 * A hit on the other player - a sword swing, a fireball, a poison cloud -
++	 * is settled on their machine, which is where their health, their poison
++	 * resistance and their armour actually are. Everything about it that we
++	 * could compute here would be computed from the wrong character sheet.
++	 */
++	if(coop::isAvatarEntity(&entity)) {
++		if(dmg > 0.f && !coop::isApplyingRemote()) {
++			coop::reportPlayerDamage(dmg, u32(flags));
++		}
++		return;
++	}
++
+ 	float damagesdone;
+ 	if(entity == *entities.player()) {
+ 		
+@@ -773,14 +830,40 @@ void damageCharacter(Entity & entity, float dmg, Entity & source, Spell * spell,
+ }
+ 
+ float damageNpc(Entity & npc, float dmg, Entity * source, Spell * spell, DamageType type, const Vec3f * pos) {
+-	
++
+ 	arx_assert(npc.ioflags & IO_NPC);
+ 	arx_assert(npc != *entities.player());
+-	
++
+ 	if((npc.ioflags & IO_INVULNERABILITY)) {
+ 		return 0.f;
+ 	}
+-	
++
++	/*
++	 * The other player's body is not an NPC with a health bar of its own - it
++	 * is a stand-in for a character whose real health lives on their machine.
++	 * Applying the hit here would drain a copy nobody reads. Send it to them
++	 * instead, and let their own damagePlayer() decide what it costs them.
++	 */
++	if(coop::isAvatarEntity(&npc)) {
++		if(dmg > 0.f && !coop::isApplyingRemote()) {
++			coop::reportPlayerDamage(dmg, u32(type));
++		}
++		return 0.f;
++	}
++
++	/*
++	 * On a guest sharing the host's area the enemies belong to the host. Our
++	 * own blows are forwarded so they land once, on the copy that counts;
++	 * anything else reaching here is our echo of damage the host is already
++	 * applying, and applying it again would kill everything twice as fast.
++	 */
++	if(coop::isReplica() && !coop::isApplyingRemote()) {
++		if(source == entities.player() && dmg > 0.f) {
++			coop::requestHit(npc, dmg, u32(type));
++		}
++		return 0.f;
++	}
++
+ 	if(npc._npcdata->lifePool.current <= 0.f) {
+ 		if((source != entities.player() || entities.get(player.equiped[EQUIP_SLOT_WEAPON]))
+ 		   && dmg >= npc._npcdata->lifePool.max * 0.4f && pos) {
+diff --git a/src/game/Entity.cpp b/src/game/Entity.cpp
+index 8078bae..c58cf33 100644
+--- a/src/game/Entity.cpp
++++ b/src/game/Entity.cpp
+@@ -71,6 +71,9 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+ 
+ #include "scene/ChangeLevel.h"
+ #include "scene/GameSound.h"
++#include "net/CoopNet.h"
++#include "net/CoopWorld.h"
++
+ #include "scene/Interactive.h"
+ #include "scene/Light.h"
+ #include "scene/LinkedObject.h"
+@@ -251,6 +254,14 @@ res::path Entity::instancePath() const {
+ 
+ void Entity::setOwner(Entity * owner) {
+ 	
++	if(m_owner && !ValidIOAddress(m_owner)) {
++		// The owner is already freed memory: there is nothing to cleanly
++		// detach from, and dereferencing it was this bug's whole crash
++		// family. Forget it instead of touching it.
++		LogWarning << "[coop] " << idString() << " lost its owner; detaching";
++		m_owner = nullptr;
++	}
++	
+ 	if(m_owner != owner) {
+ 		
+ 		if(m_owner) {
+@@ -280,6 +291,20 @@ void Entity::setOwner(Entity * owner) {
+ 
+ void Entity::updateOwner() {
+ 	
++	if(m_owner && !ValidIOAddress(m_owner)) {
++		/*
++		 * The owner is already gone - a teardown sweep freed it before us.
++		 * Crashing here taught us nothing; healing and NAMING the pair in the
++		 * log is how the real bookkeeping bug gets found.
++		 */
++		LogWarning << "[coop] " << idString() << " had a dangling owner; clearing it";
++		m_owner = nullptr;
++		if(show == SHOW_FLAG_LINKED || show == SHOW_FLAG_ON_PLAYER) {
++			show = SHOW_FLAG_IN_SCENE;
++		}
++		return;
++	}
++	
+ 	if(m_owner) {
+ 		
+ 		if(player.torch == this) {
+@@ -318,6 +343,19 @@ void Entity::updateOwner() {
+ 
+ void Entity::cleanReferences() {
+ 	
++	/*
++	 * Anything that still calls us owner lets go here, while we are still a
++	 * whole entity to detach from - not later, as freed memory. Vanilla only
++	 * ever destroyed entities at level teardown, where order never mattered;
++	 * a shared world removes NPCs mid-play, and their held weapons survived
++	 * with a dangling owner (long_sword_0021, found by the crash guards).
++	 */
++	for(Entity & other : entities) {
++		if(&other != this && other.owner() == this) {
++			other.setOwner(nullptr);
++		}
++	}
++	
+ 	ARX_INTERACTIVE_DestroyIOdelayedRemove(this);
+ 	
+ 	if(g_draggedEntity == this) {
+@@ -361,9 +399,33 @@ void Entity::cleanReferences() {
+ }
+ 
+ void Entity::destroy() {
+-	
++
+ 	LogDebug("destroying entity " << idString());
+-	
++
++	// [coop-item] Every death of something a player is carrying or wearing,
++	// named at the moment it happens.
++	if((ioflags & IO_ITEM) && entities.player()) {
++		bool worn = false;
++		for(EntityHandle equipped : player.equiped) {
++			if(equipped != EntityHandle() && equipped == index()) {
++				worn = true;
++				break;
++			}
++		}
++		InventoryPos where = locateInInventories(this);
++		bool carried = where && where.container == entities.player();
++		if(worn || carried) {
++			LogWarning << "[coop-item] destroying " << idString()
++			           << (worn ? " (WORN by this player)" : " (in this player's pack)")
++			           << " remote=" << coop::isApplyingRemote()
++			           << " durability=" << durability;
++		}
++	}
++
++	// Say so while there is still an id to say it with: past this point the
++	// entity is being taken apart and, at the end of it, deleted.
++	coop::reportEntityDestroyed(*this);
++
+ 	if(instance() > 0 && !(ioflags & IO_NOSAVE)) {
+ 		if(scriptload) {
+ 			// In case we previously saved this entity...
+diff --git a/src/game/EntityManager.cpp b/src/game/EntityManager.cpp
+index f58ed98..706cb74 100644
+--- a/src/game/EntityManager.cpp
++++ b/src/game/EntityManager.cpp
+@@ -50,6 +50,7 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+ #include <boost/algorithm/string/predicate.hpp>
+ 
+ #include "game/Entity.h"
++#include "net/CoopPlayer.h"
+ #include "platform/Platform.h"
+ #include "util/String.h"
+ 
+@@ -147,6 +148,16 @@ Entity * EntityManager::getById(std::string_view idString, Entity * self) const
+ 		return self;
+ 	}
+ 	if(idString == "player") {
++		/*
++		 * During script execution caused by the other co-op player - stepping
++		 * into a trigger zone, striking something - the word means them: the
++		 * script is describing what happens to whoever did it, and whoever did
++		 * it is not this machine's player. Everywhere else it keeps its
++		 * original meaning.
++		 */
++		if(Entity * partner = coop::scriptContextPlayer()) {
++			return partner;
++		}
+ 		return player();
+ 	}
+ 	
+diff --git a/src/game/Equipment.cpp b/src/game/Equipment.cpp
+index 13b74bf..b3279cb 100644
+--- a/src/game/Equipment.cpp
++++ b/src/game/Equipment.cpp
+@@ -79,11 +79,13 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+ #include "graphics/particle/ParticleEffects.h"
+ #include "graphics/particle/Spark.h"
+ 
++#include "io/log/Logger.h"
+ #include "io/resource/ResourcePath.h"
+ 
+ #include "math/Random.h"
+ #include "math/Vector.h"
+ 
++#include "net/CoopPlayer.h"
+ #include "physics/Collisions.h"
+ 
+ #include "platform/Platform.h"
+@@ -691,7 +693,23 @@ bool ARX_EQUIPMENT_Strike_Check(Entity * io_source, Entity * io_weapon, float ra
+ 							}
+ 						}
+ 
+-						if(io_source == entities.player()) {
++						/*
++						 * A weapon wears against the world, never against your
++						 * companion.
++						 *
++						 * This charge is levied once per FRAME the blade is
++						 * inside a target - about three points across a single
++						 * swing. In the original game the only bodies in reach
++						 * were enemies you meant to hit, so that was fair. The
++						 * other player, though, stands beside you constantly,
++						 * and an ordinary swing at empty air clips them: three
++						 * points a swing against a bone, which has four, so it
++						 * shattered in your hands for nothing.
++						 */
++						if(io_source == entities.player() && !coop::isAvatarEntity(target)) {
++							LogWarning << "[coop-wear] IN-TARGET " << target->idString()
++							           << " charge=" << (g_framedelay * 0.006f)
++							           << " durability=" << io_weapon->durability;
+ 							ARX_DAMAGES_DurabilityCheck(io_weapon, g_framedelay * 0.006f);
+ 						}
+ 					}
+@@ -767,6 +785,8 @@ bool ARX_EQUIPMENT_Strike_Check(Entity * io_source, Entity * io_weapon, float ra
+ 
+ 					if(HIT_SPARK) {
+ 						if(!io_source->isHit) {
++							LogWarning << "[coop-wear] HARD-OBJECT " << target->idString()
++							           << " charge=1.0 durability=" << io_weapon->durability;
+ 							ARX_DAMAGES_DurabilityCheck(io_weapon, 1.f);
+ 							io_source->isHit = true;
+ 							
+@@ -789,6 +809,8 @@ bool ARX_EQUIPMENT_Strike_Check(Entity * io_source, Entity * io_weapon, float ra
+ 		if(ep) {
+ 			if(io_source == entities.player()) {
+ 				if(!io_source->isHit) {
++					LogWarning << "[coop-wear] LEVEL-GEOMETRY charge=1.0 durability="
++					           << io_weapon->durability;
+ 					ARX_DAMAGES_DurabilityCheck(io_weapon, 1.f);
+ 					io_source->isHit = true;
+ 					
+diff --git a/src/game/Inventory.cpp b/src/game/Inventory.cpp
+index a63758d..075c2a9 100644
+--- a/src/game/Inventory.cpp
++++ b/src/game/Inventory.cpp
+@@ -72,6 +72,8 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+ #include "math/Angle.h"
+ #include "math/Vector.h"
+ 
++#include "net/CoopNet.h"
++
+ #include "physics/Physics.h"
+ 
+ #include "platform/Platform.h"
+@@ -164,30 +166,41 @@ void PutInFrontOfPlayer(Entity * io) {
+ 	if(g_draggedEntity == io) {
+ 		setDraggedEntity(nullptr);
+ 	}
+-	
++
+ 	io->setOwner(nullptr);
+-	
++
+ 	io->angle = Anglef();
+ 	io->show = SHOW_FLAG_IN_SCENE;
+-	
++
+ 	Sphere limit(player.pos + Vec3f(0.f, 20.f, 0.f), 80);
+ 	Vec3f dir = angleToVectorXZ(player.angle.getYaw());
+ 	EntityDragResult result = findSpotForDraggedEntity(limit.origin, dir, io, limit);
+-	
++
++	Vec3f where = result.foundSpot ? result.pos - toXZ(result.offset) : player.pos;
++
+ 	if(!result.foundSpot) {
++		// Nowhere to put it: set down at the player's feet, no impulse.
+ 		ARX_INTERACTIVE_Teleport(io, player.pos, true);
++		coop::reportItemDropped(*io, player.pos, Vec3f(0.f));
+ 		return;
+ 	}
+-	
+-	ARX_INTERACTIVE_Teleport(io, result.pos - toXZ(result.offset), true);
+-	
++
++	ARX_INTERACTIVE_Teleport(io, where, true);
++
++	Vec3f launched = Vec3f(0.f);
++
+ 	if(io->obj && io->obj->pbox) {
+ 		Vec3f vector = Vec3f(0.f, 100.f, 0.f);
+ 		io->soundtime = 0;
+ 		io->soundcount = 0;
+ 		EERIE_PHYSICS_BOX_Launch(io->obj, io->pos, io->angle, vector);
++		launched = vector;
+ 	}
+-	
++
++	// Tell the other player it is there - and with what push - or they will
++	// walk past it, or watch it hang in the air.
++	coop::reportItemDropped(*io, where, launched);
++
+ }
+ 
+ std::ostream & operator<<(std::ostream & strm, InventoryPos p) {
+@@ -389,28 +402,73 @@ InventoryPos Inventory::insertAtImpl(Entity & item, s16 bag, Vec2f pos, Inventor
+ 	return insertImpl(item, fallback);
+ }
+ 
++/*!
++ * Note an item passing out of the shared world into this player's own pack.
++ *
++ * Called before the insertion, because afterwards there is no way to tell a
++ * thing that was lying on the floor from one that was already carried and is
++ * only being moved between bags. Only the first case is anyone else's business.
++ */
++static void reportPickup(const Entity * item, const Entity * owner) {
++
++	if(!item || !coop::isActive() || owner != entities.player()) {
++		return;
++	}
++
++	/*
++	 * Did this come out of the world, or is it just moving between bags?
++	 *
++	 * Asked by inventory position rather than by show state. The obvious test -
++	 * "is it still SHOW_FLAG_IN_SCENE" - looks right and is wrong: dragging an
++	 * item over the inventory sets it to SHOW_FLAG_ON_PLAYER a frame before it
++	 * is inserted, so by the time we are asked, an item picked up off the floor
++	 * no longer says it was ever in the scene. An item already in the PLAYER'S
++	 * OWN inventory is just being rearranged and is nobody else's business. But
++	 * one sitting in any other entity's inventory - a corpse being searched, a
++	 * chest - is still part of the shared world: taking it must be reported, or
++	 * the same corpse yields its loot once to each player.
++	 */
++	InventoryPos held = locateInInventories(item);
++	if(held && held.container == entities.player()) {
++		return;
++	}
++
++	coop::requestTake(*item);
++
++}
++
+ bool Inventory::insert(Entity * item, InventoryPos pos) {
+-	
++
++	// Before insertGold(), because a coin pile is consumed on the spot and
++	// there would be nothing left to report afterwards - which is exactly how
++	// the same gold gets collected twice, once by each player.
++	reportPickup(item, owner());
++
+ 	if(insertGold(item)) {
+ 		return true;
+ 	}
+-	
++
+ 	if(item && (item->ioflags & IO_ITEM) && !(item->ioflags & IO_MOVABLE)) {
+ 		if(InventoryPos newPos = insertImpl(*item, pos)) {
+ 			ARX_INVENTORY_Declare_InventoryIn(get(newPos).entity, owner());
+ 			return true;
+ 		}
+ 	}
+-	
++
+ 	return false;
+ }
+ 
+ bool Inventory::insertAt(Entity * item, s16 bag, Vec2f pos, InventoryPos fallback) {
+-	
++
++	// Before insertGold(), because a coin pile is consumed on the spot and
++	// there would be nothing left to report afterwards - which is exactly how
++	// the same gold gets collected twice, once by each player.
++	reportPickup(item, owner());
++
+ 	if(insertGold(item)) {
+ 		return true;
+ 	}
+-	
++
+ 	if(item && (item->ioflags & IO_ITEM) && !(item->ioflags & IO_MOVABLE)) {
+ 		if(InventoryPos newPos = insertAtImpl(*item, bag, pos, fallback)) {
+ 			ARX_SOUND_PlayInterface(g_snd.INVSTD);
+@@ -418,7 +476,7 @@ bool Inventory::insertAt(Entity * item, s16 bag, Vec2f pos, InventoryPos fallbac
+ 			return true;
+ 		}
+ 	}
+-	
++
+ 	return false;
+ }
+ 
+diff --git a/src/game/Missile.cpp b/src/game/Missile.cpp
+index de8fbc9..f9e96ea 100644
+--- a/src/game/Missile.cpp
++++ b/src/game/Missile.cpp
+@@ -52,6 +52,7 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+ 
+ #include "game/Damage.h"
+ #include "game/Player.h"
++#include "net/CoopPlayer.h"
+ 
+ #include "graphics/Color.h"
+ #include "graphics/GraphicsTypes.h"
+@@ -173,7 +174,12 @@ void ARX_MISSILES_Update() {
+ 		
+ 		bool hit = false;
+ 		
+-		if(closerThan(player.pos, dest, 200.f) || (ep && ep->center.y < dest.y) || (epp && epp->center.y > dest.y)) {
++		// A missile bursts when it nears a player - either player; the second
++		// one's body must not be flown through as if nobody were there.
++		Entity * partner = coop::avatarEntity();
++		if(closerThan(player.pos, dest, 200.f)
++		   || (partner && closerThan(partner->pos, dest, 200.f))
++		   || (ep && ep->center.y < dest.y) || (epp && epp->center.y > dest.y)) {
+ 			hit = true;
+ 		} else {
+ 			RaycastResult ray = raycastScene(orgn, dest);
+diff --git a/src/game/NPC.cpp b/src/game/NPC.cpp
+index 57a853c..b783fc5 100644
+--- a/src/game/NPC.cpp
++++ b/src/game/NPC.cpp
+@@ -102,11 +102,16 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+ #include "math/Random.h"
+ #include "math/Vector.h"
+ 
++#include "net/CoopNet.h"
++#include "net/CoopPlayer.h"
++
+ #include "physics/CollisionShapes.h"
+ #include "physics/Collisions.h"
+ #include "physics/Physics.h"
+ 
+ #include "platform/Platform.h"
++#include "io/log/Logger.h"
++#include "platform/Time.h"
+ #include "platform/profiler/Profiler.h"
+ 
+ #include "scene/Object.h"
+@@ -856,7 +861,21 @@ void ARX_PHYSICS_Apply() {
+ 		if(!io) {
+ 			continue;
+ 		}
+-		
++
++		/*
++		 * The other player's body wears the NPC flag so that swords, spells and
++		 * blood all know what to do with it, but it is not a creature: it is
++		 * driven by the person playing it. Running the AI over it here would
++		 * have their character walk off on its own.
++		 */
++		if(coop::isAvatarEntity(io)) {
++			continue;
++		}
++
++		// Decide which of the two players this creature is actually after,
++		// before any of the logic that acts on that decision runs.
++		ARX_NPC_CoopRetarget(io);
++
+ 		if((io->ioflags & IO_NPC) && io->_npcdata->poisonned > 0.f) {
+ 			ARX_NPC_ManagePoison(*io);
+ 		}
+@@ -1663,6 +1682,11 @@ float getEntityHeight(const Entity & entity) {
+ 		return entity.physics.cyl.height;
+ 	}
+ 	
++	// The other player's body is player-sized, not clamped to creature bounds.
++	if(coop::isAvatarEntity(&entity)) {
++		return ARXCHARACTER::baseHeight();
++	}
++	
+ 	return glm::clamp(entity.original_height * entity.scale, -165.f, -45.f);
+ }
+ 
+@@ -1672,6 +1696,10 @@ float getEntityRadius(const Entity & entity) {
+ 		return player.baseRadius();
+ 	}
+ 	
++	if(coop::isAvatarEntity(&entity)) {
++		return ARXCHARACTER::baseRadius();
++	}
++	
+ 	return glm::clamp(entity.original_radius * entity.scale, 25.f, 60.f);
+ }
+ 
+@@ -1693,7 +1721,14 @@ static float ComputeTolerance(const Entity * io, EntityHandle targ) {
+ 		float self_dist, targ_dist;
+ 		
+ 		// Compute min target close-dist
+-		if(target->ioflags & IO_NO_COLLISIONS) {
++		if(coop::isAvatarEntity(target)) {
++			// The other player's body wears IO_NO_COLLISIONS for placement
++			// helpers, but to a creature it is a solid player-sized cylinder.
++			// Counting it as radius zero puts the arrival distance INSIDE the
++			// collision standoff and the creature pushes forever at a wall of
++			// air, never close enough to consider its target reached.
++			targ_dist = ARXCHARACTER::baseRadius();
++		} else if(target->ioflags & IO_NO_COLLISIONS) {
+ 			targ_dist = 0.f;
+ 		} else {
+ 			targ_dist = std::max(target->physics.cyl.radius, getEntityRadius(*target));
+@@ -1720,7 +1755,9 @@ static float ComputeTolerance(const Entity * io, EntityHandle targ) {
+ 		}
+ 		
+ 		// If target is the player improve again tolerance
+-		if(io->targetinfo == EntityHandle_Player) {
++		// - either player: fighting the second one is the same fight.
++		if(io->targetinfo == EntityHandle_Player
++		   || coop::isAvatarEntity(entities.get(io->targetinfo))) {
+ 			TOLERANCE += 10.f;
+ 		}
+ 		
+@@ -2535,73 +2572,146 @@ void CheckNPC(Entity & io) {
+  *
+  * \remarks Uses Invisibility/Confuse/Torch infos.
+  */
++/*!
++ * Whether one particular player body is currently visible to a creature.
++ *
++ * Factored out of CheckNPCEx() so that the same sight rules - range, rooms,
++ * near contact, field of view, darkness, geometry - are applied to each player
++ * separately instead of only to whichever one happened to be nearer.
++ *
++ * \param basePos the player's feet, i.e. Entity::pos / ARXCHARACTER::basePosition()
++ */
++static bool isPlayerBodyVisibleTo(Entity & io, const Vec3f & basePos, float life,
++                                  float invisibility) {
++
++	if(invisibility > 0.f || life <= 0.f) {
++		return false;
++	}
++
++	float ds = arx::distance2(io.pos, basePos);
++	if(ds >= square(2000.f)) {
++		return false;
++	}
++
++	Vec3f eye = basePos + ARXCHARACTER::baseOffset();
++
++	RoomHandle playerRoom = ARX_PORTALS_GetRoomNumForPosition(eye, RoomPositionForCamera);
++	float fdist = SP_GetRoomDist(io.pos, eye, io.room, playerRoom);
++
++	// Use Portal Room Distance for Extra Visibility Clipping.
++	if(playerRoom && io.room && fdist > 2000.f) {
++		return false;
++	}
++
++	// Near contact +/- 15 cm --> forced visibility.
++	if(ds < square(getEntityRadius(io) + getEntityRadius(*entities.player()) + 15.f)
++	   && glm::abs(eye.y - io.pos.y) < 200.f) {
++		return true;
++	}
++
++	// Retrieves Head group position for "eye" pos.
++	Vec3f orgn = io.pos - Vec3f(0.f, io.obj->fastaccess.head_group_origin ? 120.f : 90.f, 0.f);
++	Vec3f dest = eye + Vec3f(0.f, 90.f, 0.f);
++
++	// Field of vision angle.
++	float aa = getAngle(orgn.x, orgn.z, dest.x, dest.z);
++	aa = MAKEANGLE(glm::degrees(aa));
++	float ab = MAKEANGLE(io.angle.getYaw());
++	if(glm::abs(AngularDifference(aa, ab)) >= 110.f) {
++		return false;
++	}
++
++	// Darkness/stealth. The lighting value is the first player's - it is the
++	// only one this machine computes - so in the dark the second player is
++	// judged by their partner's light. Close range bypasses it either way.
++	if(CURRENT_PLAYER_COLOR > GetPlayerStealth() || player.torch || ds < square(200.f)) {
++		Vec3f ppos;
++		// Geometrical visibility.
++		if(IO_Visible(orgn, dest, &ppos) || closerThan(ppos, dest, 25.f)) {
++			return true;
++		}
++	}
++
++	return false;
++}
++
+ void CheckNPCEx(Entity & io) {
+-	
++
+ 	ARX_PROFILE_FUNC();
+ 
+-	// Distance Between Player and IO
+-	float ds = arx::distance2(io.pos, player.basePosition());
+-	
+-	// Start as not visible
+-	long Visible = 0;
+-	
+-	// Check visibility only if player is visible, not too far and not dead
+-	if(entities.player()->invisibility <= 0.f && ds < square(2000.f) && player.lifePool.current > 0.f) {
+-		
+-		// checks for near contact +/- 15 cm --> force visibility
+-		if(io.requestRoomUpdate) {
+-			UpdateIORoom(&io);
+-		}
+-		
+-		RoomHandle playerRoom = ARX_PORTALS_GetRoomNumForPosition(player.pos, RoomPositionForCamera);
+-		
+-		float fdist = SP_GetRoomDist(io.pos, player.pos, io.room, playerRoom);
+-		
+-		// Use Portal Room Distance for Extra Visibility Clipping.
+-		if(playerRoom && io.room && fdist > 2000.f) {
+-			// nothing to do
+-		} else if(ds < square(getEntityRadius(io) + getEntityRadius(*entities.player()) + 15.f)
+-		          && glm::abs(player.pos.y - io.pos.y) < 200.f) {
+-			Visible = 1;
+-		} else { // Make full visibility test
+-			
+-			// Retreives Head group position for "eye" pos.
+-			Vec3f orgn = io.pos - Vec3f(0.f, io.obj->fastaccess.head_group_origin ? 120.f : 90.f, 0.f);
+-			Vec3f dest = player.pos + Vec3f(0.f, 90.f, 0.f);
+-
+-			// Check for Field of vision angle
+-			float aa = getAngle(orgn.x, orgn.z, dest.x, dest.z);
+-			aa = MAKEANGLE(glm::degrees(aa));
+-			float ab = MAKEANGLE(io.angle.getYaw());
+-			if(glm::abs(AngularDifference(aa, ab)) < 110.f) {
+-				
+-				// Check for Darkness/Stealth
+-				if(CURRENT_PLAYER_COLOR > GetPlayerStealth() || player.torch
+-				   || ds < square(200.f)) {
+-					Vec3f ppos;
+-					// Check for Geometrical Visibility
+-					if(IO_Visible(orgn, dest, &ppos)
+-					   || closerThan(ppos, dest, 25.f)) {
+-						Visible = 1;
+-					}
+-				}
+-			}
+-		}
+-		
+-		if(Visible && !io._npcdata->detect) {
+-			// if visible but was NOT visible, sends an Detectplayer Event
+-			SendIOScriptEvent(nullptr, &io, SM_DETECTPLAYER);
+-			io._npcdata->detect = 1;
+-		}
+-		
++	if(io.requestRoomUpdate) {
++		UpdateIORoom(&io);
++	}
++
++	IO_NPCDATA & npc = *io._npcdata;
++
++	/*
++	 * While a script has switched this creature's detection off, it is not
++	 * merely forbidden from reacting - it is not watching. Keeping the sight
++	 * memory warm through that would mean that when the story switches it back
++	 * on, both players are already marked as seen, no edge ever fires, and the
++	 * creature attacks nobody until something else provokes it. Forget
++	 * everything instead, so re-arming produces a genuine "spotted!" for
++	 * whoever is standing in front of it at that moment.
++	 */
++	if(io.m_disabledEvents & DISABLE_DETECT) {
++		npc.m_seenPlayer = false;
++		npc.m_seenPartner = false;
++		npc.detect = 0;
++		return;
+ 	}
+-	
+-	// if not visible but was visible, sends an Undetectplayer Event
+-	if(!Visible && io._npcdata->detect) {
++
++	// Only the combined flag survives a savegame; credit it to the first
++	// player once so the edges below start from a consistent state.
++	if(npc.detect && !npc.m_seenPlayer && !npc.m_seenPartner) {
++		npc.m_seenPlayer = true;
++	}
++
++	bool seesPlayer = !coop::localPlayerArrivalProtected()
++	                  && isPlayerBodyVisibleTo(io, player.basePosition(),
++	                                        player.lifePool.current,
++	                                        entities.player()->invisibility);
++
++	bool seesPartner = false;
++	if(Entity * other = coop::avatarEntity()) {
++		seesPartner = !coop::partnerArrivalProtected()
++		              && isPlayerBodyVisibleTo(io, other->pos, coop::avatar().life,
++		                                    other->invisibility);
++	}
++
++	/*
++	 * One ON DETECTPLAYER per player, on that player's own edge.
++	 *
++	 * The original had one flag for one player: once a creature had seen the
++	 * first player, the flag was up, no further edge could occur, and the
++	 * script that decides whether to attack was never told about the second
++	 * player at all. That is precisely why enemies used to ignore player two
++	 * until struck - being hit reaches the script by a different road (SM_HIT)
++	 * that never consults this flag.
++	 *
++	 * The script's handler asks ^DIST_PLAYER itself, which reports the nearer
++	 * player, so re-firing the event is all it takes for it to notice whoever
++	 * just came into view.
++	 */
++	if(seesPlayer && !npc.m_seenPlayer) {
++		LogInfo << "[coop-ai] " << io.idString() << " spotted player one";
++		SendIOScriptEvent(nullptr, &io, SM_DETECTPLAYER);
++	}
++	npc.m_seenPlayer = seesPlayer;
++
++	if(seesPartner && !npc.m_seenPartner) {
++		LogInfo << "[coop-ai] " << io.idString() << " spotted player two";
++		SendIOScriptEvent(nullptr, &io, SM_DETECTPLAYER);
++	}
++	npc.m_seenPartner = seesPartner;
++
++	// Not seeing anybody, having seen somebody, is the one UNDETECT edge.
++	if(!seesPlayer && !seesPartner && npc.detect) {
+ 		SendIOScriptEvent(nullptr, &io, SM_UNDETECTPLAYER);
+-		io._npcdata->detect = 0;
+ 	}
+-	
++
++	npc.detect = (seesPlayer || seesPartner) ? 1 : 0;
++
+ }
+ 
+ void ARX_NPC_NeedStepSound(Entity * io, const Vec3f & pos, const float volume, const float power) {
+@@ -2640,7 +2750,9 @@ void ARX_NPC_NeedStepSound(Entity * io, const Vec3f & pos, const float volume, c
+ void spawnAudibleSound(const Vec3f & pos, Entity & source, const float factor, const float presence) {
+ 	
+ 	float max_distance;
+-	if(source == *entities.player()) {
++	if(source == *entities.player() || coop::isAvatarEntity(&source)) {
++		// The other player's body is as audible as our own: without this the
++		// early return below made every step of theirs silent to all AI.
+ 		max_distance = ARX_NPC_ON_HEAR_MAX_DISTANCE_STEP;
+ 	} else if(source.ioflags & IO_ITEM) {
+ 		max_distance = ARX_NPC_ON_HEAR_MAX_DISTANCE_ITEM;
+@@ -2850,7 +2962,9 @@ void GetTargetPos(Entity * io, unsigned long smoothing) {
+ 	}
+ 	
+ 	if(io->targetinfo == EntityHandle_Player || io->targetinfo == EntityHandle()) {
++
+ 		io->target = player.pos + Vec3f(0.f, player.size.y, 0.f);
++
+ 	} else if(Entity * target = entities.get(io->targetinfo)) {
+ 		io->target = GetItemWorldPosition(target);
+ 	} else {
+@@ -2864,3 +2978,80 @@ bool isEnemy(const Entity * entity) {
+ 	       && !(entity->_npcdata->behavior & BEHAVIOUR_FRIENDLY)
+ 	       && (entity->_npcdata->behavior & BEHAVIOUR_FIGHT);
+ }
++
++void ARX_NPC_CoopRetarget(Entity * io) {
++
++	Entity * other = coop::avatarEntity();
++	if(!other || !io || !(io->ioflags & IO_NPC)) {
++		return;
++	}
++
++	// Diagnostic: report on creatures near the second player, once a second, so
++	// it is possible to see which of them the AI is even considering and what
++	// it thinks they are doing.
++	if(closerThan(io->pos, other->pos, 900.f)) {
++		static PlatformInstant lastReport = 0;
++		static int reported = 0;
++		PlatformInstant now = platform::getTime();
++		if(now - lastReport > 1s) {
++			lastReport = now;
++			reported = 0;
++		}
++		if(reported < 6) {
++			reported++;
++			LogInfo << "[coop-ai] " << io->idString()
++			        << " behaviour=0x" << std::hex << u32(io->_npcdata->behavior) << std::dec
++			        << " enemy=" << isEnemy(io)
++			        << " target=" << io->targetinfo.handleData()
++			        << " treatzone=" << bool(io->gameFlags & GFLAG_ISINTREATZONE)
++			        << " life=" << io->_npcdata->lifePool.current
++			        << " detect=" << io->_npcdata->detect
++			        << " script_enemy=" << GETVarValueLong(io->m_variables, "§" "enemy")
++			        << " detect_event_off=" << bool(io->m_disabledEvents & DISABLE_DETECT)
++			        << " distP1=" << fdist(io->pos, player.basePosition())
++			        << " distP2=" << fdist(io->pos, other->pos);
++		}
++	}
++
++	// Only creatures that are actually fighting. A shopkeeper who has been told
++	// to face the player should keep facing the one they were talking to.
++	if(!isEnemy(io)) {
++		return;
++	}
++
++	const EntityHandle otherHandle = other->index();
++
++	// Only take over a target that means "the player". Anything else - another
++	// NPC, a summoned creature, a script's specific choice - is left alone.
++	if(io->targetinfo != EntityHandle_Player && io->targetinfo != otherHandle) {
++		return;
++	}
++
++	/*
++	 * Scripts say "target player", and the engine has exactly one name for
++	 * that, which resolves to the first player. Left alone, every creature in
++	 * the game commits to player one and will walk past player two to reach
++	 * them - and, having arrived, measures its reach and swings its sword at
++	 * whoever it named, not at whoever is in front of it. That is why the
++	 * second player could kill enemies that never once turned around.
++	 *
++	 * Changing the target entity rather than just the position it walks to is
++	 * what makes the rest work: tolerance, pathfinding, the strike test and the
++	 * damage all read targetinfo, and they all then follow for free.
++	 */
++	// Sight first, then walking distance rather than crow-flies distance, with
++	// hysteresis for the current target. See coop::chooseTargetPlayer.
++	Entity * pick = coop::chooseTargetPlayer(io, entities.get(io->targetinfo));
++	EntityHandle wanted = pick->index();
++
++	if(wanted == io->targetinfo) {
++		return;
++	}
++
++	// A creature that has just been given a new quarry has not reached it yet,
++	// and its path led somewhere else.
++	io->targetinfo = wanted;
++	io->_npcdata->reachedtarget = 0;
++	io->_npcdata->pathfind.truetarget = wanted;
++
++}
+diff --git a/src/game/NPC.h b/src/game/NPC.h
+index d8b079b..86d4684 100644
+--- a/src/game/NPC.h
++++ b/src/game/NPC.h
+@@ -169,6 +169,22 @@ struct IO_NPCDATA {
+ 	long reachedtarget; // Is target in REACHZONE?
+ 	Entity * weapon; // Linked Weapon (r-hand)
+ 	long detect;
++
++	/*!
++	 * Which of the two co-op players this creature currently has in sight.
++	 *
++	 * `detect` above is a single flag with a single edge, and ON DETECTPLAYER
++	 * only fires when it flips from 0 to 1. With two players that is not
++	 * enough: a creature that had already seen the first would never produce an
++	 * edge when the second walked into view, so the script deciding to attack
++	 * was never run for them - the "ignores player two until hit" bug.
++	 *
++	 * These two are runtime-only and deliberately kept out of the savegame;
++	 * `detect` stays their OR so the save format is unchanged. After a load
++	 * they are re-derived on the first sight check.
++	 */
++	bool m_seenPlayer = false;
++	bool m_seenPartner = false;
+ 	MoveMode movemode;
+ 	float armor_class;
+ 	float absorb;
+@@ -271,4 +287,13 @@ Cylinder getEntityCylinder(const Entity & entity);
+ 
+ bool isEnemy(const Entity * entity);
+ 
++/*!
++ * Point a fighting creature at whichever of the two players it should be after.
++ *
++ * Scripts can only say "target player", which names the first player alone, so
++ * without this every enemy in the game commits to them and ignores the second
++ * even while being cut down by them.
++ */
++void ARX_NPC_CoopRetarget(Entity * io);
++
+ #endif // ARX_GAME_NPC_H
+diff --git a/src/game/Player.cpp b/src/game/Player.cpp
+index b43c75a..b189ae0 100644
+--- a/src/game/Player.cpp
++++ b/src/game/Player.cpp
+@@ -115,6 +115,9 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+ #include "math/Random.h"
+ #include "math/Vector.h"
+ 
++#include "net/CoopNet.h"
++#include "net/CoopPlayer.h"
++
+ #include "physics/Collisions.h"
+ #include "physics/Attractors.h"
+ #include "physics/Projectile.h"
+@@ -219,6 +222,9 @@ void ARX_KEYRING_Init() {
+ 
+ //! Add a key to Keyring
+ void ARX_KEYRING_Add(std::string_view key) {
++	// A locked door is only locked once. Whoever finds the key, both of them
++	// can open it, or one player ends up shut out of half the fortress.
++	coop::reportKey(key);
+ 	g_playerKeyring.emplace_back(key);
+ }
+ 
+@@ -347,6 +353,9 @@ void ARX_Player_Rune_Remove(RuneFlag rune) {
+ 
+ //! Add quest "quest" to player Questbook
+ void ARX_PLAYER_Quest_Add(std::string_view quest) {
++	// One story, one journal. It does not matter which of them was standing
++	// there when it happened; they are both playing the same playthrough.
++	coop::reportQuest(quest);
+ 	g_playerQuestLogEntries.emplace_back(quest);
+ 	g_playerBook.clearJournal();
+ }
+@@ -904,9 +913,17 @@ static void ARX_PLAYER_LEVEL_UP() {
+  * \brief Modify player XP by adding "val" to it
+  */
+ void ARX_PLAYER_Modify_XP(long val) {
+-	
++
++	/*
++	 * Experience is earned individually and awarded to both. Each player keeps
++	 * their own total and levels on their own schedule - they may not even have
++	 * started at the same level - but neither is left behind because the other
++	 * happened to land the killing blow or open the chest.
++	 */
++	coop::reportReward(val, 0);
++
+ 	player.xp += val;
+-	
++
+ 	for(short i = player.level + 1; i < 11; i++) {
+ 		if(player.xp >= GetXPforLevel(i)) {
+ 			ARX_PLAYER_LEVEL_UP();
+@@ -2232,6 +2249,13 @@ static void PlayerMovementIterate(float DeltaTime) {
+ 
+ void ARX_PLAYER_Manage_Movement() {
+ 	
++	if(coop::travelHoldActive()) {
++		// Suspended mid-air while a travel completes - the same stillness a
++		// level load imposes. No motion, no landing, no fall damage.
++		return;
++	}
++	
++	
+ 	ARX_PROFILE_FUNC();
+ 	
+ 	// Is our player able to move ?
+@@ -2284,6 +2308,12 @@ void ARX_PLAYER_Manage_Death() {
+ 	player.m_paralysed = false;
+ 	float ratio = (player.DeadTime - 2s) / 5s;
+ 
++	if(coop::updateReviveOpportunity()) {
++		// Death is not the end while the other player still stands: hold the
++		// fade short of the menu and wait for them to come stand by the body.
++		ratio = std::min(ratio, 0.8f);
++	}
++
+ 	if(ratio >= 1.f) {
+ 		ARX_MENU_Launch(false);
+ 		player.DeadTime = 0;
+@@ -2334,6 +2364,9 @@ void ARX_PLAYER_PutPlayerInNormalStance() {
+  * \brief Add gold to player purse
+  */
+ void ARX_PLAYER_AddGold(long _lValue) {
++	// Split the find rather than race for it: both purses grow by the same
++	// amount, so picking up a pile is never something to fall out over.
++	coop::reportReward(0, _lValue);
+ 	player.gold += _lValue;
+ 	g_hudRoot.purseIconGui.requestHalo();
+ }
+@@ -2355,6 +2388,8 @@ void ARX_PLAYER_Start_New_Quest() {
+ 	
+ 	LogInfo << "Starting a new playthrough";
+ 	
++	coop::clearStoryLedger();
++	
+ 	DanaeClearLevel();
+ 	SetEditMode();
+ 	
+diff --git a/src/game/Spells.cpp b/src/game/Spells.cpp
+index bdb95d0..81d8709 100644
+--- a/src/game/Spells.cpp
++++ b/src/game/Spells.cpp
+@@ -116,6 +116,8 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+ #include "math/Angle.h"
+ #include "math/Vector.h"
+ 
++#include "net/CoopNet.h"
++
+ #include "physics/Collisions.h"
+ 
+ #include "platform/Platform.h"
+@@ -128,6 +130,8 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+ #include "script/Script.h"
+ 
+ #include "util/Cast.h"
++#include "net/CoopWorld.h"
++#include "net/CoopPlayer.h"
+ 
+ 
+ bool WILLRETURNTOFREELOOK = false;
+@@ -999,11 +1003,48 @@ bool ARX_SPELLS_Launch(SpellType typ, Entity & source, SpellcastFlags flags, lon
+ 	}
+ 	
+ 	spell->Launch();
+-	
++
+ 	Spell & addedSpell = spells.addSpell(std::move(spell));
+-	
++
++	/*
++	 * Tell the other player about anything we cast ourselves. Their machine
++	 * launches the same spell from our body, so a fireball we throw is a
++	 * fireball they see coming - and one that can burn them, since on their
++	 * side it is a real spell and not a light show.
++	 */
++	if(source == *entities.player()) {
++		coop::reportSpell(int(addedSpell.m_type), addedSpell.m_level, u32(addedSpell.m_flags),
++		                  toMsi(addedSpell.m_launchDuration),
++		                  target ? std::string(target->idString()) : std::string());
++	} else if(!coop::isApplyingRemote() && target && coop::isAvatarEntity(target)
++	          && !coop::isAvatarEntity(&source)) {
++		/*
++		 * A creature cast this AT the other player's body - but the body is a
++		 * puppet, and paralysis, slowness or a curse laid on it never reaches
++		 * the human behind it. For the status spells, relay the cast itself:
++		 * their machine launches the same spell from the same creature at
++		 * their real player - full vanilla effect, visuals and all. Damage
++		 * spells stay off this path: their harm already travels through the
++		 * hit interception, and relaying them too would strike twice.
++		 */
++		switch(addedSpell.m_type) {
++			case SPELL_PARALYSE:
++			case SPELL_SLOW_DOWN:
++			case SPELL_CONFUSE:
++			case SPELL_CURSE:
++			case SPELL_MANA_DRAIN:
++			case SPELL_LOWER_ARMOR: {
++				coop::reportSpell(int(addedSpell.m_type), addedSpell.m_level,
++				                  u32(addedSpell.m_flags), toMsi(addedSpell.m_launchDuration),
++				                  "player", std::string(source.idString()));
++				break;
++			}
++			default: break;
++		}
++	}
++
+ 	SPELLCAST_Notify(addedSpell);
+-	
++
+ 	if(flags & SPELLCAST_FLAG_ORPHAN) {
+ 		addedSpell.m_caster = EntityHandle();
+ 	}
+diff --git a/src/game/magic/spells/SpellsLvl01.cpp b/src/game/magic/spells/SpellsLvl01.cpp
+index d3c9f78..d6dca14 100644
+--- a/src/game/magic/spells/SpellsLvl01.cpp
++++ b/src/game/magic/spells/SpellsLvl01.cpp
+@@ -44,6 +44,7 @@
+ #include "scene/Object.h"
+ 
+ #include "util/Range.h"
++#include "net/CoopPlayer.h"
+ 
+ bool MagicSightSpell::CanLaunch() {
+ 	return spells.getSpellByCaster(m_caster, m_type) == nullptr;
+@@ -142,6 +143,12 @@ void MagicMissileSpell::Launch() {
+ 	} else {
+ 		pitch = 0.f;
+ 		yaw = entities[m_caster]->angle.getYaw();
++		if(coop::isAvatarEntity(entities[m_caster])) {
++			// The other player's aim has a vertical component their body
++			// angle carries; without it their missiles fly level here and
++			// land somewhere they did not aim.
++			pitch = coop::avatar().angle.getPitch();
++		}
+ 		if(!m_hand_group) {
+ 			startPos = entities[m_caster]->pos;
+ 		}
+@@ -352,7 +359,8 @@ void IgnitSpell::Launch() {
+ 			continue;
+ 		}
+ 		
+-		if(m_caster == EntityHandle_Player && (light->extras & EXTRAS_NO_IGNIT)) {
++		if((m_caster == EntityHandle_Player || coop::isAvatarEntity(entities.get(m_caster)))
++		   && (light->extras & EXTRAS_NO_IGNIT)) {
+ 			continue;
+ 		}
+ 		
+diff --git a/src/game/magic/spells/SpellsLvl02.cpp b/src/game/magic/spells/SpellsLvl02.cpp
+index 544077a..5a4d78f 100644
+--- a/src/game/magic/spells/SpellsLvl02.cpp
++++ b/src/game/magic/spells/SpellsLvl02.cpp
+@@ -35,6 +35,8 @@
+ #include "io/log/Logger.h"
+ #include "scene/GameSound.h"
+ #include "scene/Interactive.h"
++#include "net/CoopNet.h"
++#include "net/CoopPlayer.h"
+ 
+ 
+ HealSpell::HealSpell()
+@@ -134,6 +136,10 @@ void HealSpell::Update() {
+ 			if(!BLOCK_PLAYER_CONTROLS) {
+ 				player.lifePool.current = std::min(player.lifePool.current + gain, player.lifePool.max);
+ 			}
++		} else if(coop::isAvatarEntity(&npc)) {
++			// The body is a puppet; the health belongs to the player behind
++			// it, one machine away.
++			coop::reportPartnerHeal(gain);
+ 		} else {
+ 			npc._npcdata->lifePool.current = std::min(npc._npcdata->lifePool.current + gain, npc._npcdata->lifePool.max);
+ 		}
+diff --git a/src/game/magic/spells/SpellsLvl03.cpp b/src/game/magic/spells/SpellsLvl03.cpp
+index 2f4b8bb..f570ba8 100644
+--- a/src/game/magic/spells/SpellsLvl03.cpp
++++ b/src/game/magic/spells/SpellsLvl03.cpp
+@@ -44,6 +44,8 @@
+ #include "scene/Object.h"
+ 
+ #include "util/Cast.h"
++#include "net/CoopNet.h"
++#include "net/CoopPlayer.h"
+ 
+ 
+ SpeedSpell::SpeedTrail::SpeedTrail(VertexId vertex)
+@@ -193,6 +195,10 @@ void FireballSpell::Launch() {
+ 			const Vec3f & end = entityTarget->pos;
+ 			float d = glm::distance(getXZ(end), getXZ(start));
+ 			anglea = glm::degrees(getAngle(start.y, start.z, end.y, end.z + d));
++		} else if(coop::isAvatarEntity(caster)) {
++			// The other player's aim has a vertical component their body
++			// angle carries; without it their fireballs fly level here.
++			anglea = coop::avatar().angle.getPitch();
+ 		}
+ 		angleb = caster->angle.getYaw();
+ 	}
+@@ -252,6 +258,8 @@ void FireballSpell::Update() {
+ 				p2.y -= 60.f;
+ 				float d = glm::distance(getXZ(p2), getXZ(*p1));
+ 				afAlpha = 360.f - (glm::degrees(getAngle(p1->y, p1->z, p2.y, p2.z + d)));
++			} else if(coop::isAvatarEntity(caster)) {
++				afAlpha = coop::avatar().angle.getPitch();
+ 			}
+ 			
+ 		}
+@@ -320,9 +328,14 @@ void CreateFoodSpell::Launch() {
+ 	
+ 	if(m_caster == EntityHandle_Player || m_target == EntityHandle_Player) {
+ 		player.hunger = 100;
++	} else if(coop::isAvatarEntity(entities.get(m_caster))
++	          || coop::isAvatarEntity(entities.get(m_target))) {
++		// The stomach this fills is on the other machine.
++		coop::reportPartnerEffect(coop::PartnerFxFillHunger, 100.f);
+ 	}
+ 	
+-	m_pos = player.pos;
++	m_pos = (m_caster == EntityHandle_Player) ? player.pos
++	        : (entities.get(m_caster) ? entities.get(m_caster)->pos : player.pos);
+ 	
+ 	m_particles.SetPos(m_pos);
+ 	
+@@ -333,7 +346,11 @@ void CreateFoodSpell::End() { }
+ 
+ void CreateFoodSpell::Update() {
+ 	
+-	m_pos = entities.player()->pos;
++	if(Entity * caster = entities.get(m_caster); caster && caster != entities.player()) {
++		m_pos = caster->pos;
++	} else {
++		m_pos = entities.player()->pos;
++	}
+ 	
+ 	GameDuration timeRemaining = m_duration - m_elapsed;
+ 	
+diff --git a/src/game/magic/spells/SpellsLvl05.cpp b/src/game/magic/spells/SpellsLvl05.cpp
+index b20b2a3..e1498e5 100644
+--- a/src/game/magic/spells/SpellsLvl05.cpp
++++ b/src/game/magic/spells/SpellsLvl05.cpp
+@@ -389,7 +389,7 @@ void RepelUndeadSpell::Launch() {
+ 	m_duration = m_hasDuration ? m_launchDuration : 0;
+ 	m_fManaCostPerSecond = 1.f;
+ 	
+-	m_pos = player.pos;
++	m_pos = entities.get(m_target) ? entities.get(m_target)->pos : player.pos;
+ 	m_yaw = 0.f;
+ 	tex_p2 = TextureContainer::Load("graph/obj3d/textures/(fx)_tsu_blueting");
+ }
+diff --git a/src/game/magic/spells/SpellsLvl06.cpp b/src/game/magic/spells/SpellsLvl06.cpp
+index 21cccea..8ee4297 100644
+--- a/src/game/magic/spells/SpellsLvl06.cpp
++++ b/src/game/magic/spells/SpellsLvl06.cpp
+@@ -35,6 +35,8 @@
+ #include "physics/Collisions.h"
+ #include "scene/GameSound.h"
+ #include "scene/Interactive.h"
++#include "net/CoopNet.h"
++#include "net/CoopPlayer.h"
+ 
+ void RaiseDeadSpell::GetTargetAndBeta(Vec3f & target, float & beta) {
+ 	
+@@ -366,7 +368,8 @@ void DisarmTrapSpell::Launch() {
+ 	m_hasDuration = true;
+ 	
+ 	Sphere sphere;
+-	sphere.origin = player.pos;
++	sphere.origin = (m_caster == EntityHandle_Player || !entities.get(m_caster))
++	                ? player.pos : entities.get(m_caster)->pos;
+ 	sphere.radius = 400.f;
+ 	
+ 	for(Spell & spell : spells.ofType(SPELL_RUNE_OF_GUARDING)) {
+diff --git a/src/game/magic/spells/SpellsLvl07.cpp b/src/game/magic/spells/SpellsLvl07.cpp
+index 528e0ae..39cd7e7 100644
+--- a/src/game/magic/spells/SpellsLvl07.cpp
++++ b/src/game/magic/spells/SpellsLvl07.cpp
+@@ -41,6 +41,8 @@
+ #include "scene/GameSound.h"
+ #include "scene/Object.h"
+ #include "scene/Scene.h"
++#include "net/CoopNet.h"
++#include "net/CoopPlayer.h"
+ 
+ extern PlatformInstant SLID_START;
+ bool bOldLookToggle;
+@@ -569,6 +571,10 @@ void LightningStrikeSpell::Update() {
+ 	if(m_caster == EntityHandle_Player) {
+ 		falpha = -player.angle.getPitch();
+ 		fBeta = player.angle.getYaw();
++	} else if(caster && coop::isAvatarEntity(caster)) {
++		// The other player's vertical aim rides their body angle.
++		falpha = -coop::avatar().angle.getPitch();
++		fBeta = caster->angle.getYaw();
+ 	} else {
+ 		fBeta = caster ? caster->angle.getYaw() : 0.f;
+ 		if(caster && entities.get(caster->targetinfo) && caster->targetinfo != m_caster) {
+diff --git a/src/game/magic/spells/SpellsLvl08.cpp b/src/game/magic/spells/SpellsLvl08.cpp
+index ffc9233..a998b2d 100644
+--- a/src/game/magic/spells/SpellsLvl08.cpp
++++ b/src/game/magic/spells/SpellsLvl08.cpp
+@@ -36,6 +36,8 @@
+ 
+ #include "scene/GameSound.h"
+ #include "scene/Interactive.h"
++#include "net/CoopNet.h"
++#include "net/CoopPlayer.h"
+ 
+ bool InvisibilitySpell::CanLaunch() {
+ 	return spells.getSpellByCaster(m_caster, m_type) == nullptr;
+@@ -165,7 +167,7 @@ void ExplosionSpell::Launch() {
+ 	m_hasDuration = true;
+ 	
+ 	Vec3f target = entities[m_caster]->pos;
+-	if(m_caster == EntityHandle_Player) {
++	if(m_caster == EntityHandle_Player || coop::isAvatarEntity(entities[m_caster])) {
+ 		target.y += 60.f;
+ 	} else {
+ 		target.y -= 60.f;
+diff --git a/src/game/magic/spells/SpellsLvl09.cpp b/src/game/magic/spells/SpellsLvl09.cpp
+index 9c9e6a2..c53a72c 100644
+--- a/src/game/magic/spells/SpellsLvl09.cpp
++++ b/src/game/magic/spells/SpellsLvl09.cpp
+@@ -37,6 +37,8 @@
+ #include "physics/Collisions.h"
+ #include "scene/GameSound.h"
+ #include "scene/Interactive.h"
++#include "net/CoopNet.h"
++#include "net/CoopPlayer.h"
+ 
+ void SummonCreatureSpell::GetTargetAndBeta(Vec3f & target, float & beta) {
+ 	
+@@ -163,6 +165,13 @@ void SummonCreatureSpell::Update() {
+ 		
+ 		m_requestSummon = false;
+ 		ARX_SOUND_PlaySFX(g_snd.SPELL_ELECTRIC, &m_targetPos);
++
++		if(coop::isReplica()) {
++			// Only the authority brings creatures into a shared area; the
++			// real one arrives through entity replication a beat later, and
++			// a locally invented copy would exist on this screen alone.
++			return;
++		}
+ 		
+ 		Cylinder phys = Cylinder(m_targetPos, 50, -200);
+ 		
+@@ -398,7 +407,8 @@ void NegateMagicSpell::LaunchAntiMagicField() {
+ 		
+ 		if(closerThan(spell.getPosition(), target->pos, 600.f)) {
+ 			if(spell.m_type != SPELL_CREATE_FIELD
+-			   || (target == entities.player() && spell.m_caster == EntityHandle_Player)) {
++			   || ((target == entities.player() || coop::isAvatarEntity(target))
++			       && spell.m_caster == EntityHandle_Player)) {
+ 				spells.endSpell(&spell);
+ 			}
+ 		}
+diff --git a/src/game/magic/spells/SpellsLvl10.cpp b/src/game/magic/spells/SpellsLvl10.cpp
+index bf87b19..f109502 100644
+--- a/src/game/magic/spells/SpellsLvl10.cpp
++++ b/src/game/magic/spells/SpellsLvl10.cpp
+@@ -42,6 +42,8 @@
+ #include "scene/GameSound.h"
+ 
+ #include "util/Range.h"
++#include "net/CoopNet.h"
++#include "net/CoopPlayer.h"
+ 
+ 
+ MassLightningStrikeSpell::MassLightningStrikeSpell()
+@@ -190,9 +192,12 @@ bool ControlTargetSpell::CanLaunch() {
+ 
+ void ControlTargetSpell::Launch() {
+ 	
+-	eSrc = player.pos;
++	Entity * casterIo = entities.get(m_caster);
++	bool casterIsPlayer = (m_caster == EntityHandle_Player || !casterIo);
++	eSrc = casterIsPlayer ? player.pos : casterIo->pos;
+ 	
+-	float fBetaRad = glm::radians(player.angle.getYaw());
++	float fBetaRad = glm::radians(casterIsPlayer ? player.angle.getYaw()
++	                                             : casterIo->angle.getYaw());
+ 	eTarget = eSrc + Vec3f(-glm::sin(fBetaRad) * 1000.f, 100.f, glm::cos(fBetaRad) * 1000.f);
+ 	
+ 	for(Entity & npc : entities.inScene(IO_NPC)) {
+diff --git a/src/graphics/particle/ParticleEffects.cpp b/src/graphics/particle/ParticleEffects.cpp
+index 8463e8f..1dccd40 100644
+--- a/src/graphics/particle/ParticleEffects.cpp
++++ b/src/graphics/particle/ParticleEffects.cpp
+@@ -91,6 +91,7 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+ #include "scene/Interactive.h"
+ #include "scene/Light.h"
+ #include "scene/Tiles.h"
++#include "net/CoopNet.h"
+ 
+ 
+ static const size_t MAX_PARTICLES = 2200;
+@@ -237,6 +238,11 @@ static void ARX_PARTICLES_Spawn_Blood3(const Vec3f & pos, float dmgs, Color col,
+ 
+ 
+ void ARX_PARTICLES_Spawn_Blood2(const Vec3f & pos, float dmgs, Color col, Entity * io) {
++
++	// A fight's blood belongs on both screens.
++	if(io) {
++		coop::broadcastBlood2(pos, dmgs, col.toRGBA().t, io->idString());
++	}
+ 	
+ 	bool isNpc = io && (io->ioflags & IO_NPC);
+ 	
+@@ -295,6 +301,9 @@ void ARX_PARTICLES_Spawn_Blood(const Vec3f & pos, float dmgs, EntityHandle sourc
+ 	if(!sourceIo) {
+ 		return;
+ 	}
++
++	// A fight's blood belongs on both screens.
++	coop::broadcastBlood(pos, dmgs, sourceIo->idString());
+ 	
+ 	float nearest_dist = std::numeric_limits<float>::max();
+ 	VertexId nearest;
+diff --git a/src/gui/Dragging.cpp b/src/gui/Dragging.cpp
+index eb68b1a..0697b78 100644
+--- a/src/gui/Dragging.cpp
++++ b/src/gui/Dragging.cpp
+@@ -37,6 +37,7 @@
+ #include "math/GtxFunctions.h"
+ #include "math/RandomVector.h"
+ #include "math/Vector.h"
++#include "net/CoopNet.h"
+ #include "physics/Collisions.h"
+ #include "physics/Physics.h"
+ #include "platform/Platform.h"
+@@ -332,23 +333,44 @@ void updateDraggedEntity() {
+ 		
+ 	}
+ 	
++	// The impulse this release really used, so the other machine can reproduce
++	// it rather than guess. Zero means the object was set down, not thrown.
++	Vec3f launched = Vec3f(0.f);
++
+ 	if(g_dragStatus == EntityDragStatus_Throw) {
+-		
++
+ 		Vec3f start = player.pos + Vec3f(0.f, 80.f, 0.f) - toXZ(result.offset);
+ 		Vec3f direction = glm::normalize(entity->pos - start);
+ 		entity->pos = start;
+ 		EERIE_PHYSICS_BOX_Launch(entity->obj, entity->pos, entity->angle, direction);
+ 		ARX_SOUND_PlaySFX(g_snd.WHOOSH, &entity->pos);
+-		
++		launched = direction;
++
+ 	} else if(glm::abs(result.offsetY) > threshold) {
+-		
++
+ 		EERIE_PHYSICS_BOX_Launch(entity->obj, entity->pos, entity->angle, Vec3f(0.f, 0.1f, 0.f));
+ 		ARX_SOUND_PlaySFX(g_snd.WHOOSH, &entity->pos);
+-		
++		launched = Vec3f(0.f, 0.1f, 0.f);
++
+ 	} else {
+-		
++
+ 		ARX_SOUND_PlayInterface(g_snd.INVSTD);
+-		
++
+ 	}
+-	
++
++	/*
++	 * Tell the other player where this ended up.
++	 *
++	 * Putting an item down in the world is a change to the world, and until now
++	 * it was the one such change nobody was told about. That did not show on
++	 * the host, who owns the area and is believed by definition, but a guest
++	 * would watch the item they had just placed jump back where it came from:
++	 * the host's next snapshot still described it lying at the old spot, and
++	 * the moment the drag ended there was nothing left to say otherwise.
++	 *
++	 * Sent after the physics launch so the position is the final one, throw
++	 * included, rather than where the cursor happened to let go.
++	 */
++	coop::reportItemDropped(*entity, entity->pos, launched);
++
+ }
+diff --git a/src/gui/Hud.cpp b/src/gui/Hud.cpp
+index 307ac8c..3e9f1e0 100644
+--- a/src/gui/Hud.cpp
++++ b/src/gui/Hud.cpp
+@@ -59,6 +59,8 @@
+ 
+ #include "math/RandomVector.h"
+ 
++#include "net/CoopPlayer.h"
++
+ #include "scene/GameSound.h"
+ #include "scene/Interactive.h"
+ 
+@@ -1478,7 +1480,13 @@ void HudRoot::draw() {
+ 		manaGauge.draw();
+ 		
+ 		healthGauge.draw();
+-		
++
++		// The other player's life orb, stacked on top of this one. Drawn here,
++		// inside the interface's own render pass, because these gauges are
++		// alpha-cut textures: outside it they come out as flat pictures that
++		// never drain.
++		coop::drawPartnerHealthOrb(healthGauge.rect());
++
+ 		if(bRenderInCursorMode) {
+ 			if(!MAGICMODE) {
+ 				mecanismIcon.draw();
+diff --git a/src/gui/Hud.h b/src/gui/Hud.h
+index aa4ad2f..e339b7b 100644
+--- a/src/gui/Hud.h
++++ b/src/gui/Hud.h
+@@ -420,6 +420,10 @@ public:
+ 	void updateInput();
+ 	void draw();
+ 	void recalcScale();
++
++	//! Where the life orb sits, so co-op can stack the partner's orb above it.
++	Rectf healthGaugeRect() { return healthGauge.rect(); }
++
+ };
+ 
+ extern HudRoot g_hudRoot;
+diff --git a/src/gui/Interface.cpp b/src/gui/Interface.cpp
+index ca1cfde..1c70fa8 100644
+--- a/src/gui/Interface.cpp
++++ b/src/gui/Interface.cpp
+@@ -117,6 +117,8 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+ #include "math/Rectangle.h"
+ #include "math/Vector.h"
+ 
++#include "net/CoopNet.h"
++
+ #include "physics/Collisions.h"
+ #include "physics/Physics.h"
+ 
+@@ -703,7 +705,15 @@ void ArxGame::managePlayerControls() {
+ 					}
+ 					
+ 				} else if(t->script.valid) {
+-					SendIOScriptEvent(entities.player(), t, SM_ACTION);
++					/*
++					 * Doors, levers and chests are world state. While the host
++					 * owns this area, running the script here as well would
++					 * open the door on our screen and leave it shut on theirs.
++					 * Ask them to run it and take the answer from the snapshot.
++					 */
++					if(!coop::requestAction(*t)) {
++						SendIOScriptEvent(entities.player(), t, SM_ACTION);
++					}
+ 				}
+ 				
+ 				DRAGGING = false;
+diff --git a/src/gui/MainMenu.cpp b/src/gui/MainMenu.cpp
+index 78bd2a0..fcbf031 100644
+--- a/src/gui/MainMenu.cpp
++++ b/src/gui/MainMenu.cpp
+@@ -71,6 +71,9 @@
+ 
+ #include "io/log/Logger.h"
+ 
++#include "net/CoopNet.h"
++#include "net/CoopProtocol.h"
++
+ #include "platform/Platform.h"
+ 
+ #include "scene/GameSound.h"
+@@ -1743,6 +1746,168 @@ public:
+ 	
+ };
+ 
++/*!
++ * Host or join a two player game.
++ *
++ * Everything here is deliberately one screen with no wizard: hosting is one
++ * click, joining is an address and one click. The line at the bottom is a live
++ * readout rather than a one-shot message, because connecting happens over
++ * several seconds and without it a player who mistyped an address would sit
++ * looking at an unchanged menu wondering whether anything was happening.
++ */
++class CoopMenuPage final : public MenuPage {
++
++	TextInputWidget * m_address = nullptr;
++	TextInputWidget * m_port = nullptr;
++	TextWidget * m_status = nullptr;
++	TextWidget * m_hostButton = nullptr;
++	TextWidget * m_joinButton = nullptr;
++	TextWidget * m_leaveButton = nullptr;
++
++public:
++
++	CoopMenuPage()
++		: MenuPage(Page_Coop)
++	{ }
++
++	void init() override {
++
++		reserveTop();
++		reserveBottom();
++
++		{
++			auto txt = std::make_unique<TextWidget>(hFontMenu, "CO-OPERATIVE PLAY");
++			txt->setEnabled(false);
++			addCenter(std::move(txt));
++		}
++
++		{
++			auto txt = std::make_unique<TextWidget>(hFontControls, "IP address");
++			txt->setEnabled(false);
++			txt->forceDisplay(TextWidget::Disabled);
++			addCenter(std::move(txt));
++		}
++
++		{
++			auto txt = std::make_unique<TextInputWidget>(hFontMenu, "127.0.0.1", m_rect);
++			txt->setMaxLength(64);
++			m_address = txt.get();
++			addCenter(std::move(txt));
++		}
++
++		{
++			auto txt = std::make_unique<TextWidget>(hFontControls, "Port");
++			txt->setEnabled(false);
++			txt->forceDisplay(TextWidget::Disabled);
++			addCenter(std::move(txt));
++		}
++
++		{
++			auto txt = std::make_unique<TextInputWidget>(hFontMenu,
++			                                             std::to_string(coop::DefaultPort), m_rect);
++			txt->setMaxLength(5);
++			m_port = txt.get();
++			addCenter(std::move(txt));
++		}
++
++		{
++			auto txt = std::make_unique<TextWidget>(hFontMenu, "HOST GAME");
++			txt->clicked = [this](Widget * /* widget */) {
++				if(m_port) {
++					m_port->unfocus();
++				}
++				if(m_address) {
++					m_address->unfocus();
++				}
++				coop::startHost(chosenPort());
++			};
++			m_hostButton = txt.get();
++			addCenter(std::move(txt));
++		}
++
++		{
++			auto txt = std::make_unique<TextWidget>(hFontMenu, "JOIN GAME");
++			txt->clicked = [this](Widget * /* widget */) {
++				if(m_address) {
++					m_address->unfocus();
++					if(m_port) {
++						m_port->unfocus();
++					}
++					// An address that already names a port keeps it; otherwise
++					// the port box decides, so the two players only ever have
++					// to agree on one number.
++					std::string address = m_address->text();
++					if(address.find(':') == std::string::npos) {
++						address += ':' + std::to_string(chosenPort());
++					}
++					coop::startClient(address);
++				}
++			};
++			m_joinButton = txt.get();
++			addCenter(std::move(txt));
++		}
++
++		{
++			auto txt = std::make_unique<TextWidget>(hFontMenu, "LEAVE SESSION");
++			txt->clicked = [](Widget * /* widget */) {
++				coop::stop();
++			};
++			m_leaveButton = txt.get();
++			addCenter(std::move(txt));
++		}
++
++		{
++			auto txt = std::make_unique<TextWidget>(hFontControls, coop::statusText());
++			txt->setEnabled(false);
++			txt->forceDisplay(TextWidget::Disabled);
++			m_status = txt.get();
++			addCenter(std::move(txt));
++		}
++
++		addBackButton(Page_None);
++
++		refresh();
++
++	}
++
++	//! The port typed in the box, or the standard one if it reads as nonsense.
++	unsigned short chosenPort() const {
++
++		if(m_port) {
++			if(auto parsed = util::toInt(m_port->text())) {
++				if(*parsed > 0 && *parsed < 65536) {
++					return static_cast<unsigned short>(*parsed);
++				}
++			}
++		}
++
++		return coop::DefaultPort;
++
++	}
++
++	//! Pulled every frame by the main menu so the readout is actually live.
++	void refresh() {
++
++		if(m_status) {
++			m_status->setText(coop::statusText());
++		}
++
++		bool active = coop::isActive();
++
++		if(m_hostButton) {
++			m_hostButton->setEnabled(!active);
++		}
++		if(m_joinButton) {
++			m_joinButton->setEnabled(!active);
++		}
++		if(m_leaveButton) {
++			m_leaveButton->setEnabled(active);
++		}
++
++	}
++
++};
++
+ class QuitConfirmMenuPage final : public MenuPage {
+ 	
+ public:
+@@ -1808,9 +1973,11 @@ void MainMenu::initWindowPages() {
+ 	m_window->add(std::make_unique<ControlOptionsMenuPage1>());
+ 	m_window->add(std::make_unique<ControlOptionsMenuPage2>());
+ 	
++	m_window->add(std::make_unique<CoopMenuPage>());
++
+ 	m_window->add(std::make_unique<QuitConfirmMenuPage>());
+ 	m_window->add(std::make_unique<LocalizationMenuPage>());
+-	
++
+ }
+ 
+ 
+@@ -1872,6 +2039,15 @@ void MainMenu::init() {
+ 		m_widgets.add(std::move(txt));
+ 	}
+ 	pos.y += yOffset;
++	{
++		// Not localised: the base game has no string for it, and an English
++		// label everyone can read beats a missing-key placeholder.
++		auto txt = std::make_unique<TextWidget>(hFontMainMenu, "CO-OP");
++		txt->setTargetPage(Page_Coop);
++		txt->setPosition(pos);
++		m_widgets.add(std::move(txt));
++	}
++	pos.y += yOffset;
+ 	{
+ 		auto txt = std::make_unique<TextWidget>(hFontMainMenu, getLocalised("system_menus_main_options"));
+ 		txt->setTargetPage(Page_Options);
+@@ -1946,7 +2122,15 @@ void MainMenu::update() {
+ 		}
+ 		m_window->setCurrentPage(m_requestedPage);
+ 	}
+-	
++
++	// Connecting takes a few seconds and can fail. Refresh the co-op readout
++	// every frame so the player watches it happen instead of guessing.
++	if(m_window && m_window->currentPageId() == Page_Coop) {
++		if(MenuPage * page = m_window->getPage(Page_Coop)) {
++			static_cast<CoopMenuPage *>(page)->refresh();
++		}
++	}
++
+ 	m_widgets.update();
+ 	
+ 	if(m_selected) {
+diff --git a/src/gui/MiniMap.cpp b/src/gui/MiniMap.cpp
+index 2a5cb04..5df65d6 100644
+--- a/src/gui/MiniMap.cpp
++++ b/src/gui/MiniMap.cpp
+@@ -71,6 +71,8 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+ #include "io/log/Logger.h"
+ #include "io/resource/PakReader.h"
+ 
++#include "net/CoopPlayer.h"
++
+ #include "platform/profiler/Profiler.h"
+ 
+ #include "scene/Interactive.h"
+@@ -239,6 +241,7 @@ void MiniMap::showPlayerMiniMap(MapLevel level) {
+ 	// Draw the player (red arrow)
+ 	if(level == getMapLevelForArea(m_currentArea)) {
+ 		drawPlayer(playerSize, playerPos, true);
++		drawCoopPlayer(playerSize, start, miniMapZoom, true);
+ 		drawDetectedEntities(start, miniMapZoom);
+ 	}
+ 	
+@@ -259,6 +262,7 @@ void MiniMap::showBookMiniMap(MapLevel level, Rect rect, float scale) {
+ 	
+ 	if(level == getMapLevelForArea(m_currentArea)) {
+ 		drawPlayer(6.f * scale, playerPos, false);
++		drawCoopPlayer(6.f * scale, start, zoom, false);
+ 		drawDetectedEntities(start, zoom);
+ 	}
+ 	
+@@ -281,6 +285,7 @@ void MiniMap::showBookEntireMap(MapLevel level, Rect rect, float scale) {
+ 	
+ 	if(level == getMapLevelForArea(m_currentArea)) {
+ 		drawPlayer(3.f * scale, playerPos, false);
++		drawCoopPlayer(3.f * scale, start, zoom, false);
+ 		drawDetectedEntities(start, zoom);
+ 	}
+ 	
+@@ -560,40 +565,60 @@ void MiniMap::drawBackground(MapLevel level, Rect boundaries, Vec2f start, float
+ 	
+ }
+ 
+-void MiniMap::drawPlayer(float playerSize, Vec2f playerPos, bool alphaBlending) {
+-	
++//! Draw one arrowhead. Shared by the player's own marker and the co-op partner's.
++static void drawMapArrow(float size, Vec2f at, float yaw, Color color, bool alphaBlending) {
++
+ 	GRenderer->SetAntialiasing(true);
+-	
++
+ 	std::array<TexturedVertex, 4> verts;
+ 	for(TexturedVertex & vertex : verts) {
+-		vertex.color = Color::red.toRGB();
++		vertex.color = color.toRGB();
+ 		vertex.w = 1;
+ 		vertex.p.z = 0.00001f;
+ 	}
+-	
+-	Vec2f r1(0.f, -playerSize * 1.8f);
+-	Vec2f r2(-playerSize * 0.5f, playerSize);
+-	Vec2f r3(playerSize * 0.5f, playerSize);
+-	
+-	float angle = glm::radians(m_player->angle.getYaw());
++
++	Vec2f r1(0.f, -size * 1.8f);
++	Vec2f r2(-size * 0.5f, size);
++	Vec2f r3(size * 0.5f, size);
++
++	float angle = glm::radians(yaw);
+ 	float ca = std::cos(angle);
+ 	float sa = std::sin(angle);
+-	
+-	verts[0].p.x = (playerPos.x + r2.x * ca + r2.y * sa);
+-	verts[0].p.y = (playerPos.y + r2.y * ca - r2.x * sa);
+-	verts[1].p.x = (playerPos.x + r1.x * ca + r1.y * sa);
+-	verts[1].p.y = (playerPos.y + r1.y * ca - r1.x * sa);
+-	verts[2].p.x = (playerPos.x + r3.x * ca + r3.y * sa);
+-	verts[2].p.y = (playerPos.y + r3.y * ca - r3.x * sa);
+-	
++
++	verts[0].p.x = (at.x + r2.x * ca + r2.y * sa);
++	verts[0].p.y = (at.y + r2.y * ca - r2.x * sa);
++	verts[1].p.x = (at.x + r1.x * ca + r1.y * sa);
++	verts[1].p.y = (at.y + r1.y * ca - r1.x * sa);
++	verts[2].p.x = (at.x + r3.x * ca + r3.y * sa);
++	verts[2].p.y = (at.y + r3.y * ca - r3.x * sa);
++
+ 	GRenderer->ResetTexture(0);
+-	
++
+ 	UseRenderState state(alphaBlending ? render2D().blend(BlendOne, BlendInvSrcColor) : render2D());
+-	
++
+ 	EERIEDRAWPRIM(Renderer::TriangleFan, verts.data());
+-	
++
+ 	GRenderer->SetAntialiasing(false);
+-	
++
++}
++
++void MiniMap::drawPlayer(float playerSize, Vec2f playerPos, bool alphaBlending) {
++	drawMapArrow(playerSize, playerPos, m_player->angle.getYaw(), Color::red, alphaBlending);
++}
++
++void MiniMap::drawCoopPlayer(float playerSize, Vec2f start, float zoom, bool alphaBlending) {
++
++	const coop::Avatar & other = coop::avatar();
++
++	if(!other.valid || !other.present) {
++		return; // not in this session, or not in this part of the fortress
++	}
++
++	// A different colour from the red arrow, so a glance at the map answers
++	// "where am I" and "where are they" without having to think about it.
++	drawMapArrow(playerSize, start + worldToMapPos(other.pos, zoom), other.angle.getYaw(),
++	             Color(80, 160, 255), alphaBlending);
++
+ }
+ 
+ void MiniMap::drawDetectedEntities(Vec2f start, float zoom) {
+diff --git a/src/gui/MiniMap.h b/src/gui/MiniMap.h
+index b1d26ea..9df7f6c 100644
+--- a/src/gui/MiniMap.h
++++ b/src/gui/MiniMap.h
+@@ -175,6 +175,16 @@ private:
+ 	void drawBackground(MapLevel level, Rect boundaries, Vec2f start, float zoom,
+ 	                    float fadeBorder = 0.f, bool invColor = false, float alpha = 1.f);
+ 	void drawPlayer(float playerSize, Vec2f playerPos, bool alphaBlending);
++
++	/*!
++	 * Draw the co-op partner's arrow, if there is one in this area.
++	 *
++	 * Unlike the local player's marker, which always sits at the centre of the
++	 * map, this one is placed by world position: they are somewhere else, and
++	 * where exactly is the whole point of showing it.
++	 */
++	void drawCoopPlayer(float playerSize, Vec2f start, float zoom, bool alphaBlending);
++
+ 	void drawDetectedEntities(Vec2f start, float zoom);
+ 	
+ 	std::vector<TexturedVertex> m_mapVertices;
+diff --git a/src/gui/Speech.cpp b/src/gui/Speech.cpp
+index 8d80f73..5ded879 100644
+--- a/src/gui/Speech.cpp
++++ b/src/gui/Speech.cpp
+@@ -254,6 +254,15 @@ Speech * ARX_SPEECH_AddSpeech(Entity & speaker, std::string_view data, long mood
+ 	return &speech;
+ }
+ 
++bool ARX_SPEECH_IsAnyCinematicActive() {
++	for(const Speech & speech : g_speech) {
++		if(speech.cine.type != ARX_CINE_SPEECH_NONE) {
++			return true;
++		}
++	}
++	return false;
++}
++
+ void ARX_SPEECH_Update() {
+ 	
+ 	GameInstant now = g_gameTime.now();
+diff --git a/src/gui/Speech.h b/src/gui/Speech.h
+index 073b485..5364346 100644
+--- a/src/gui/Speech.h
++++ b/src/gui/Speech.h
+@@ -129,6 +129,9 @@ Speech * getSpeechForEntity(const Entity & entity);
+  * \param data is a sample name / localised string id
+  */
+ Speech * ARX_SPEECH_AddSpeech(Entity & speaker, std::string_view data, long mood, SpeechFlags flags = 0);
++
++//! Whether any speech with a cinematic camera is still playing.
++bool ARX_SPEECH_IsAnyCinematicActive();
+ void ARX_SPEECH_ReleaseIOSpeech(const Entity & entity);
+ void ARX_SPEECH_ClearIOSpeech(const Entity & entity);
+ 
+diff --git a/src/gui/widget/Widget.h b/src/gui/widget/Widget.h
+index ea9e55a..e21a975 100644
+--- a/src/gui/widget/Widget.h
++++ b/src/gui/widget/Widget.h
+@@ -45,6 +45,7 @@ enum MENUSTATE {
+ 	Page_OptionsInputCustomizeKeys2,
+ 	Page_QuitConfirm,
+ 	Page_Localization,
++	Page_Coop,
+ };
+ 
+ enum WidgetType {
+diff --git a/src/io/log/FileLogger.cpp b/src/io/log/FileLogger.cpp
+index fbbfbdd..9d69cd0 100644
+--- a/src/io/log/FileLogger.cpp
++++ b/src/io/log/FileLogger.cpp
+@@ -23,6 +23,8 @@ namespace logger {
+ 
+ void File::log(const Source & file, int line, Logger::LogLevel level, std::string_view str) {
+ 	format(ofs, file, line, level, str);
++	// Flush per line: a crashing process must not take its last words with it.
++	ofs.flush();
+ }
+ 
+ void File::flush() {
+diff --git a/src/physics/Collisions.cpp b/src/physics/Collisions.cpp
+index b1657b5..97ea751 100644
+--- a/src/physics/Collisions.cpp
++++ b/src/physics/Collisions.cpp
+@@ -56,6 +56,8 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+ #include "core/Core.h"
+ #include "game/Damage.h"
+ #include "game/EntityManager.h"
++#include "net/CoopNet.h"
++#include "net/CoopPlayer.h"
+ #include "game/NPC.h"
+ #include "game/Player.h"
+ #include "graphics/Math.h"
+@@ -450,7 +452,7 @@ static void sendNpcCollisionEvent(Entity & target, Entity & source) {
+ 	
+ }
+ 
+-static void handleNpcCollision(Entity & source, Entity & target) {
++void handleNpcCollision(Entity & source, Entity & target) {
+ 	
+ 	GameDuration elapsed = g_gameTime.now() - target.collide_door_time;
+ 	if(elapsed > 500ms) {
+@@ -518,9 +520,26 @@ static void CheckAnythingInCylinder_Inner(const Cylinder & cylinder, Entity * so
+ 	if(!target
+ 	   || target == source
+ 	   || !target->obj
+-	   || target->show != SHOW_FLAG_IN_SCENE
+-	   || ((target->ioflags & IO_NO_COLLISIONS)  && !(flags & CFLAG_COLLIDE_NOCOL))
+-	   || fartherThan(target->pos, cylinder.origin, 1000.f)) {
++	   || target->show != SHOW_FLAG_IN_SCENE) {
++		return;
++	}
++
++	bool intangible = (target->ioflags & IO_NO_COLLISIONS) && !(flags & CFLAG_COLLIDE_NOCOL);
++
++	/*
++	 * The other player's body is solid to everything that moves - creatures
++	 * stop at its edge and swing from there, and the local player body-blocks
++	 * against it the same as against any creature. A lag-born overlap between
++	 * the two players cannot wedge them: the escape valve in the NPC branch
++	 * below always allows the movement that leads OUT of an overlap. The body
++	 * keeps IO_NO_COLLISIONS only so placement helpers (rescue teleports,
++	 * spawn searches) do not treat the partner as an obstacle.
++	 */
++	if(intangible && source && (source->ioflags & IO_NPC) && coop::isAvatarEntity(target)) {
++		intangible = false;
++	}
++
++	if(intangible || fartherThan(target->pos, cylinder.origin, 1000.f)) {
+ 		return;
+ 	}
+ 	
+@@ -536,12 +555,48 @@ static void CheckAnythingInCylinder_Inner(const Cylinder & cylinder, Entity * so
+ 	   && !(flags & CFLAG_NO_NPC_COLLIDE) // MUST be checked here only (not before...)
+ 	   && !(source && (source->ioflags & IO_NO_COLLISIONS))
+ 	   && target->_npcdata->lifePool.current > 0.f) {
++
++		/*
++		 * Bodies whose position is written by the network - replicated
++		 * creatures on a guest, the other player's body on either machine -
++		 * are solid exactly like local ones: a creature blocking a corridor
++		 * is a real mechanic of the game. The one situation the offline game
++		 * can never produce is a body materialising ON the player (its
++		 * position is a network-delay stale), so for those bodies only, any
++		 * movement that leads OUT of an existing overlap is allowed. Never
++		 * wedged, never intangible.
++		 */
++		bool lagDriven = source == entities.player() && coop::isActive()
++		                 && (coop::isAvatarEntity(target) || coop::isReplica());
++		if(lagDriven) {
++			Cylinder standing = Cylinder(player.basePosition(), cylinder.radius, cylinder.height);
++			if(CylinderInCylinder(standing, target->physics.cyl)) {
++				float curDist = fdist(getXZ(standing.origin), getXZ(target->physics.cyl.origin));
++				float newDist = fdist(getXZ(cylinder.origin), getXZ(target->physics.cyl.origin));
++				if(newDist >= curDist - 0.1f) {
++					return;
++				}
++			}
++		}
++
+ 		if(CylinderInCylinder(cylinder, target->physics.cyl)) {
+ 			NPC_IN_CYLINDER = 1;
+ 			anything = std::min(anything, target->physics.cyl.origin.y + target->physics.cyl.height);
+ 			if(!(flags & CFLAG_JUST_TEST) && source) {
+ 				arx_assert(source->ioflags & IO_NPC);
+-				handleNpcCollision(*source, *target);
++				if(!lagDriven) {
++					handleNpcCollision(*source, *target);
++				} else if(!coop::isAvatarEntity(target)) {
++					// Contact is the authority's call: the host runs the real
++					// collision (script events, touch damage) against this
++					// creature and the results come back as the usual state.
++					// collide_door_time is free here - only handleNpcCollision
++					// writes it, and that never runs on this machine.
++					if(g_gameTime.now() - target->collide_door_time > 100ms) {
++						target->collide_door_time = g_gameTime.now();
++						coop::reportNpcTouch(*target);
++					}
++				}
+ 			}
+ 		}
+ 		return;
+diff --git a/src/physics/Collisions.h b/src/physics/Collisions.h
+index 3a838ae..4cd9d26 100644
+--- a/src/physics/Collisions.h
++++ b/src/physics/Collisions.h
+@@ -85,6 +85,15 @@ extern bool DIRECT_PATH;
+ bool ARX_COLLISION_Move_Cylinder(IO_PHYSICS * ip, Entity * io, float MOVE_CYLINDER_STEP, CollisionFlags flags = 0);
+ float CheckAnythingInCylinder(const Cylinder & cylinder, Entity * source, CollisionFlags flags = 0);
+ 
++/*!
++ * The full body-contact ritual between two touching NPC-class entities:
++ * SM_COLLIDE_NPC script events (throttled), touch damage from damager
++ * fields both ways, reached-target bookkeeping. Exposed so the co-op host
++ * can run the real contact when the other player presses against a
++ * creature on their machine.
++ */
++void handleNpcCollision(Entity & source, Entity & target);
++
+ enum CheckAnythingInSphereFlag {
+ 	 CAS_NO_NPC_COL        = 1 << 0,
+ 	 CAS_NO_SAME_GROUP     = 1 << 1,
+diff --git a/src/platform/WindowsUtils.cpp b/src/platform/WindowsUtils.cpp
+index 78c1043..7ea4bc0 100644
+Binary files a/src/platform/WindowsUtils.cpp and b/src/platform/WindowsUtils.cpp differ
+diff --git a/src/platform/WindowsUtils.h b/src/platform/WindowsUtils.h
+index 6476e0b..f328869 100644
+--- a/src/platform/WindowsUtils.h
++++ b/src/platform/WindowsUtils.h
+@@ -73,6 +73,15 @@ public:
+ 	explicit WideString(size_t size) : m_size(0) { resize(size); }
+ 	WideString() : m_size(0) { m_static[0] = '\0'; }
+ 	
++	/*
++	 * WideString holds its buffer in a union containing a std::wstring, so the
++	 * compiler cannot generate these: it has no way to know which member is live.
++	 * Without them the class is uncopyable and anything returning one by value -
++	 * getSystemDir() among others - fails to compile.
++	 */
++	WideString(const WideString & other);
++	WideString(WideString && other) noexcept;
++
+ 	~WideString() { if(dynamic()) { str().~DynamicType(); } }
+ 	
+ 	WCHAR * data() { return dynamic() ? str().data() : m_static; }
+diff --git a/src/scene/ChangeLevel.cpp b/src/scene/ChangeLevel.cpp
+index 0f35fad..975b79e 100644
+--- a/src/scene/ChangeLevel.cpp
++++ b/src/scene/ChangeLevel.cpp
+@@ -96,9 +96,13 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+ 
+ #include "math/Random.h"
+ 
++#include "net/CoopNet.h"
++#include "net/CoopPlayer.h"
++
+ #include "physics/Physics.h"
+ 
+ #include "platform/Platform.h"
++#include "platform/Process.h"
+ 
+ #include "scene/GameSound.h"
+ #include "scene/Interactive.h"
+@@ -227,21 +231,37 @@ static s32 GetIOAnimIdx2(const Entity * io, const ANIM_HANDLE * anim) {
+ }
+ 
+ bool ARX_Changelevel_CurGame_Clear() {
+-	
++
+ 	if(g_currentSavedGame) {
+ 		delete g_currentSavedGame, g_currentSavedGame = nullptr;
+ 	}
+-	
++
+ 	if(CURRENT_GAME_FILE.empty()) {
++
+ 		CURRENT_GAME_FILE = fs::getUserDir() / "current.sav";
++
++		/*
++		 * Two players on one machine share a user directory, and this file is
++		 * the scratch copy of the world in progress - one per running game, not
++		 * one per installation. The first copy to start takes the plain name;
++		 * anyone joining from the same machine, who would otherwise fail here
++		 * and never reach the main menu, takes a name of their own.
++		 */
++		if(!fs::remove(CURRENT_GAME_FILE)) {
++			std::ostringstream oss;
++			oss << "current-" << platform::getProcessId() << ".sav";
++			CURRENT_GAME_FILE = fs::getUserDir() / oss.str();
++			LogInfo << "Another copy of the game is running; using " << CURRENT_GAME_FILE;
++		}
++
+ 	}
+-	
++
+ 	// If there's a left over current game file, clear it
+ 	if(!fs::remove(CURRENT_GAME_FILE)) {
+ 		LogError << "Failed to remove current game file " << CURRENT_GAME_FILE;
+ 		return false;
+ 	}
+-	
++
+ 	return true;
+ }
+ 
+@@ -321,7 +341,8 @@ void ARX_CHANGELEVEL_Change(AreaId area, std::string_view target, float angle) {
+ 	
+ 	arx_assume(area);
+ 	
+-	LogDebug("ARX_CHANGELEVEL_Change " << area << " " << target << " " << angle);
++	LogWarning << "[coop-chain] level change: to area " << area << " target '" << target
++	           << "' from area " << (g_currentArea ? long(g_currentArea.handleData()) : -1);
+ 	
+ 	// not changing level, just teleported
+ 	if(area == g_currentArea) {
+@@ -333,13 +354,20 @@ void ARX_CHANGELEVEL_Change(AreaId area, std::string_view target, float angle) {
+ 		return; // nothing more to do :)
+ 	}
+ 	
++	/*
++	 * The two players are free to be in different parts of the fortress. Tell
++	 * the other machine we are leaving before the world is torn down, so that
++	 * it stops expecting us here and drops the body it was drawing for us.
++	 */
++	coop::onAreaLeaving(g_currentArea, area, target);
++
+ 	progressBarSetTotal(238);
+ 	progressBarReset();
+-	
++
+ 	LoadLevelScreen(area);
+-	
++
+ 	ARX_PLAYER_Reset_Fall();
+-	
++
+ 	progressBarAdvance();
+ 	LoadLevelScreen();
+ 	
+@@ -350,12 +378,17 @@ void ARX_CHANGELEVEL_Change(AreaId area, std::string_view target, float angle) {
+ 	ARX_CHANGELEVEL_PushLevel(g_currentArea, area);
+ 	
+ 	ARX_CHANGELEVEL_PopLevel(area, true, target, angle);
+-	
++
+ 	entities.player()->inzone = nullptr;
+-	
++
+ 	ARX_PLAYER_RectifyPosition();
+ 	GMOD_RESET = true;
+-	
++
++	// Now that the new area is up, announce where we are. If the other player
++	// is here too they become the authority (or we do), and either way they can
++	// start drawing us again.
++	coop::onAreaLoaded(area);
++
+ }
+ 
+ static bool ARX_CHANGELEVEL_PushLevel(AreaId oldArea, AreaId newArea) {
+@@ -1426,9 +1459,17 @@ static bool ARX_CHANGELEVEL_Pop_Player(std::string_view target, float angle) {
+ 	if(target.empty()) {
+ 		player.angle = asp->angle;
+ 		player.pos = asp->pos.toVec3();
++		LogWarning << "[coop-chain] player placed from SAVE FILE at " << player.pos.x
++		           << ',' << player.pos.y << ',' << player.pos.z << " (no target marker)";
+ 	} else {
+ 		if(Entity * targetEntity = entities.getById(target)) {
+ 			player.pos = GetItemWorldPosition(targetEntity) + player.baseOffset();
++			LogWarning << "[coop-chain] player placed at marker '" << target << "' -> "
++			           << player.pos.x << ',' << player.pos.y << ',' << player.pos.z;
++		} else {
++			LogWarning << "[coop-chain] TARGET MARKER '" << target
++			           << "' NOT FOUND - player keeps stale position " << player.pos.x
++			           << ',' << player.pos.y << ',' << player.pos.z;
+ 		}
+ 		player.desiredangle.setYaw(angle);
+ 		player.angle.setYaw(angle);
+@@ -1449,6 +1490,8 @@ static bool ARX_CHANGELEVEL_Pop_Player(std::string_view target, float angle) {
+ 	if(asp->TELEPORT_TO_LEVEL[0]) {
+ 		s32 teleportToArea = util::toInt(util::loadString(asp->TELEPORT_TO_LEVEL)).value_or(-1);
+ 		g_teleportToArea = teleportToArea >= 0 ? AreaId(teleportToArea) : AreaId();
++		LogWarning << "[coop-chain] SAVE SMUGGLED A PENDING TRAVEL: area "
++		           << util::loadString(asp->TELEPORT_TO_LEVEL);
+ 	} else {
+ 		g_teleportToArea = { };
+ 	}
+@@ -2593,6 +2636,14 @@ void ARX_CHANGELEVEL_Load(const fs::path & savefile) {
+ 	
+ 	LogInfo << "Loading save " << savefile;
+ 	
++	/*
++	 * The teardown below frees every entity in list order, and the partner
++	 * body is created before the weapon that hangs off it - so the body died
++	 * first and the weapon's destructor then unlinked itself from freed
++	 * memory. Take the pair down here, in the safe order, before the sweep.
++	 */
++	coop::destroyAvatarEntity();
++	
+ 	LogDebug("begin ARX_CHANGELEVEL_Load " << savefile);
+ 	
+ 	progressBarSetTotal(238);
+@@ -2634,9 +2685,13 @@ void ARX_CHANGELEVEL_Load(const fs::path & savefile) {
+ 	BLOCK_PLAYER_CONTROLS = false;
+ 	player.Interface &= ~INTER_COMBATMODE;
+ 	ARX_EQUIPMENT_AttachPlayerWeaponToBack();
+-	
++
+ 	entities.player()->animlayer[1].cur_anim = nullptr;
+-	
++
++	// Loading a savegame lands us in whatever area that save was in, which is
++	// as much an area change as walking through a door.
++	coop::onAreaLoaded(AreaId(pld.level));
++
+ }
+ 
+ bool ARX_CHANGELEVEL_GetInfo(const fs::path & savefile, std::string & name, float & version,
+diff --git a/src/scene/GameSound.cpp b/src/scene/GameSound.cpp
+index 73af135..4f5c3ed 100644
+--- a/src/scene/GameSound.cpp
++++ b/src/scene/GameSound.cpp
+@@ -77,6 +77,7 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+ #include "scene/Interactive.h"
+ 
+ #include "util/String.h"
++#include "net/CoopNet.h"
+ 
+ 
+ using audio::AmbianceId;
+@@ -437,6 +438,10 @@ void ARX_SOUND_PlayCollision(Material mat1, Material mat2, float volume, float p
+ 	if(mat1 == MATERIAL_NONE || mat2 == MATERIAL_NONE)
+ 		return;
+ 
++	// Before the local audibility checks: OUR camera may be far away while the
++	// other player stands right next to the impact.
++	coop::broadcastCollisionMats(u8(mat1), u8(mat2), volume, power, position);
++
+ 	if(mat1 == MATERIAL_WATER || mat2 == MATERIAL_WATER)
+ 		ARX_PARTICLES_SpawnWaterSplash(position);
+ 
+@@ -477,6 +482,10 @@ void ARX_SOUND_PlayCollision(std::string_view name1, std::string_view name2, flo
+ 	
+ 	if(name1.empty() || name2.empty())
+ 		return;
++
++	// Before the local audibility checks: OUR camera may be far away while the
++	// other player stands right next to the impact.
++	coop::broadcastCollisionNames(name1, name2, volume, power, position);
+ 	
+ 	if(name2 == "water")
+ 		ARX_PARTICLES_SpawnWaterSplash(position);
+diff --git a/src/scene/Interactive.cpp b/src/scene/Interactive.cpp
+index 06ab10a..4633c53 100644
+--- a/src/scene/Interactive.cpp
++++ b/src/scene/Interactive.cpp
+@@ -104,6 +104,8 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+ 
+ #include "math/Random.h"
+ 
++#include "net/CoopPlayer.h"
++
+ #include "physics/Collisions.h"
+ #include "physics/CollisionShapes.h"
+ #include "physics/Physics.h"
+@@ -381,29 +383,60 @@ void PrepareIOTreatZone(long flag) {
+ 	
+ 	static long status = -1;
+ 	static Vec3f lastpos(0.f);
+-	
++	static Vec3f lastPartnerPos(0.f);
++
+ 	const Vec3f cameraPos = g_camera->m_pos;
+-	
++
++	/*
++	 * The zone has to be built around both players, not just this one.
++	 *
++	 * Everything the engine bothers to simulate is decided here: creatures
++	 * outside the zone get no AI, are not animated, and are not replicated. A
++	 * zone measured only from this machine's camera therefore leaves a partner
++	 * who has walked off ahead standing among enemies that will not so much as
++	 * turn to look at them, in a room where nothing moves.
++	 */
++	Entity * partner = coop::avatarEntity();
++	const bool hasPartner = (partner != nullptr);
++	const Vec3f partnerPos = hasPartner ? partner->pos : cameraPos;
++
+ 	if(flag || status == -1) {
+ 		status = 0;
+ 		lastpos = cameraPos;
++		lastPartnerPos = partnerPos;
+ 	} else if(status == 3) {
+ 		status = 0;
+ 	}
+-	
+-	if(fartherThan(cameraPos, lastpos, 100.f)) {
++
++	// Rebuilt when either player has moved. Watching only our own camera would
++	// leave the zone stale for as long as this player stood still, however far
++	// the other one walked.
++	if(fartherThan(cameraPos, lastpos, 100.f)
++	   || (hasPartner && fartherThan(partnerPos, lastPartnerPos, 100.f))) {
+ 		status = 0;
+ 		lastpos = cameraPos;
++		lastPartnerPos = partnerPos;
+ 	}
+-	
++
+ 	if(status++) {
+ 		return;
+ 	}
+-	
++
+ 	TREATZONE_Clear();
+ 	TREATZONE_AddIO(entities.player());
+-	
++
++	// The other player themselves is always in, exactly as we always are.
++	if(hasPartner) {
++		TREATZONE_AddIO(partner);
++		if(partner->_npcdata && partner->_npcdata->weapon) {
++			TREATZONE_AddIO(partner->_npcdata->weapon);
++		}
++	}
++
+ 	RoomHandle cameraRoom = ARX_PORTALS_GetRoomNumForPosition(cameraPos, RoomPositionForCamera);
++	RoomHandle partnerRoom = hasPartner
++	                         ? ARX_PORTALS_GetRoomNumForPosition(partnerPos, RoomPositionForCamera)
++	                         : RoomHandle();
+ 	RoomHandle playerRoom = ARX_PORTALS_GetRoomNumForPosition(player.pos, RoomPositionForCamera);
+ 	
+ 	for(EntityHandle equipment : player.equiped) {
+@@ -455,23 +488,29 @@ void PrepareIOTreatZone(long flag) {
+ 		} else if((entity.ioflags & IO_NPC) && (entity._npcdata->pathfind.flags & PATHFIND_ALWAYS)) {
+ 			treat = true;
+ 		} else {
++			/*
++			 * Distance to the nearer of the two players. Whichever of them is
++			 * close enough to see this thing is reason enough to keep it alive:
++			 * it is the same shared world either way, and a creature has to be
++			 * simulated to notice anybody at all.
++			 */
+ 			float dists;
+-			if(cameraRoom) {
+-				if(entity.show == SHOW_FLAG_TELEPORTING) {
+-					Vec3f pos = GetItemWorldPosition(&entity);
+-					dists = arx::distance2(cameraPos, pos);
+-				} else {
+-					if(entity.requestRoomUpdate) {
+-						UpdateIORoom(&entity);
+-					}
+-					dists = square(SP_GetRoomDist(entity.pos, cameraPos, entity.room, cameraRoom));
++			const bool teleporting = (entity.show == SHOW_FLAG_TELEPORTING);
++			const Vec3f probe = teleporting ? GetItemWorldPosition(&entity) : entity.pos;
++
++			if(cameraRoom && !teleporting) {
++				if(entity.requestRoomUpdate) {
++					UpdateIORoom(&entity);
++				}
++				dists = square(SP_GetRoomDist(probe, cameraPos, entity.room, cameraRoom));
++				if(hasPartner && partnerRoom) {
++					dists = std::min(dists, square(SP_GetRoomDist(probe, partnerPos,
++					                                              entity.room, partnerRoom)));
+ 				}
+ 			} else {
+-				if(entity.show == SHOW_FLAG_TELEPORTING) {
+-					Vec3f pos = GetItemWorldPosition(&entity);
+-					dists = arx::distance2(cameraPos, pos);
+-				} else {
+-					dists = arx::distance2(entity.pos, cameraPos);
++				dists = arx::distance2(probe, cameraPos);
++				if(hasPartner) {
++					dists = std::min(dists, arx::distance2(probe, partnerPos));
+ 				}
+ 			}
+ 			treat = (dists < square(TREATZONE_LIMIT));
+@@ -1198,7 +1237,7 @@ static EntityInstance getFreeEntityInstance(const res::path & classPath) {
+ 	std::string_view className = classPath.filename();
+ 	res::path classDir = classPath.parent();
+ 	
+-	for(EntityInstance instance = 1; ; instance++) {
++	for(EntityInstance instance = coop::firstFreeInstanceHint(); ; instance++) {
+ 		
+ 		std::string idString = EntityId(className, instance).string();
+ 		
+diff --git a/src/scene/LinkedObject.cpp b/src/scene/LinkedObject.cpp
+index ee90108..a1b8658 100644
+--- a/src/scene/LinkedObject.cpp
++++ b/src/scene/LinkedObject.cpp
+@@ -52,6 +52,7 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+ #include "game/Entity.h"
+ #include "game/EntityManager.h"
+ #include "game/Inventory.h"
++#include "io/log/Logger.h"
+ #include "scene/Interactive.h"
+ #include "scene/Object.h"
+ 
+@@ -161,6 +162,12 @@ void linkEntities(Entity & master, std::string_view masterVertex,
+ 
+ void unlinkEntity(Entity & slave) {
+ 	
++	if(slave.owner() && !ValidIOAddress(slave.owner())) {
++		LogWarning << "[coop] " << slave.idString() << " unlinked from an already-freed owner";
++		slave.setOwner(nullptr);
++		return;
++	}
++	
+ 	if(!slave.owner() || !slave.owner()->obj) {
+ 		return;
+ 	}
+diff --git a/src/script/Script.cpp b/src/script/Script.cpp
+index 8a7a186..9747e62 100644
+--- a/src/script/Script.cpp
++++ b/src/script/Script.cpp
+@@ -83,6 +83,9 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+ #include "io/resource/PakReader.h"
+ #include "io/log/Logger.h"
+ 
++#include "net/CoopNet.h"
++#include "net/CoopPlayer.h"
++
+ #include "platform/profiler/Profiler.h"
+ 
+ #include "scene/Scene.h"
+@@ -105,6 +108,65 @@ long FORBID_SCRIPT_IO_CREATION = 0;
+ std::vector<SCR_TIMER> g_scriptTimers;
+ static size_t g_activeScriptTimers = 0;
+ 
++/*!
++ * Where "the player" is, as far as a script asking about distance is concerned.
++ *
++ * Scripts have exactly one word for the player, and every creature in the game
++ * uses it to decide whether anyone is close enough to be worth waking up for:
++ * `IF (^DIST_PLAYER < 300) ...`. Measured only to the first player, that test
++ * fails whenever it is the second player standing over them, so enemies ignore
++ * a player who is close enough to touch while answering to one across the
++ * level. Taking the nearer of the two is what makes them react to both.
++ *
++ * Outside a session this is the first player and nothing else, because there is
++ * no second body to find.
++ */
++/*!
++ * The name a script should know an entity by.
++ *
++ * Identical to idString() with one exception: the second player answers to
++ * "player", the same as the first.
++ *
++ * Scripts constantly ask who did something to them - `IF (^SENDER != PLAYER)
++ * ACCEPT` appears three times in the goblin script alone - and there has only
++ * ever been one name for a player to give. The second player's body is an
++ * ordinary entity called coop_player_0001, a name no script in the game has
++ * heard of, so every one of those tests came out false and the creature
++ * shrugged off whatever they had just done to it. Giving both players the name
++ * the scripts are looking for is what makes the second one count as a player
++ * rather than as a stranger who happens to be swinging a sword.
++ */
++static std::string_view scriptIdString(const Entity * entity) {
++
++	if(entity && coop::isAvatarEntity(entity)) {
++		return "player";
++	}
++
++	return idString(entity);
++}
++
++static Vec3f nearestPlayerPosTo(const Vec3f & from) {
++
++	// In a script event the other player caused, "the player" is not a matter
++	// of distance - it is them, however far away the asking entity is.
++	if(Entity * partner = coop::scriptContextPlayer()) {
++		return partner->pos + ARXCHARACTER::baseOffset();
++	}
++
++	Vec3f best = player.pos;
++
++	if(Entity * other = coop::avatarEntity()) {
++		// The body stands on the ground; the player position the rest of the
++		// engine talks about sits a head-height above it.
++		Vec3f otherPos = other->pos + ARXCHARACTER::baseOffset();
++		if(arx::distance2(from, otherPos) < arx::distance2(from, best)) {
++			best = otherPos;
++		}
++	}
++
++	return best;
++}
++
+ bool isLocalVariable(std::string_view name) {
+ 	
+ 	arx_assert(!name.empty());
+@@ -522,7 +584,7 @@ ValueType getSystemVar(const script::Context & context, std::string_view name,
+ 			
+ 			if(name == "^&playerdist") {
+ 				if(context.getEntity()) {
+-					*fcontent = fdist(player.pos, context.getEntity()->pos);
++					*fcontent = fdist(nearestPlayerPosTo(context.getEntity()->pos), context.getEntity()->pos);
+ 					return TYPE_FLOAT;
+ 				}
+ 			}
+@@ -545,7 +607,7 @@ ValueType getSystemVar(const script::Context & context, std::string_view name,
+ 			
+ 			if(name == "^#playerdist") {
+ 				if(context.getEntity()) {
+-					*lcontent = long(fdist(player.pos, context.getEntity()->pos));
++					*lcontent = long(fdist(nearestPlayerPosTo(context.getEntity()->pos), context.getEntity()->pos));
+ 					return TYPE_LONG;
+ 				}
+ 			}
+@@ -775,7 +837,7 @@ ValueType getSystemVar(const script::Context & context, std::string_view name,
+ 				if(context.getEntity()) {
+ 					Entity * target = entities.getById(name.substr(6));
+ 					if(target == entities.player()) {
+-						*fcontent = fdist(player.pos, context.getEntity()->pos);
++						*fcontent = fdist(nearestPlayerPosTo(context.getEntity()->pos), context.getEntity()->pos);
+ 					} else if(target
+ 					          && (context.getEntity()->show == SHOW_FLAG_IN_SCENE
+ 					              || context.getEntity()->show == SHOW_FLAG_IN_INVENTORY)
+@@ -1036,11 +1098,22 @@ ValueType getSystemVar(const script::Context & context, std::string_view name,
+ 			}
+ 			
+ 			if(boost::starts_with(name, "^player_life")) {
++				// In a script event the other player caused, their vitals are
++				// the ones being asked about. Only what is replicated can be
++				// answered - life and mana are; skills and gold are not.
++				if(coop::isPartnerScriptContext()) {
++					*fcontent = coop::avatar().life;
++					return TYPE_FLOAT;
++				}
+ 				*fcontent = player.Full_life; // TODO why not player.life like everywhere else?
+ 				return TYPE_FLOAT;
+ 			}
+ 
+ 			if(boost::starts_with(name, "^player_mana")) {
++				if(coop::isPartnerScriptContext()) {
++					*fcontent = coop::avatar().mana;
++					return TYPE_FLOAT;
++				}
+ 				*fcontent = player.manaPool.current;
+ 				return TYPE_FLOAT;
+ 			}
+@@ -1076,11 +1149,19 @@ ValueType getSystemVar(const script::Context & context, std::string_view name,
+ 			}
+ 			
+ 			if(boost::starts_with(name, "^player_maxlife")) {
++				if(coop::isPartnerScriptContext()) {
++					*fcontent = coop::avatar().maxLife;
++					return TYPE_FLOAT;
++				}
+ 				*fcontent = player.lifePool.max;
+ 				return TYPE_FLOAT;
+ 			}
+ 
+ 			if(boost::starts_with(name, "^player_maxmana")) {
++				if(coop::isPartnerScriptContext()) {
++					*fcontent = coop::avatar().maxMana;
++					return TYPE_FLOAT;
++				}
+ 				*fcontent = player.manaPool.max;
+ 				return TYPE_FLOAT;
+ 			}
+@@ -1209,8 +1290,10 @@ ValueType getSystemVar(const script::Context & context, std::string_view name,
+ 						if(context.getEntity()->requestRoomUpdate) {
+ 							UpdateIORoom(context.getEntity());
+ 						}
+-						RoomHandle playerRoom = ARX_PORTALS_GetRoomNumForPosition(player.pos, RoomPositionForCamera);
+-						*fcontent = SP_GetRoomDist(context.getEntity()->pos, player.pos, context.getEntity()->room, playerRoom);
++						// Through-the-rooms distance, to whichever player is nearer.
++						Vec3f playerPos = nearestPlayerPosTo(context.getEntity()->pos);
++						RoomHandle playerRoom = ARX_PORTALS_GetRoomNumForPosition(playerPos, RoomPositionForCamera);
++						*fcontent = SP_GetRoomDist(context.getEntity()->pos, playerPos, context.getEntity()->room, playerRoom);
+ 					} else if(target
+ 					          && (context.getEntity()->show == SHOW_FLAG_IN_SCENE
+ 					              || context.getEntity()->show == SHOW_FLAG_IN_INVENTORY)
+@@ -1328,7 +1411,7 @@ ValueType getSystemVar(const script::Context & context, std::string_view name,
+ 		case 's': {
+ 			
+ 			if(boost::starts_with(name, "^sender")) {
+-				txtcontent = idString(context.getSender());
++				txtcontent = scriptIdString(context.getSender());
+ 				return TYPE_TEXT;
+ 			}
+ 			
+@@ -1659,12 +1742,17 @@ SCR_TIMER & createScriptTimer(Entity * io, std::string && name) {
+ 		for(SCR_TIMER & timer : g_scriptTimers) {
+ 			if(!timer.exist) {
+ 				timer = SCR_TIMER(io, std::move(name));
++				// Stamped here so every creation site inherits it: a timer
++				// armed while handling the other player's action stays theirs.
++				timer.partnerContext = coop::isPartnerScriptContext();
+ 				return timer;
+ 			}
+ 		}
+ 	}
+ 	
+-	return g_scriptTimers.emplace_back(io, std::move(name));
++	SCR_TIMER & timer = g_scriptTimers.emplace_back(io, std::move(name));
++	timer.partnerContext = coop::isPartnerScriptContext();
++	return timer;
+ }
+ 
+ size_t ARX_SCRIPT_CountTimers() {
+@@ -1802,6 +1890,8 @@ void ARX_SCRIPT_Timer_Check() {
+ 		const EERIE_SCRIPT * es = timer.es;
+ 		Entity * io = timer.io;
+ 		size_t pos = timer.pos;
++		// Copied before clearTimer() can wipe the slot.
++		const bool partnerContext = timer.partnerContext;
+ 		
+ 		if(!es && Manage_Specific_RAT_Timer(&timer)) {
+ 			continue;
+@@ -1826,6 +1916,9 @@ void ARX_SCRIPT_Timer_Check() {
+ 		
+ 		if(es && ValidIOAddress(io)) {
+ 			LogDebug("running timer \"" << name << "\" for entity " << io->idString());
++			// Re-raise the player context the timer was armed under, so
++			// what it does lands on the player whose action started it.
++			coop::ScopedPlayerContext context(partnerContext ? coop::avatarEntity() : nullptr);
+ 			ScriptEvent::resume(es, io, pos);
+ 		} else {
+ 			LogDebug("could not run timer \"" << name << "\" - entity vanished");
+diff --git a/src/script/Script.h b/src/script/Script.h
+index 6d4e8fd..9b9aeee 100644
+--- a/src/script/Script.h
++++ b/src/script/Script.h
+@@ -206,7 +206,19 @@ struct SCR_TIMER {
+ 	GameInstant start;
+ 	Entity * io;
+ 	const EERIE_SCRIPT * es;
+-	
++
++	/*!
++	 * The action that armed this timer belonged to the second co-op player.
++	 *
++	 * Level scripts routinely split an effect across a timer: the jail exit
++	 * fades the screen and then teleports "the player" seven hundred
++	 * milliseconds later, from the timer. The player context that says WHICH
++	 * player is a scoped guard on the call stack, and a timer fires long after
++	 * that stack is gone - so without carrying the answer here, a door the
++	 * second player stepped into would teleport the first.
++	 */
++	bool partnerContext = false;
++
+ 	explicit SCR_TIMER(Entity * entity = nullptr, std::string && timerName = std::string()) noexcept
+ 		: name(std::move(timerName))
+ 		, exist(entity != nullptr)
+diff --git a/src/script/ScriptEvent.cpp b/src/script/ScriptEvent.cpp
+index d94cf0e..9399dcc 100644
+--- a/src/script/ScriptEvent.cpp
++++ b/src/script/ScriptEvent.cpp
+@@ -73,6 +73,8 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+ #include "script/ScriptedVariable.h"
+ 
+ #include "util/String.h"
++#include "net/CoopNet.h"
++#include "net/CoopPlayer.h"
+ 
+ 
+ long ScriptEvent::totalCount = 0;
+@@ -280,6 +282,12 @@ ScriptResult ScriptEvent::send(const EERIE_SCRIPT * es, Entity * sender, Entity
+ 	LogDebug("--> " << event << " params=\"" << parameters << "\"" << " entity=" << entity->idString()
+ 	         << (es == &entity->script ? " base" : " overriding") << " pos=" << pos);
+ 	
++	if(coop::debugTrace()) {
++		LogWarning << "[coop-debug] event " << event << " -> " << entity->idString()
++		           << (coop::isPartnerScriptContext() ? " [as-partner]" : "")
++		           << (sender ? std::string(" from ") + sender->idString() : std::string());
++	}
++	
+ 	script::Context context(es, pos, sender, entity, event.getId(), std::move(parameters));
+ 	
+ 	if(event != SM_EXECUTELINE) {
+@@ -308,6 +316,23 @@ ScriptResult ScriptEvent::send(const EERIE_SCRIPT * es, Entity * sender, Entity
+ 		// Remove all underscores from the command.
+ 		word.resize(std::remove(word.begin(), word.end(), '_') - word.begin());
+ 		
++		if(coop::debugTrace()) {
++			static const char * const watched[] = {
++				"setplayercontrols", "playerinterface", "worldfade", "cinemascope",
++				"speak", "teleport", "setcontrolledzone", "unset_controlled_zone",
++				"quake", "endgame"
++			};
++			bool interesting = word.compare(0, 5, "timer") == 0;
++			for(const char * w : watched) {
++				if(!interesting && word == w) {
++					interesting = true;
++				}
++			}
++			if(interesting) {
++				LogWarning << "[coop-debug] cmd '" << word << "' on " << context.getEntity()->idString()
++				           << (coop::isPartnerScriptContext() ? " [as-partner]" : "");
++			}
++		}
+ 		if(auto it = commands.find(word); it != commands.end()) {
+ 			
+ 			script::Command & command = *(it->second);
+diff --git a/src/script/ScriptedAnimation.cpp b/src/script/ScriptedAnimation.cpp
+index 36be1f2..9bb3a51 100644
+--- a/src/script/ScriptedAnimation.cpp
++++ b/src/script/ScriptedAnimation.cpp
+@@ -54,6 +54,8 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+ #include "graphics/data/Mesh.h"
+ #include "io/resource/ResourcePath.h"
+ #include "scene/Interactive.h"
++#include "net/CoopPlayer.h"
++
+ #include "script/ScriptUtils.h"
+ 
+ 
+@@ -426,6 +428,18 @@ public:
+ 	
+ 	Result execute(Context & context) override {
+ 		
++		/*
++		 * One-shot trigger zones disarm themselves after firing - the jail
++		 * exit unsets its own zone the first time "the player" steps in.
++		 * When the other player fired it, their travel is already on its
++		 * way, and disarming OUR copy would leave this machine's player in
++		 * a doorway that no longer works. Each consumes their own copy.
++		 */
++		if(coop::isPartnerScriptContext()) {
++			return Success;
++		}
++
++		
+ 		std::string zone = context.getWord();
+ 		
+ 		DebugScript(' ' << zone);
+diff --git a/src/script/ScriptedCamera.cpp b/src/script/ScriptedCamera.cpp
+index ffaf2f0..0a601aa 100644
+--- a/src/script/ScriptedCamera.cpp
++++ b/src/script/ScriptedCamera.cpp
+@@ -55,6 +55,9 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+ #include "graphics/effects/Fade.h"
+ #include "gui/Interface.h"
+ #include "scene/Interactive.h"
++#include "net/CoopNet.h"
++#include "net/CoopPlayer.h"
++
+ #include "script/ScriptUtils.h"
+ 
+ 
+@@ -187,6 +190,28 @@ public:
+ 		std::string inout = context.getWord();
+ 		const PlatformDuration duration = std::chrono::duration<float, std::milli>(context.getFloat());
+ 		
++		/*
++		 * The fade dresses the screen of whoever is travelling. When the
++		 * other player trips it, darkening THIS screen would black out a
++		 * player who is going nowhere; their machine runs its own curtain.
++		 */
++		if(coop::isPartnerScriptContext()) {
++			/*
++			 * ...and for a fade OUT, their machine must also stop simulating
++			 * their fall NOW, exactly as the level load is about to stop ours.
++			 * This is what keeps the other player from finishing a fall the
++			 * level designers assumed nobody could finish.
++			 */
++			if(inout == "out") {
++				coop::sendTravelHold(s32(toMsi(duration)));
++			} else if(inout == "in") {
++				// Fading back in means whatever this was, it was not a travel -
++				// let them go now instead of waiting for the safety timeout.
++				coop::sendTravelCancel();
++			}
++			return Success;
++		}
++		
+ 		if(inout == "out") {
+ 			
+ 			Color3f color;
+diff --git a/src/script/ScriptedConversation.cpp b/src/script/ScriptedConversation.cpp
+index b8e74ae..8c11abd 100644
+--- a/src/script/ScriptedConversation.cpp
++++ b/src/script/ScriptedConversation.cpp
+@@ -56,6 +56,9 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+ #include "io/resource/ResourcePath.h"
+ #include "scene/GameSound.h"
+ #include "script/ScriptUtils.h"
++#include "net/CoopNet.h"
++#include "net/CoopPlayer.h"
++#include "game/Player.h"
+ 
+ 
+ extern Vec3f LASTCAMPOS;
+@@ -375,6 +378,33 @@ public:
+ 			return Success;
+ 		}
+ 		
++		/*
++		 * Sequence speeches - the ones with a follow-up command that resumes
++		 * the script when the line ends - drive one-shot story moments while
++		 * the player stands locked. Those are playthrough FACTS in co-op:
++		 * lived once by anyone, lived for both. A ledgered one completes
++		 * instantly, running its follow-up the same frame, so the second
++		 * player is never parked under cutscene bars waiting for a line that
++		 * cannot play. Ordinary barks have no follow-up and are untouched.
++		 */
++		bool sequence = (BLOCK_PLAYER_CONTROLS || cinematicBorder.isActive())
++		                && !coop::isPartnerScriptContext();
++		/*
++		 * The guest NEVER performs sequence cutscenes - not because of any
++		 * ledger state, but categorically: its sequence machinery is muted
++		 * whenever the host shares the area, so a started sequence can freeze
++		 * it solid. Completing instantly advances the story identically, the
++		 * ledger records it for both, and only the host's screen is a stage.
++		 */
++		if(sequence && (coop::isCutsceneSeen(data) || (coop::isGuest() && coop::isReplica()))) {
++			LogInfo << "[coop] '" << data << "' completes instantly on this machine";
++			coop::reportCutsceneSeen(data);
++			if(size_t onspeechend = context.skipCommand(); onspeechend != size_t(-1)) {
++				ScriptEvent::resume(context.getScript(), context.getEntity(), onspeechend);
++			}
++			return Success;
++		}
++		
+ 		if(!cinematicBorder.isActive()) {
+ 			flags |= ARX_SPEECH_FLAG_NOTEXT;
+ 		}
+@@ -390,6 +420,16 @@ public:
+ 			speech->scriptEntity = context.getEntity();
+ 			speech->script = context.getScript();
+ 			speech->scriptPos = onspeechend;
++			if(sequence) {
++				coop::reportCutsceneSeen(data);
++			}
++		}
++		
++		if(sequence || acs.type != ARX_CINE_SPEECH_NONE) {
++			// Both players watch story moments together: the other machine
++			// gets a viewer copy - same speaker, same line, same camera.
++			coop::reportCutscenePlay(std::string(context.getEntity()->idString()),
++			                         data, long(mood), u32(flags), acs);
+ 		}
+ 		
+ 		return Success;
+diff --git a/src/script/ScriptedIOControl.cpp b/src/script/ScriptedIOControl.cpp
+index d5714f6..0b8047c 100644
+--- a/src/script/ScriptedIOControl.cpp
++++ b/src/script/ScriptedIOControl.cpp
+@@ -61,6 +61,9 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+ #include "gui/Interface.h"
+ #include "io/resource/ResourcePath.h"
+ #include "physics/Collisions.h"
++#include "net/CoopNet.h"
++#include "net/CoopPlayer.h"
++
+ #include "scene/Interactive.h"
+ #include "scene/LinkedObject.h"
+ #include "script/ScriptUtils.h"
+@@ -528,6 +531,21 @@ public:
+ 					return Failed;
+ 				}
+ 				
++				/*
++				 * These globals are the travel state of THIS machine's player.
++				 * When the second player is the one standing in the door, the
++				 * order belongs on their machine, carrying the same area,
++				 * marker and angle - and this machine's player stays put.
++				 */
++				if(coop::isPartnerScriptContext()) {
++					LogWarning << "[coop-chain] teleport command (for the PARTNER): level "
++					           << level << " target '" << target << "'";
++					coop::sendTravelOrder(u32(level), target, angle, confirm);
++					return Success;
++				}
++
++				LogWarning << "[coop-chain] teleport command (local): level " << level
++				           << " target '" << target << "'";
+ 				g_teleportToArea = AreaId(u32(level));
+ 				TELEPORT_TO_POSITION = target;
+ 				
+diff --git a/src/script/ScriptedInterface.cpp b/src/script/ScriptedInterface.cpp
+index 60349c2..6e91ac7 100644
+--- a/src/script/ScriptedInterface.cpp
++++ b/src/script/ScriptedInterface.cpp
+@@ -57,6 +57,7 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+ #include "script/ScriptEvent.h"
+ #include "script/ScriptUtils.h"
+ #include "util/Cast.h"
++#include "net/CoopPlayer.h"
+ 
+ 
+ namespace script {
+@@ -252,6 +253,11 @@ public:
+ 			smooth = test_flag(flg, 's');
+ 		}
+ 		
++		if(coop::isPartnerScriptContext()) {
++			// The other player's sequence must not hide THIS screen's hands.
++			return Success;
++		}
++		
+ 		std::string command = context.getWord();
+ 		
+ 		DebugScript(' ' << options << ' ' << command);
+diff --git a/src/script/ScriptedNPC.cpp b/src/script/ScriptedNPC.cpp
+index f94ba58..1d25ccf 100644
+--- a/src/script/ScriptedNPC.cpp
++++ b/src/script/ScriptedNPC.cpp
+@@ -48,6 +48,8 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+ #include "game/Camera.h"
+ #include "game/EntityManager.h"
+ #include "game/NPC.h"
++#include "game/Player.h"
++#include "net/CoopPlayer.h"
+ #include "graphics/Math.h"
+ #include "graphics/data/Mesh.h"
+ #include "scene/Interactive.h"
+@@ -487,7 +489,26 @@ public:
+ 		}
+ 		target = context.getStringVar(target);
+ 		Entity * t = entities.getById(target, io);
+-		
++
++		/*
++		 * "settarget player" is how every creature in the game is pointed at
++		 * somebody - the goblin script alone says it ten times - and the word
++		 * player has exactly one meaning to the engine: the first one. That is
++		 * the whole reason enemies would chase player one across a level while
++		 * ignoring player two standing next to them, and it is not something
++		 * the individual scripts can be blamed for, since there was only ever
++		 * one player to name.
++		 *
++		 * So the word is resolved here to whichever player this creature should
++		 * actually be dealing with, which is the nearer of the two.
++		 */
++		if(t == entities.player()) {
++			// Sight first, then walking distance - not crow-flies distance,
++			// which would send a creature after a player one wall away instead
++			// of the one standing in front of it.
++			t = coop::chooseTargetPlayer(io);
++		}
++
+ 		DebugScript(' ' << options << ' ' << target);
+ 		
+ 		if(io->ioflags & IO_CAMERA) {
+diff --git a/src/script/ScriptedPlayer.cpp b/src/script/ScriptedPlayer.cpp
+index cdae647..dc4713f 100644
+--- a/src/script/ScriptedPlayer.cpp
++++ b/src/script/ScriptedPlayer.cpp
+@@ -60,6 +60,8 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+ #include "scene/Interactive.h"
+ #include "scene/GameSound.h"
+ #include "script/ScriptEvent.h"
++#include "net/CoopPlayer.h"
++
+ #include "script/ScriptUtils.h"
+ #include "util/Cast.h"
+ 
+@@ -318,6 +320,13 @@ public:
+ 		
+ 		DebugScript(' ' << enable);
+ 		
++		if(coop::isPartnerScriptContext()) {
++			// The other player tripped this sequence; their machine owns
++			// their controls. Locking OURS on their behalf froze the wrong
++			// human at the wrong keyboard.
++			return Success;
++		}
++		
+ 		if(enable) {
+ 			if(BLOCK_PLAYER_CONTROLS) {
+ 				for(Entity & npc : entities(IO_NPC)) {
+@@ -643,6 +652,12 @@ public:
+ 		
+ 		DebugScript(' ' << options << ' ' << enable);
+ 		
++		// Protection meant for the player who tripped this script; armouring
++		// this machine's player instead would protect the wrong person.
++		if(targetPlayer && coop::isPartnerScriptContext()) {
++			return Success;
++		}
++		
+ 		Entity * io = context.getEntity();
+ 		if(!targetPlayer && !io) {
+ 			ScriptWarning << "must either use -p or execute in IO context";

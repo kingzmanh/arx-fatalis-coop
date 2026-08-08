@@ -1,0 +1,24 @@
+.*
+!.gitignore
+!.editorconfig
+!/.mailmap
+!/.travis.yml
+!/.github
+/build
+
+# NEVER PUBLISH THESE.
+#
+# /game holds a playable copy of Arx Fatalis - the .pak archives, the level
+# data, the speech - which belongs to Arkane Studios / ZeniMax. Our code is
+# GPLv3 and public; their data is neither, and uploading it would be piracy,
+# not a mod release. Players bring their own copy from Steam or GOG.
+/game
+/best
+/best-2
+/best-3
+/best-4
+*.pak
+
+# Local test artefacts, not part of the work.
+/coop_sync
+/coop_join

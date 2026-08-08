@@ -42,6 +42,8 @@
 #include "scene/GameSound.h"
 
 #include "util/Range.h"
+#include "net/CoopNet.h"
+#include "net/CoopPlayer.h"
 
 
 MassLightningStrikeSpell::MassLightningStrikeSpell()
@@ -190,9 +192,12 @@ bool ControlTargetSpell::CanLaunch() {
 
 void ControlTargetSpell::Launch() {
 	
-	eSrc = player.pos;
+	Entity * casterIo = entities.get(m_caster);
+	bool casterIsPlayer = (m_caster == EntityHandle_Player || !casterIo);
+	eSrc = casterIsPlayer ? player.pos : casterIo->pos;
 	
-	float fBetaRad = glm::radians(player.angle.getYaw());
+	float fBetaRad = glm::radians(casterIsPlayer ? player.angle.getYaw()
+	                                             : casterIo->angle.getYaw());
 	eTarget = eSrc + Vec3f(-glm::sin(fBetaRad) * 1000.f, 100.f, glm::cos(fBetaRad) * 1000.f);
 	
 	for(Entity & npc : entities.inScene(IO_NPC)) {
