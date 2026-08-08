@@ -1595,8 +1595,22 @@ void poll() {
 		}
 	}
 
+	/*
+	 * Standing nowhere is a reason to travel, not a reason to wait.
+	 *
+	 * This used to insist the guest already be in an area of its own before it
+	 * would walk to the host. Usually it is - but if the join finishes before
+	 * the guest's own level has loaded, it never will be, and then the one
+	 * condition being waited for is the one that can no longer happen. The
+	 * result was a black screen: connected, in game, no level, no way out of
+	 * it but to close the game and join again.
+	 *
+	 * Knowing where the host is, is enough. The comparison below still skips
+	 * the trip when both are already in the same place, and an area that does
+	 * not exist never compares equal to one that does.
+	 */
 	if(g_session.travelToHost && isPlaying() && ARXmenu.mode() == Mode_InGame
-	   && g_currentArea && g_session.remoteArea && !g_teleportToArea) {
+	   && g_session.remoteArea && !g_teleportToArea) {
 		g_session.travelToHost = false;
 		if(g_session.remoteArea != g_currentArea) {
 			LogInfo << "[coop] travelling to the host's area " << g_session.remoteArea;

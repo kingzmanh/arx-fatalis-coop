@@ -443,6 +443,9 @@ bool partnerArrivalProtected();
 //! The other player left the doorway before travelling; withdraw the offer.
 void sendTravelCancel();
 
+//! A moment of captured speech, on its own unreliable channel.
+void sendVoice(const u8 * data, size_t size);
+
 /*!
  * Report the local player's zone, once per frame, while this machine is a
  * replica.

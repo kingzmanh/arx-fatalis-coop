@@ -104,6 +104,9 @@ struct ReplicaLayer {
 struct ReplicaState {
 	MotionTrack track;
 	ReplicaLayer layers[MAX_ANIM_LAYERS];
+	//! Where it was when its room was last worked out; see the use below.
+	Vec3f roomPos = Vec3f(0.f);
+	bool roomKnown = false;
 };
 
 std::map<std::string, ReplicaState, std::less<>> g_replicaTracks;
@@ -473,7 +476,22 @@ void readEntitySnapshot(Reader & reader, u32 serverTimeMs) {
 		 * of the bag we just put it in, which reads on screen as loot that
 		 * refuses to be picked up.
 		 */
-		if(locateInInventories(entity) || entity == g_draggedEntity) {
+		/*
+		 * You own what you touch, until it comes to rest.
+		 *
+		 * While a player is handling an item it is theirs outright and nothing
+		 * corrects it - which is the whole point, because that is what makes it
+		 * behave exactly as it does in a single player game, where there is
+		 * nobody to argue with about where it is.
+		 *
+		 * Ownership does not end when the item leaves your hand. A thrown or
+		 * dropped item is still falling, and the authority will not know where
+		 * it finally lands until its own copy has finished falling too. So it
+		 * stays yours until its physics settles, and only then is it handed
+		 * back to the shared world.
+		 */
+		if(ownsLocally(entity)) {
+			g_localEdits[std::string(id)] = platform::getTime();
 			g_replicaTracks.erase(id);
 			continue;
 		}
@@ -503,9 +521,33 @@ void readEntitySnapshot(Reader & reader, u32 serverTimeMs) {
 			track.clear();
 		}
 		if(track.count == 0) {
-			// Brand new to us (or fresh off a teleport): appear there at once.
-			entity->pos = pos;
-			entity->angle = angle;
+
+			/*
+			 * Nothing is ever teleported into place if it can be walked there
+			 * instead.
+			 *
+			 * This is the only path that moves a replica without blending, and
+			 * so the only one that can produce a visible jump. Rather than put
+			 * the entity where the authority says, the timeline is started from
+			 * where it appears to be RIGHT NOW - one interpolation delay in the
+			 * past - and the authority's position pushed on top. The blending
+			 * below then carries it across over the next few frames, and what
+			 * was a jump becomes a short glide.
+			 *
+			 * Two things still arrive instantly, because gliding would be wrong:
+			 * something genuinely new, which has no believable current position,
+			 * and something that has moved further than any glide should cover,
+			 * which is a real teleport and should look like one.
+			 */
+			float gap = glm::distance(entity->pos, pos);
+			if(gap > 1.f && gap < 400.f && (entity->show == SHOW_FLAG_IN_SCENE)) {
+				track.push(s64(serverTimeMs) - coop::entityInterpDelayMs(),
+				           entity->pos, entity->angle);
+			} else {
+				entity->pos = pos;
+				entity->angle = angle;
+			}
+
 		}
 		track.push(s64(serverTimeMs), pos, angle);
 
@@ -563,12 +605,50 @@ void smoothReplicatedEntities() {
 
 		ReplicaState & state = it->second;
 
+		/*
+		 * Never move what this player has hold of.
+		 *
+		 * A dragged item is on the end of the cursor, and the authority has not
+		 * heard about that yet - so its idea of where the item is, is wherever
+		 * the item was picked up from. Correcting towards that drags it out of
+		 * the player's hand and back onto the floor. It shows up as a snap when
+		 * the cursor moves quickly, because a slow drag never gets far enough
+		 * from the remembered position for the correction to be visible.
+		 */
+		if(entity == g_draggedEntity) {
+			++it;
+			continue;
+		}
+
 		Vec3f pos;
 		Anglef angle;
 		if(sampleSmoothed(state.track, renderTime, g_framedelay, pos, angle)) {
 
 			entity->pos = pos;
 			entity->angle = angle;
+
+			/*
+			 * Which room it is now standing in has to be worked out again.
+			 *
+			 * Arx only draws something if its room can be seen from the room the
+			 * camera is in, and an entity's room is normally recalculated by the
+			 * movement code in NPC.cpp - which never runs here, because on this
+			 * machine the creature is a replica whose position simply arrives.
+			 * Without this the room is whatever it was when the creature was
+			 * first seen, so walking into a cell leaves it clipped away: the
+			 * shadow still lands on the floor, drawn by a path that does not ask
+			 * about rooms, while the creature itself is not drawn at all.
+			 *
+			 * Only when it has actually gone somewhere, though. Working out a
+			 * room means searching the level geometry around a point, and asking
+			 * for that on every replica on every frame costs far more than it is
+			 * worth - rooms are the size of rooms, so a step is soon enough.
+			 */
+			if(!state.roomKnown || glm::distance(state.roomPos, entity->pos) > 40.f) {
+				state.roomPos = entity->pos;
+				state.roomKnown = true;
+				entity->requestRoomUpdate = true;
+			}
 
 			if(entity->ioflags & IO_NPC) {
 				entity->_npcdata->vvpos = entity->pos.y;
@@ -590,6 +670,33 @@ void smoothReplicatedEntities() {
 
 		++it;
 	}
+
+}
+
+/*!
+ * Is this item this player's business rather than the shared world's?
+ *
+ * True while it is being carried or dragged, and onwards until whatever it was
+ * thrown into stops moving. For as long as that holds, nothing corrects it and
+ * this machine simulates it itself, which is what makes handling an item feel
+ * the same as it does in a game with nobody else in it.
+ */
+bool ownsLocally(const Entity * entity) {
+
+	if(!entity) {
+		return false;
+	}
+
+	if(locateInInventories(const_cast<Entity *>(entity)) || entity == g_draggedEntity) {
+		return true;
+	}
+
+	// Only something we were recently holding can still be settling from it.
+	if(g_localEdits.find(entity->idString()) == g_localEdits.end()) {
+		return false;
+	}
+
+	return entity->obj && entity->obj->pbox && entity->obj->pbox->active == 1;
 
 }
 

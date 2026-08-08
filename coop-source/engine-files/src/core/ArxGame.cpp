@@ -1839,6 +1839,9 @@ void ArxGame::updateLevel() {
 		ARX_PHYSICS_Apply();
 	} else {
 		coop::smoothReplicatedEntities();
+		// Still run the physics here, but only over what this player owns -
+		// ARX_PHYSICS_Apply() skips the rest of the world when replicating.
+		ARX_PHYSICS_Apply();
 	}
 
 	PrecalcIOLighting(g_camera->m_pos, g_camera->cdepth * 0.6f);

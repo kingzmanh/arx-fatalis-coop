@@ -38,7 +38,7 @@ namespace coop {
  * misread a newer one. Both sides check this during the handshake and refuse
  * the connection rather than desyncing silently later.
  */
-constexpr u32 ProtocolVersion = 18;
+constexpr u32 ProtocolVersion = 19;
 
 //! Default listen port, used when the address the joining player typed has none.
 constexpr unsigned short DefaultPort = 27100;
@@ -56,7 +56,14 @@ enum Channel : u8 {
 	ChannelControl  = 0, //!< handshake, area changes, save transfer: reliable ordered
 	ChannelSnapshot = 1, //!< avatar and entity state: unreliable, newest wins
 	ChannelEvent    = 2, //!< world mutations, damage, spells, rewards: reliable
-	ChannelCount    = 3
+	/*
+	 * Speech, on a channel of its own and never retransmitted. A lost moment of
+	 * voice is a tiny gap the ear barely registers; the same moment arriving
+	 * late, after the words either side of it, is worse than silence. Its own
+	 * channel so a burst of talking never delays anyone's position.
+	 */
+	ChannelVoice    = 3,
+	ChannelCount    = 4
 };
 
 enum MessageType : u8 {
@@ -125,7 +132,8 @@ enum MessageType : u8 {
 	MsgCutsceneSeen = 78, //!< either -> other: this story sequence is consumed for BOTH of us
 	MsgPartnerEffect = 79, //!< either -> other: your player receives this effect (heal, hunger, ...)
 	MsgCutscenePlay = 80, //!< either -> other: watch this story speech with me, camera and all
-	MsgPlayerTouchNpc = 81 //!< guest -> host: my player is pressing against this creature
+	MsgPlayerTouchNpc = 81, //!< guest -> host: my player is pressing against this creature
+	MsgVoice        = 82 //!< either -> other: a moment of speech, to come out of their mouth
 
 };
 

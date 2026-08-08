@@ -290,7 +290,24 @@ void updateAvatarWeapon(Entity * body) {
 		return;
 	}
 
-	Prepare_SetWeapon(body, res::path::load(g_avatarWeapon));
+	/*
+	 * Built here rather than through Prepare_SetWeapon, which takes a bare name
+	 * and looks for it under the weapons folder and nowhere else. What the other
+	 * player is holding may not be a weapon at all - it is whatever they put in
+	 * the weapon slot - so the full path they sent is used as it stands. The
+	 * rest of this mirrors what Prepare_SetWeapon does once it has the file.
+	 */
+	if(Entity * held = AddItem(res::path::load(g_avatarWeapon))) {
+		body->_npcdata->weapon = held;
+		SendInitScriptEvent(held);
+		body->_npcdata->weapontype = held->type_flags;
+		held->scriptload = 2;
+		held->setOwner(body);
+		SetWeapon_Back(body);
+	} else {
+		LogWarning << "[coop] could not build what the other player is holding: "
+		           << g_avatarWeapon;
+	}
 
 	if(body->_npcdata->weapon) {
 		// The body never enters a savegame, so nothing hanging off it may
@@ -498,9 +515,24 @@ void captureLocalAvatar(Avatar & out) {
 
 	out.weapon.clear();
 	if(Entity * weapon = entities.get(player.equiped[EQUIP_SLOT_WEAPON])) {
-		// Only the class folder travels: the other machine builds its own copy
-		// of the mesh from it rather than being sent one.
-		out.weapon = weapon->classPath().filename();
+		/*
+		 * Only the folder name travels, and that is deliberate: the other side
+		 * hands it to Prepare_SetWeapon, which builds
+		 * "graph/obj3d/interactive/items/weapons" / name / name itself. Sending
+		 * the whole class path makes it prepend that directory to a path that
+		 * already has it, and nothing is found.
+		 */
+		/*
+		 * The whole class path, because a player will wield anything.
+		 *
+		 * Only sending the folder name means the other side has to guess where
+		 * to look for it, and the only place it can guess is the weapons
+		 * folder. That is fine for a sword and wrong for everything else: a
+		 * bone is filed under provisions - it is food - and Arx is perfectly
+		 * happy to let someone hit a goblin with it. Sending where the thing
+		 * actually lives works whatever it is.
+		 */
+		out.weapon = weapon->classPath().string();
 	}
 
 }

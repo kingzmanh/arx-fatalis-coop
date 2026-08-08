@@ -53,6 +53,8 @@
 #include "gui/Speech.h"
 #include "io/log/Logger.h"
 #include "net/CoopPlayer.h"
+#include "net/CoopPortMap.h"
+#include "net/CoopVoice.h"
 #include "net/CoopProtocol.h"
 #include "net/CoopWorld.h"
 #include "platform/ProgramOptions.h"
@@ -958,6 +960,15 @@ void handleMessage(const u8 * data, size_t size) {
 			break;
 		}
 
+		case MsgVoice: {
+			u16 length = reader.getU16();
+			const u8 * audio = reader.getRaw(length);
+			if(reader.ok() && audio) {
+				voice::onPacket(audio, length);
+			}
+			break;
+		}
+
 		case MsgTake: {
 			std::string id = reader.getString();
 			if(reader.ok()) {
@@ -1366,6 +1377,13 @@ bool startHost(unsigned short port) {
 	loadStoryLedger();
 	g_session.listenPort = port;
 
+	/*
+	 * Ask the router to forward the port. This returns at once and is answered
+	 * later - hosting works regardless, this only saves the host from setting
+	 * up port forwarding by hand.
+	 */
+	portmap::open(port);
+
 	g_session.role = Role::Host;
 	g_session.localName = "Player 1";
 	mutableAvatar().name = "Player 2";
@@ -1467,6 +1485,9 @@ void stop() {
 	saveGuestProfileIfDue(true);
 	releaseTravelHold(false);
 
+	// Hand the port back rather than leaving it forwarded after the game ends.
+	portmap::close();
+
 	if(g_session.peer) {
 		sendBare(MsgBye, ChannelControl);
 		if(g_session.host) {
@@ -1520,6 +1541,13 @@ void stop() {
 
 void poll() {
 
+	// Collect anything the router has said back about the port. Costs nothing
+	// when no mapping was ever asked for.
+	portmap::update();
+
+	// Send what was said and play what was heard.
+	voice::update();
+
 	// Honour --host / --join now that there is a game for them to attach to.
 	if((g_pendingHost || !g_pendingJoin.empty()) && !isActive()) {
 		bool wantHost = g_pendingHost;
@@ -1567,8 +1595,22 @@ void poll() {
 		}
 	}
 
+	/*
+	 * Standing nowhere is a reason to travel, not a reason to wait.
+	 *
+	 * This used to insist the guest already be in an area of its own before it
+	 * would walk to the host. Usually it is - but if the join finishes before
+	 * the guest's own level has loaded, it never will be, and then the one
+	 * condition being waited for is the one that can no longer happen. The
+	 * result was a black screen: connected, in game, no level, no way out of
+	 * it but to close the game and join again.
+	 *
+	 * Knowing where the host is, is enough. The comparison below still skips
+	 * the trip when both are already in the same place, and an area that does
+	 * not exist never compares equal to one that does.
+	 */
 	if(g_session.travelToHost && isPlaying() && ARXmenu.mode() == Mode_InGame
-	   && g_currentArea && g_session.remoteArea && !g_teleportToArea) {
+	   && g_session.remoteArea && !g_teleportToArea) {
 		g_session.travelToHost = false;
 		if(g_session.remoteArea != g_currentArea) {
 			LogInfo << "[coop] travelling to the host's area " << g_session.remoteArea;
@@ -2723,6 +2765,21 @@ void sendTravelCancel() {
 	}
 
 	sendBare(MsgTravelCancel, ChannelControl);
+
+}
+
+void sendVoice(const u8 * data, size_t size) {
+
+	// Only worth sending when they are close enough to hear it at all - and
+	// sharingArea() is also what guarantees there is a body to speak from.
+	if(!isPlaying() || !sharingArea() || !data || size == 0) {
+		return;
+	}
+
+	Writer writer(MsgVoice);
+	writer.put(u16(size));
+	writer.putRaw(data, size);
+	send(writer, ChannelVoice);
 
 }
 

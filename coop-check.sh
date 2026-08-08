@@ -65,6 +65,8 @@ checkgone "script timers run on replicas too"        core/ArxGame.cpp     "world
 check     "guest reports its own zone crossings"     net/CoopNet.cpp      "MsgZoneEnter"
 check     "zone crossings run in the partner's name" net/CoopNet.cpp      "ScopedPlayerContext context(body)"
 
+check     "a guest with no area still travels"       net/CoopNet.cpp      "Standing nowhere is a reason to travel"
+
 [ $QUIET -eq 0 ] && echo "--- items and identity"
 check     "guest mints items in a private id range"  net/CoopPlayer.cpp   "GuestItemInstanceBase"
 check     "audit never reports our own belongings"   net/CoopWorld.cpp    "isOwnBelonging"
@@ -80,7 +82,11 @@ check     "a struck creature turns on its attacker"  net/CoopPlayer.cpp   "scrip
 check     "weapons never wear against a companion"   game/Equipment.cpp   "coop::isAvatarEntity(target)"
 
 [ $QUIET -eq 0 ] && echo "--- what the other player looks like"
-check     "their weapon is whatever they hold"       net/CoopPlayer.cpp   "classPath().string()"
+# A player will wield anything, and most things are not filed under weapons -
+# a bone is a provision. The full path travels and the receiver builds from it
+# directly, instead of Prepare_SetWeapon guessing the weapons folder.
+check     "their weapon is whatever they hold"       net/CoopPlayer.cpp   "out.weapon = weapon->classPath().string()"
+checkgone "the held item is not looked for in weapons/" net/CoopPlayer.cpp "Prepare_SetWeapon(body"
 check     "their health is a second life orb"        gui/Hud.cpp          "drawPartnerHealthOrb"
 
 [ $QUIET -eq 0 ] && echo "--- menu"

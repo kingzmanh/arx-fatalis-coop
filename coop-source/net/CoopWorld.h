@@ -29,6 +29,8 @@
 #include "net/CoopProtocol.h"
 #include "platform/Platform.h"
 
+class Entity;
+
 namespace coop {
 
 /*!
@@ -74,6 +76,12 @@ void applyWorldFx(Reader & reader);
  * fight on the guest's screen reads the same as on the host's.
  */
 void smoothReplicatedEntities();
+
+/*!
+ * Is this item held, dragged, or still coming to rest after this player threw
+ * it? Such an item is simulated here and never corrected from the other side.
+ */
+[[nodiscard]] bool ownsLocally(const Entity * entity);
 
 //! Forget interpolation targets, e.g. on a level change.
 void resetReplication();
