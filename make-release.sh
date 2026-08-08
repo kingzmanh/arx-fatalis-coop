@@ -27,7 +27,13 @@ echo "packaging arx-coop-$VERSION"
 rm -rf "$OUT"
 mkdir -p "$OUT"
 
-cp "$HERE/build/arx.exe" "$OUT/"
+# Named apart from the game's own arx.exe on purpose.
+#
+# This gets copied into the Arx Fatalis folder, and Steam and GOG both ship an
+# arx.exe of their own there. Overwriting it would replace their game with this
+# one - which works, but takes away playing vanilla and needs a file
+# verification to undo. Nothing of theirs is touched this way.
+cp "$HERE/build/arx.exe" "$OUT/arx-coop.exe"
 
 # Ask the binary what it needs, then follow the chain: the libraries have
 # libraries of their own, and missing one of those fails just as hard.
@@ -43,10 +49,20 @@ collect() {
 		fi
 	done
 }
-collect "$OUT/arx.exe"
+collect "$OUT/arx-coop.exe"
 
 COUNT=$(ls "$OUT"/*.dll 2>/dev/null | wc -l)
 echo "  $COUNT libraries"
+
+# Arx Libertatis' own data, which is not part of the game and not optional.
+# The fonts here are what the interface draws its icons and text with; without
+# them the game starts and then complains it cannot find them. Easy to miss,
+# because a machine that has ever had Arx Libertatis installed already has them
+# sitting somewhere it looks.
+echo "  copying engine data..."
+mkdir -p "$OUT/data"
+cp -r "$HERE/data/core/"* "$OUT/data/"
+echo "  $(find "$OUT/data" -type f | wc -l) files"
 
 # What a player needs to know, in the folder rather than on a web page they
 # will not have open when it goes wrong.
@@ -60,17 +76,24 @@ WORK IN PROGRESS - EXPECT ANYTHING.
 To play
 -------
 
-1. You need to own Arx Fatalis (GOG or Steam). This has no game content in it
-   and will not run without your copy.
+You need to own Arx Fatalis (GOG or Steam). This has no game content in it and
+will not run without your copy.
 
-2. Double click arx.exe.
+1. Find your Arx Fatalis folder. It is the one with data.pak in it.
 
-That is all. It looks for Arx Fatalis by itself and usually finds it.
+   Steam:  right click the game, Manage, Browse local files
+   GOG:    usually C:\GOG Games\Arx Fatalis
 
-If it cannot, it will say so and list where it looked. Drag your Arx Fatalis
-folder onto arx.exe, or run:
+2. Copy everything from this zip INTO that folder.
 
-    arx.exe -d "C:\GOG Games\Arx Fatalis"
+3. Double click arx-coop.exe.
+
+Putting it in the game's own folder is the point - that is how it finds your
+copy of the game. Dropping it somewhere else and running it will usually fail
+to find anything.
+
+Nothing is overwritten that matters and the game is not modified: to go back,
+delete the files this zip added.
 
 
 To play together
@@ -105,7 +128,16 @@ try another microphone - most machines have several and only one is real.
 To remove it
 ------------
 
-Delete this folder. Your Arx Fatalis installation was never touched.
+Delete the files this zip added to your game folder - arx-coop.exe, the
+.dll files, the data folder, and these text files. Do NOT delete the
+folder itself, it is your game.
+
+Your game's own arx.exe was never touched, so vanilla Arx Fatalis keeps
+working the whole time - including the Play button in Steam.
+
+On Steam you can also just verify the files and it will tidy up.
+
+Nothing else was changed. The game itself is untouched.
 
 Your saves and settings live in:
     C:\Users\<you>\Saved Games\Arx Libertatis\
