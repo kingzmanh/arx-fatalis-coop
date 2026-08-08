@@ -54,18 +54,10 @@ last one is worth more than you would think.
 - **Items** - picking up, dropping, throwing, carrying
 - **Doors, levers, and travelling between areas** together
 - **Both health bars** on screen, so you can see when your friend is in trouble
+- **Proximity voice chat** - speak and it comes out of your character's mouth,
+  fading with distance and coming from the direction you are standing in
 - **Automatic port forwarding** - most routers will open the port by themselves,
   so hosting usually needs no setup
-
-## Built, but not confirmed working
-
-Finished and in the build, but not yet seen working by anybody, so do not count
-on it:
-
-- **Proximity voice chat.** Meant to carry your voice from your character, fading
-  with distance. It is all there - microphone, codec, positioning - but no two
-  people have yet heard each other through it. If you try it, that is genuinely
-  useful to know either way.
 
 ## What does not work yet
 
@@ -104,8 +96,6 @@ it, join the same network, and use the address it gives you.
 ![Two of you](docs/screenshots/together.png)
 
 ## Voice chat
-
-*Untested - see above. This is how it is meant to work.*
 
 Turn on VOICE CHAT in the co-op menu and hold **V** to speak.
 
