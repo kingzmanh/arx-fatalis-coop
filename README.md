@@ -54,6 +54,7 @@ last one is worth more than you would think.
 - **Items** - picking up, dropping, throwing, carrying
 - **Doors, levers, and travelling between areas** together
 - **Both health bars** on screen, so you can see when your friend is in trouble
+- **Friendly fire** - you can hurt each other, on purpose or otherwise
 - **Proximity voice chat** - speak and it comes out of your character's mouth,
   fading with distance and coming from the direction you are standing in
 - **Automatic port forwarding** - most routers will open the port by themselves,
