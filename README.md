@@ -46,7 +46,7 @@ last one is worth more than you would think.
 
 ![The story, together](docs/screenshots/the-story.png)
 
-## What works
+## What Properly works
 
 - **Playing the whole game together** - one hosts, one joins, both play
 - **Seeing each other** - position, animation, the weapon in their hand
