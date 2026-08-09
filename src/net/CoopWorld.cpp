@@ -98,6 +98,22 @@ struct ReplicaLayer {
 	u8 alt = 0;
 	u16 flags = 0;
 	s64 startMs = 0;
+	//! The playhead exactly as it arrived, kept only to spot the clip starting over.
+	s64 playhead = 0;
+	/*!
+	 * The authority has begun this same clip again, and we must follow it back.
+	 *
+	 * Idle breathing is not a looping animation. The engine plays it once and,
+	 * when it ends, starts it again by hand - same clip, same flags, playhead
+	 * back to zero. Nothing about that is visible in what the clip IS, only in
+	 * where its playhead went, so this is the one thing that says it happened.
+	 *
+	 * It matters because a replica may otherwise never wind a one-shot back
+	 * (see the note further down about settled doors). Without this, a creature
+	 * breathes once on the other player's screen and then holds its breath for
+	 * the rest of the game.
+	 */
+	bool restarted = false;
 	bool valid = false;
 };
 
@@ -118,7 +134,7 @@ std::map<std::string, ReplicaState, std::less<>> g_replicaTracks;
  * the playhead is only moved when it drifts more than a blink from where
  * the timeline says it must be, so playback stays butter-smooth AND true.
  */
-void driveReplicatedAnim(Entity & entity, size_t layerIndex, const ReplicaLayer & state,
+void driveReplicatedAnim(Entity & entity, size_t layerIndex, ReplicaLayer & state,
                          s64 renderTime) {
 
 	if(!state.valid) {
@@ -147,11 +163,19 @@ void driveReplicatedAnim(Entity & entity, size_t layerIndex, const ReplicaLayer 
 
 	size_t alt = std::min(size_t(state.alt), anim->anims.size() - 1);
 
+	bool restarted = state.restarted;
 	if(layer.cur_anim != anim) {
 		AcquireLastAnim(&entity);
 		ResetAnim(layer);
 		layer.cur_anim = anim;
+		restarted = false; // a fresh clip, not the same one going round again
+	} else if(restarted) {
+		// Begin it again exactly as the authority did, and only now that the
+		// drawn timeline has reached the moment it began over there.
+		AcquireLastAnim(&entity);
+		ResetAnim(layer);
 	}
+	state.restarted = false;
 	layer.altidx_cur = alt;
 	layer.flags = AnimUseType::load(state.flags);
 
@@ -169,7 +193,7 @@ void driveReplicatedAnim(Entity & entity, size_t layerIndex, const ReplicaLayer 
 		}
 	}
 	if(std::abs(toMsi(layer.ctime) - target) > 60) {
-		if(!(layer.flags & EA_LOOP) && toMsi(layer.ctime) > target) {
+		if(!(layer.flags & EA_LOOP) && !restarted && toMsi(layer.ctime) > target) {
 			/*
 			 * A one-shot may NEVER be corrected backwards. A finished door
 			 * animation holds its final frame while the authority's clock
@@ -205,6 +229,7 @@ struct SentState {
 	u8 anim[MAX_ANIM_LAYERS] = {};
 	u8 alt[MAX_ANIM_LAYERS] = {};
 	u16 animFlags[MAX_ANIM_LAYERS] = {};
+	s32 animTime[MAX_ANIM_LAYERS] = {};
 	float invisibility = 0.f;
 	float ignition = 0.f;
 	u16 gameFlags = 0;
@@ -217,6 +242,18 @@ bool sentStateDiffers(const SentState & a, const SentState & b) {
 	for(size_t l = 0; l < MAX_ANIM_LAYERS; l++) {
 		if(a.anim[l] != b.anim[l] || a.alt[l] != b.alt[l]
 		   || a.animFlags[l] != b.animFlags[l]) {
+			return true;
+		}
+		/*
+		 * How far through a clip is deliberately not compared - it changes
+		 * every frame and the other machine runs the clip itself. But a
+		 * playhead that has gone BACKWARDS is not playback, it is the clip
+		 * being started again, and that is the only trace such a restart
+		 * leaves. Idle breathing is exactly this: one play at a time, begun
+		 * again by hand each time it ends. Miss it and creatures stop
+		 * breathing on the other player's screen.
+		 */
+		if(b.animTime[l] + 20 < a.animTime[l]) {
 			return true;
 		}
 	}
@@ -357,6 +394,7 @@ void writeEntitySnapshot(Writer & writer, bool full) {
 			state.anim[l] = animIndexOf(entity, entity.animlayer[l].cur_anim);
 			state.alt[l] = u8(entity.animlayer[l].altidx_cur);
 			state.animFlags[l] = u16(entity.animlayer[l].flags);
+			state.animTime[l] = s32(toMsi(entity.animlayer[l].ctime));
 		}
 		state.invisibility = entity.invisibility;
 		state.ignition = entity.ignition;
@@ -444,6 +482,7 @@ void readEntitySnapshot(Reader & reader, u32 serverTimeMs) {
 			// When did this clip BEGIN on their clock? That is the fact worth
 			// keeping; the playhead itself is derived from it ever after.
 			layers[l].startMs = s64(serverTimeMs) - s64(playhead);
+			layers[l].playhead = s64(playhead);
 			layers[l].valid = true;
 		}
 
@@ -554,6 +593,20 @@ void readEntitySnapshot(Reader & reader, u32 serverTimeMs) {
 		// The animation layers ride the same clock; smoothReplicatedEntities()
 		// performs them at the matching moment of the drawn timeline.
 		for(size_t l = 0; l < MAX_ANIM_LAYERS; l++) {
+			/*
+			 * A playhead only ever moves forward through a clip. When the same
+			 * clip comes back with its playhead earlier than last time, it was
+			 * begun again over there - which is how idle breathing loops, one
+			 * play at a time. Carry the news until it has been performed, so a
+			 * snapshot arriving before the drawn timeline gets there cannot
+			 * lose it.
+			 */
+			const ReplicaLayer & before = state.layers[l];
+			layers[l].restarted = before.valid && before.index == layers[l].index
+			                      && layers[l].playhead + 20 < before.playhead;
+			if(before.restarted && before.index == layers[l].index) {
+				layers[l].restarted = true;
+			}
 			state.layers[l] = layers[l];
 		}
 
