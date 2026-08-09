@@ -715,3 +715,77 @@ backwards is the clip being started again, and that is the only trace such a
 restart leaves. The host treats it as worth sending and the replica takes it as
 permission to begin the clip again. Settled doors are untouched: their playhead
 sits still at the end rather than jumping back. Confirmed by the user.
+
+## 29. A cutscene the guest walked into played on nobody's screen
+
+**The problem.** The second player crosses the trigger and the scene happens to
+neither of them: no camera, no bars, no dialogue. Reported four times across
+four different attempted fixes, each of which was aimed at a real gap and none
+of which was the whole of it.
+
+**Why did it happen?** There is no cutscene system in this engine. A scene is an
+NPC script, a camera entity's script, a path, a target and a deferred jump, tied
+together by queued events - so "route the cutscene" is not one hook but six, and
+missing any one of them looks identical from the outside.
+
+In order, each found only after the one before it was fixed:
+
+1. The zone knew who tripped it, but SENDEVENT does not call, it QUEUES, and the
+   queue is drained from the top of the next frame with nothing remembering
+   whose errand it was. The camera half of every scene arrived anonymous, which
+   means "ours", which means the host. Queued events now carry the context, as
+   script timers already did.
+2. Cameras name themselves - `CAMERAACTIVATE SELF` - and "self" travelled
+   verbatim to a machine where it means nobody. Resolved before sending.
+3. Cameras were excluded from replication as having "no visible state to speak
+   of", true right up until somebody looked through one. The watcher had a
+   camera that never moved.
+4. A camera's view is rebuilt every frame from its position, its target and its
+   smoothing. Only the first was ever going to arrive; the target is what
+   decides where it POINTS.
+5. Subtitles are refused unless the bars are down, and the host decides that
+   from ITS OWN bars - which are up precisely because the scene is not its own.
+   It was stamping "no text" on the copy it sent to the one person watching.
+6. Zone crossings run on both machines, so the guest performed its own copy of
+   the scene too. It refused the bars and the lock, as a replica must, but left
+   a speech behind carrying the script's "when this ends, jump to the end of the
+   scene". Adding the host's viewer copy CLEARED that leftover, and clearing a
+   speech runs its follow-up: the teardown. The host raised the curtain and the
+   guest's own leftover dropped it in the same frame.
+
+**The fix.** All six, plus a hold sent explicitly at both ends of the scene so
+the watcher stands still for it, with a deadline in case the second end is lost.
+What ended the guessing was tracing every decision - who tripped it, who claimed
+it, what was sent, what arrived - and reading the answer instead of reasoning
+about it. Confirmed by the user.
+
+## 30. The bars stayed down after the scene ended
+
+**The problem.** Everything worked and then the letterbox never went away.
+
+**Why did it happen?** `cinematicBorder.reset()` sets a flag and nothing else -
+it leaves CINEMA_DECAL at 100, and the bars are drawn whenever that is not zero,
+with no direction left to retract them. The engine's own interface reset knows
+this and zeroes the decal by hand on the next line; every release path added here
+called only reset().
+
+**The fix.** set(false, true) at all four release points, so they retract exactly
+as they do at the end of any ordinary scene. Confirmed by the user.
+
+## 31. The goblin lord had nothing to say to the second player
+
+**The problem.** Talking to him did nothing at all, and his answers to the quest
+items were never heard.
+
+**Why did it happen?** Two halves of the same thing. What an NPC says branches on
+variables stored ON THE ENTITY - how far through its dialogue it is, whether it
+has been given anything - and those live on the machine that ran its script.
+Once giving and cutscenes were routed to the authority, the guest's copy was a
+goblin who had never met anybody, so every branch fell through. Meanwhile his
+replies now happened only on the host, and ordinary lines - unlike cutscene
+lines - were never sent anywhere.
+
+**The fix.** Talking to a creature is asked of the authority, like giving it
+something, so the one who answers is the one who remembers you. And a line
+spoken because of the other player travels to them whatever kind of line it is.
+Confirmed by the user for the item replies.

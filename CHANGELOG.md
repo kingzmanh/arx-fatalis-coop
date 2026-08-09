@@ -3,6 +3,44 @@
 Every release keeps its own build. Older versions are never replaced, so if a
 new one breaks something for you, the previous download is still there.
 
+## 0.10
+
+**Added**
+
+- Cutscenes play for whoever walks into them. Trip a scene as the second player
+  and it is yours - camera, black bars, dialogue and all - while the other
+  player carries on with whatever they were doing. A slider on the co-op menu
+  switches this to *player one only* if you would rather the host saw everything.
+- Either player can skip a scene they are watching, and it ends for both.
+- Talking to a character is answered by the one who actually remembers you, so
+  people you have already met carry on where you left off.
+
+**Fixed**
+
+- A cutscene the second player triggered played on neither screen. A scene in
+  this game is not one thing but six - an NPC's script, a camera entity's own
+  script, a path, a target, a deferred jump and the queued events between them -
+  and each had to be told whose scene it was. See FIXES.md for the full list;
+  the short version is that the camera never moved, never aimed, and the
+  subtitles were switched off by a machine that was not the one watching.
+- The black bars stayed on screen after a scene ended.
+- The goblin lord had nothing to say to the second player, before or after being
+  given a quest item.
+
+**Changed**
+
+- Network protocol 24 -> 28. Both players need this build; older ones are
+  refused at the handshake rather than left to desync.
+
+**Known issues**
+
+- Never properly tested over the internet; almost all testing has been two
+  windows on one computer
+- Animals only appear once the host has been near them, and only move while the
+  host is nearby
+- Loot can duplicate - both players may find their own copy
+- Enemies sometimes pick the wrong target
+
 ## 0.9
 
 **Added**

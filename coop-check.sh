@@ -63,7 +63,9 @@ checkcount() {
 [ $QUIET -eq 0 ] && echo "--- travel and areas"
 checkgone "script timers run on replicas too"        core/ArxGame.cpp     "worldIsRemote) {\s*ARX_SCRIPT_Timer_Check"
 check     "guest reports its own zone crossings"     net/CoopNet.cpp      "MsgZoneEnter"
-check     "zone crossings run in the partner's name" net/CoopNet.cpp      "ScopedPlayerContext context(body)"
+# Set where the crossing is HANDLED rather than where it is received, so it
+# covers both machines' own crossings and the guest's reported one alike.
+check     "zone crossings run in the partner's name" ai/Paths.cpp         "ScopedPlayerContext context(io)"
 
 check     "a guest with no area still travels"       net/CoopNet.cpp      "Standing nowhere is a reason to travel"
 
@@ -121,12 +123,30 @@ check     "the bars stay up only for the viewer copy" script/ScriptedCamera.cpp 
 checkgone "a one-shot zone disarms for both players" script/ScriptedAnimation.cpp "isPartnerScriptContext"
 # The SHOW that undoes a HIDE is at the end of the same unreachable chain, so a
 # guest that hid its interface never gets a cursor back. Only hiding is refused.
-check     "a guest keeps its cursor and its hands"   script/ScriptedInterface.cpp 'command == "hide" && coop::isReplica()'
+check     "a guest keeps its cursor and its hands"   script/ScriptedInterface.cpp 'command == "hide" && (coop::isReplica() || !coop::presentsCutscene())'
 # Whoever trips a story moment, the host performs it - bars, hands, locked
 # controls and all - and sends the guest a viewer copy. Bowing out because the
 # OTHER player set it off left the scene playing on neither machine.
 checkgone "the host performs a scene it did not trip" script/ScriptedPlayer.cpp "their machine owns"
-check     "and the guest is sent a copy to watch"    script/ScriptedConversation.cpp "bool sequence = (BLOCK_PLAYER_CONTROLS || cinematicBorder.isActive());"
+check     "and the guest is sent a copy to watch"    script/ScriptedConversation.cpp "coop::relaysCutscene()"
+# A scene belongs to whoever walked into it. Declining it here has to leave the
+# signal that says a story moment is running, or it would be shown to nobody and
+# sent to nobody either - which is exactly how it broke the first time.
+check     "a scene goes to the one who tripped it"   net/CoopNet.cpp      "return !isPartnerScriptContext();"
+check     "declining it still marks it a scene"      script/ScriptedPlayer.cpp "coop::noteCutsceneForPartner(!enable)"
+check     "so it is still worth sending them"        script/ScriptedConversation.cpp "coop::isPartnerCutscene()"
+check     "and a guest never performs one itself"    script/ScriptedPlayer.cpp "if(coop::isReplica())"
+# The view is most of what a cutscene IS. Bars, dead controls and hidden hands
+# all went to whoever the scene belonged to; the camera did not, so a scene
+# declined here still took this screen's eyes and pointed them at the show.
+check     "a declined scene does not take our eyes"  script/ScriptedCamera.cpp "if(ours) {"
+check     "and the watcher is given the same view"   net/CoopNet.cpp      "reportCutsceneCamera"
+check     "with their own eyes given back after"     net/CoopNet.cpp      "g_viewerCamera = false;"
+# SENDEVENT does not call, it queues, and a story moment is mostly these hops:
+# the goblin sends the camera an event and the camera takes the view. Drained
+# from the top of the frame, nothing remembered whose scene it was.
+check     "a queued event remembers whose it was"    script/Script.cpp    "entry.partnerContext = coop::isPartnerScriptContext()"
+check     "and is run in that name when it fires"    script/Script.cpp    "event.partnerContext ? coop::avatarEntity()"
 
 [ $QUIET -eq 0 ] && echo "--- giving things away"
 # Handing an item over is how the quests move, and the quest lives with the
