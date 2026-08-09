@@ -1852,9 +1852,16 @@ void ArxGame::updateLevel() {
 
 	ARX_FOGS_Render();
 
-	if(!worldIsRemote) {
-		TreatBackgroundActions();
-	}
+	/*
+	 * Fires burn on both screens.
+	 *
+	 * This draws the flames and plays the crackle for every lit fireplace in
+	 * the level. Skipping it on the replica meant the guest saw the glow of a
+	 * fire - that comes from the light itself - with no fire in it, and heard
+	 * nothing. The damage inside is still the authority's alone; see
+	 * TreatBackgroundActions.
+	 */
+	TreatBackgroundActions();
 
 	// Checks Magic Flares Drawing
 	if(!player.m_paralysed) {

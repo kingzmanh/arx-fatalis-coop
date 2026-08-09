@@ -44,6 +44,7 @@
 #include "input/Keyboard.h"
 #include "physics/Collisions.h"
 #include "scene/Interactive.h"
+#include "scene/Light.h"
 #include "math/Random.h"
 #include "scene/GameSound.h"
 #include "cinematic/CinematicController.h"
@@ -223,6 +224,8 @@ bool g_enetReady = false;
  */
 bool g_pendingHost = false;
 unsigned short g_pendingPort = DefaultPort;
+
+
 std::string g_pendingJoin;
 std::string g_pendingName;
 
@@ -387,6 +390,76 @@ void send(const Writer & writer, Channel channel) {
 }
 
 /*!
+ * Which level lights are burning, and telling the other player when that changes.
+ *
+ * A fireplace is not an entity - it is a light the level places, carrying
+ * EXTRAS_SPAWNFIRE, and the flames you see are its flare. Lighting one sets
+ * m_ignitionStatus on that light, and nothing about it was ever sent anywhere.
+ * The guest saw the glow, because the torch entity beside it has an ignition of
+ * its own and that IS replicated, but the fire itself never lit.
+ *
+ * Sent as changes rather than a full list: a level holds hundreds of these and
+ * almost none of them ever change, but the handful that do - a fireplace, a
+ * brazier, a torch on a wall - are exactly what a player notices.
+ */
+std::vector<bool> g_sentLightState;
+
+void pollStaticLights() {
+
+	if(!isPlaying() || !hasWorldAuthority()) {
+		return;
+	}
+
+	if(g_sentLightState.size() != g_staticLights.size()) {
+		g_sentLightState.assign(g_staticLights.size(), false);
+		// A fresh level: describe every light that is lit, so the guest starts
+		// from the same picture rather than from whatever its own copy decided.
+		for(size_t i = 0; i < g_staticLights.size(); i++) {
+			g_sentLightState[i] = g_staticLights[i].m_ignitionStatus;
+			if(g_staticLights[i].m_ignitionStatus) {
+				Writer writer(MsgLightIgnite);
+				writer.put(u16(i));
+				writer.put(true);
+				send(writer, ChannelEvent);
+			}
+		}
+		return;
+	}
+
+	for(size_t i = 0; i < g_staticLights.size(); i++) {
+		bool lit = g_staticLights[i].m_ignitionStatus;
+		if(lit != g_sentLightState[i]) {
+			g_sentLightState[i] = lit;
+			Writer writer(MsgLightIgnite);
+			writer.put(u16(i));
+			writer.put(lit);
+			send(writer, ChannelEvent);
+		}
+	}
+
+}
+
+void applyLightIgnite(u16 index, bool lit) {
+
+	if(index >= g_staticLights.size()) {
+		return;
+	}
+
+	EERIE_LIGHT & light = g_staticLights[index];
+	if(light.m_ignitionStatus == lit) {
+		return;
+	}
+
+	light.m_ignitionStatus = lit;
+	if(!lit) {
+		// Put out properly rather than just marking it dark, or the light it
+		// already placed in the world stays behind burning nothing.
+		lightHandleDestroy(light.m_ignitionLightHandle);
+	}
+
+}
+
+/*!
  * Stop the local player cold, the way a level load does.
  *
  * With controls blocked the engine itself refuses to apply damage to the
@@ -519,6 +592,10 @@ void sendAvatar() {
 	writer.put(local.invisibility);
 	writer.put(local.skin);
 	writer.put(std::string_view(local.weapon));
+	writer.put(std::string_view(local.helmet));
+	writer.put(std::string_view(local.armour));
+	writer.put(std::string_view(local.leggings));
+	writer.put(std::string_view(local.shield));
 
 	send(writer, ChannelSnapshot);
 
@@ -604,6 +681,10 @@ void receiveAvatar(Reader & reader) {
 	float invisibility = reader.getFloat();
 	u8 skin = reader.getU8();
 	std::string weapon = reader.getString();
+	std::string helmet = reader.getString();
+	std::string armour = reader.getString();
+	std::string leggings = reader.getString();
+	std::string shield = reader.getString();
 
 	if(!reader.ok()) {
 		return;
@@ -630,6 +711,10 @@ void receiveAvatar(Reader & reader) {
 	remote.invisibility = invisibility;
 	remote.skin = skin;
 	remote.weapon = std::move(weapon);
+	remote.helmet = std::move(helmet);
+	remote.armour = std::move(armour);
+	remote.leggings = std::move(leggings);
+	remote.shield = std::move(shield);
 	remote.lastUpdate = u32(toMsi(g_gameTime.now()));
 
 	pushAvatarSample(stamp, remote.pos, remote.angle);
@@ -965,6 +1050,16 @@ void handleMessage(const u8 * data, size_t size) {
 			const u8 * audio = reader.getRaw(length);
 			if(reader.ok() && audio) {
 				voice::onPacket(audio, length);
+			}
+			break;
+		}
+
+		case MsgLightIgnite: {
+			u16 index = reader.getU16();
+			bool lit = reader.getBool();
+			if(reader.ok()) {
+				ApplyScope scope;
+				applyLightIgnite(index, lit);
 			}
 			break;
 		}
@@ -1548,6 +1643,9 @@ void poll() {
 	// Send what was said and play what was heard.
 	voice::update();
 
+	// And which fires are burning.
+	pollStaticLights();
+
 	// Honour --host / --join now that there is a game for them to attach to.
 	if((g_pendingHost || !g_pendingJoin.empty()) && !isActive()) {
 		bool wantHost = g_pendingHost;
@@ -1922,6 +2020,50 @@ void updateCutsceneViewer() {
 		cinematicBorder.reset();
 	}
 
+	/*
+	 * A way out of a cutscene that never happens.
+	 *
+	 * Story moments hold the player still and then play a line; the line
+	 * ending is what gives control back. In co-op a line can fail to play at
+	 * all - already lived through by the other player, skipped because this
+	 * machine is not the stage, or lost with the script that would have
+	 * resumed it - and then the hold is never lifted. Both players stand under
+	 * the black bars waiting for something that is not coming, and the only
+	 * way out is to close the game.
+	 *
+	 * So: locked, with no speech, no cinematic, alive, not travelling, for
+	 * three continuous seconds - that is not a cutscene, that is a hang. Three
+	 * seconds is longer than any gap between lines in the game and short
+	 * enough that a player has not yet decided the mod is broken.
+	 */
+	static PlatformInstant lockedSince = 0;
+
+	bool locked = BLOCK_PLAYER_CONTROLS || cinematicBorder.isActive();
+	bool waitingOnSomething = ARX_SPEECH_IsAnyCinematicActive()
+	                          || ARX_SPEECH_IsAnySpeechActive()
+	                          || isInCinematic()
+	                          || g_session.travelHold
+	                          || g_cutsceneViewer
+	                          || player.lifePool.current <= 0.f;
+
+	if(!isPlaying() || !locked || waitingOnSomething) {
+		lockedSince = 0;
+		return;
+	}
+
+	PlatformInstant now = platform::getTime();
+	if(lockedSince == PlatformInstant(0)) {
+		lockedSince = now;
+		return;
+	}
+
+	if(now - lockedSince > 3000ms) {
+		lockedSince = 0;
+		LogWarning << "[coop] a cutscene locked the player and never finished; releasing";
+		BLOCK_PLAYER_CONTROLS = false;
+		cinematicBorder.reset();
+	}
+
 }
 
 void reportNpcTouch(Entity & npc) {
@@ -2022,11 +2164,29 @@ bool debugTrace() {
 static std::set<std::string, std::less<>> g_seenCutscenes;
 static bool g_ledgerLoaded = false;
 
+/*
+ * Where co-op keeps the things a savegame does not hold.
+ *
+ * Two of them: which story sequences have already been lived through, and the
+ * id of this playthrough. Both used to be opened by bare filename, which means
+ * the folder the game happened to be started from - so launching it from
+ * somewhere else quietly gave you a different memory. They live beside the
+ * saves now, and are copied into a save when one is written; see
+ * saveSideState().
+ */
+static fs::path storyLedgerFile() {
+	return fs::getUserDir() / "coop-story.txt";
+}
+
+static fs::path playthroughIdFile() {
+	return fs::getUserDir() / "coop-guid.txt";
+}
+
 static void persistStoryLedger() {
 	if(!isHost()) {
 		return;
 	}
-	if(std::FILE * f = std::fopen("coop-story.txt", "wb")) {
+	if(std::FILE * f = std::fopen(storyLedgerFile().string().c_str(), "wb")) {
 		for(const std::string & name : g_seenCutscenes) {
 			std::fprintf(f, "%s\n", name.c_str());
 		}
@@ -2037,7 +2197,7 @@ static void persistStoryLedger() {
 static void loadOrMintPlaythroughId() {
 
 	g_session.playthroughId.clear();
-	if(std::FILE * f = std::fopen("coop-guid.txt", "rb")) {
+	if(std::FILE * f = std::fopen(playthroughIdFile().string().c_str(), "rb")) {
 		char line[64];
 		if(std::fgets(line, sizeof(line), f)) {
 			std::string id(line);
@@ -2056,7 +2216,7 @@ static void loadOrMintPlaythroughId() {
 		              unsigned(Random::get(0, 0x7fffffff)),
 		              unsigned(Random::get(0, 0x7fffffff)));
 		g_session.playthroughId = buffer;
-		if(std::FILE * f = std::fopen("coop-guid.txt", "wb")) {
+		if(std::FILE * f = std::fopen(playthroughIdFile().string().c_str(), "wb")) {
 			std::fprintf(f, "%s\n", g_session.playthroughId.c_str());
 			std::fclose(f);
 		}
@@ -2200,6 +2360,78 @@ std::vector<DiscoveredHost> discoveredHosts() {
 
 }
 
+/*
+ * Co-op's own memory, kept with the save it belongs to.
+ *
+ * A savegame restores the world; it knows nothing about which story sequences
+ * the two players have watched, or what the guest is carrying, because those
+ * live in files of their own. Loading an older save therefore rolled the world
+ * back and left co-op's memory where it was - so a conversation already had
+ * stayed had, and the NPC simply would not speak. The camera would start the
+ * cutscene and then stick, waiting for speech that had been skipped.
+ *
+ * Saves are folders, so the answer is to put a copy inside one when it is
+ * written and take it back out when it is loaded.
+ */
+void saveSideState(const fs::path & saveFolder) {
+
+	if(saveFolder.empty()) {
+		return;
+	}
+
+	persistStoryLedger();
+	saveGuestProfileIfDue(true);
+
+	fs::copy_file(storyLedgerFile(), saveFolder / "coop-story.txt", true);
+	fs::copy_file(playthroughIdFile(), saveFolder / "coop-guid.txt", true);
+	fs::copy_file(guestProfileFile(), saveFolder / "coop-profile.bin", true);
+
+}
+
+void loadSideState(const fs::path & saveFolder) {
+
+	if(saveFolder.empty()) {
+		return;
+	}
+
+	/*
+	 * A save written before any of this existed carries none of these files.
+	 * Clearing rather than keeping is deliberate: an old save is from before
+	 * those conversations happened, so remembering them is precisely the bug.
+	 * Better to offer a sequence twice than to lock a quest that cannot be
+	 * finished.
+	 */
+	if(fs::exists(saveFolder / "coop-story.txt")) {
+		fs::copy_file(saveFolder / "coop-story.txt", storyLedgerFile(), true);
+	} else {
+		fs::remove(storyLedgerFile());
+		LogInfo << "[coop] this save predates the story ledger; starting it empty";
+	}
+
+	if(fs::exists(saveFolder / "coop-guid.txt")) {
+		fs::copy_file(saveFolder / "coop-guid.txt", playthroughIdFile(), true);
+	}
+
+	/*
+	 * The guest's belongings are only ever restored, never cleared.
+	 *
+	 * A save written before this existed carries no copy of them, and the
+	 * tempting reading - "then they had nothing yet" - is wrong in the way that
+	 * matters: it throws away everything the second player owns, permanently,
+	 * every time anyone loads an older save. Keeping items they might have
+	 * picked up slightly later is a blemish. Deleting a player's inventory is
+	 * not recoverable, and no amount of correctness is worth that.
+	 */
+	if(fs::exists(saveFolder / "coop-profile.bin")) {
+		fs::copy_file(saveFolder / "coop-profile.bin", guestProfileFile(), true);
+	}
+
+	// Read again on the next session rather than keeping what is in memory.
+	g_ledgerLoaded = false;
+	g_seenCutscenes.clear();
+
+}
+
 void loadStoryLedger() {
 	if(g_ledgerLoaded) {
 		return;
@@ -2207,7 +2439,7 @@ void loadStoryLedger() {
 	g_ledgerLoaded = true;
 	loadOrMintPlaythroughId();
 	g_seenCutscenes.clear();
-	if(std::FILE * f = std::fopen("coop-story.txt", "rb")) {
+	if(std::FILE * f = std::fopen(storyLedgerFile().string().c_str(), "rb")) {
 		char line[256];
 		while(std::fgets(line, sizeof(line), f)) {
 			std::string name(line);
@@ -2252,7 +2484,7 @@ void clearStoryLedger() {
 		// travel-from world must not erase what has been lived.
 		return;
 	}
-	std::remove("coop-guid.txt");
+	std::remove(playthroughIdFile().string().c_str());
 	g_session.playthroughId.clear();
 	loadOrMintPlaythroughId();
 	if(!g_seenCutscenes.empty()) {

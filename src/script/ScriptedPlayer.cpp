@@ -60,6 +60,7 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 #include "scene/Interactive.h"
 #include "scene/GameSound.h"
 #include "script/ScriptEvent.h"
+#include "net/CoopNet.h"
 #include "net/CoopPlayer.h"
 
 #include "script/ScriptUtils.h"
@@ -335,6 +336,32 @@ public:
 			}
 			BLOCK_PLAYER_CONTROLS = false;
 		} else {
+			/*
+			 * A guest sharing the host's area must never lock itself.
+			 *
+			 * Story moments lock the player and hand the unlocking to a chain
+			 * of script events - camera to camera to speaker and back - that
+			 * ends, many hops later, in the SET_PLAYER_CONTROLS ON that gives
+			 * control back. Those hops are queued with Stack_SendIOScriptEvent,
+			 * and the queue is only drained where the area is simulated:
+			 *
+			 *     if(!coop::isReplica()) { ARX_SCRIPT_EventStackExecute(); ... }
+			 *
+			 * So on a guest the lock is applied and the chain that lifts it is
+			 * never run. Not late - never. The player stands under the black
+			 * bars until the watchdog cuts them loose.
+			 *
+			 * The condition here is deliberately the same one that mutes the
+			 * queue, so the lock and its key can never be separated: wherever
+			 * the unlock cannot run, the lock is not applied. The guest still
+			 * watches the scene - the host performs it and sends it over as a
+			 * viewer copy, which holds them for exactly as long as it lasts and
+			 * releases them itself.
+			 */
+			if(coop::isReplica()) {
+				return Success;
+			}
+
 			if(!BLOCK_PLAYER_CONTROLS) {
 				ARX_PLAYER_PutPlayerInNormalStance();
 				

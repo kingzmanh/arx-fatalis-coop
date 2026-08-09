@@ -38,6 +38,7 @@
 #include "graphics/Renderer.h"
 #include "graphics/data/Mesh.h"
 #include "graphics/texture/TextureStage.h"
+#include "gui/Dragging.h"
 #include "gui/Hud.h"
 #include "gui/Notification.h"
 #include "gui/Text.h"
@@ -265,6 +266,153 @@ Entity * createAvatarEntity() {
 	return body;
 }
 
+/*
+ * What the body was last dressed in, so it is only rebuilt when it changes.
+ *
+ * And WHICH body it was, which matters more than it looks. Travelling to
+ * another area tears the body down and builds a fresh one, undressed. Comparing
+ * only the armour would see the same set as last time, decide there was nothing
+ * to do, and leave the new body in its underwear - which is exactly what it did.
+ */
+std::string g_avatarHelmet, g_avatarArmour, g_avatarLeggings;
+const Entity * g_dressedBody = nullptr;
+
+/*
+ * The shield is held rather than worn, so unlike armour it is a real entity
+ * hanging off the body - and unlike the weapon, the body has no slot to keep it
+ * in. So it is kept here, and this pointer is the only thing that knows it
+ * exists: whatever deletes the body has to delete this first.
+ */
+std::string g_avatarShield;
+Entity * g_avatarShieldEntity = nullptr;
+
+/*!
+ * Put the other player's armour on their body.
+ *
+ * Armour is not something a character holds - it is a change to the body
+ * itself. ARX_EQUIPMENT_RecreatePlayerMesh does this for the player by throwing
+ * the mesh away, loading a fresh one and applying each piece as a tweak: a
+ * swapped mesh part and a repainted area of skin. The same has to happen here,
+ * for the same reason, or the other player is seen in their underwear no matter
+ * what they are wearing.
+ *
+ * Rebuilt only when the set actually changes, because it means reloading the
+ * mesh - too expensive to do every frame and pointless when nothing has moved.
+ */
+void updateAvatarArmour(Entity * body) {
+
+	if(!body) {
+		return;
+	}
+
+	if(body == g_dressedBody
+	   && g_avatarHelmet == g_avatar.helmet && g_avatarArmour == g_avatar.armour
+	   && g_avatarLeggings == g_avatar.leggings) {
+		return;
+	}
+
+	g_dressedBody = body;
+	g_avatarHelmet = g_avatar.helmet;
+	g_avatarArmour = g_avatar.armour;
+	g_avatarLeggings = g_avatar.leggings;
+
+	delete body->obj;
+	body->obj = loadObject("graph/obj3d/interactive/npc/human_base/human_base.teo",
+	                       false).release();
+	if(!body->obj) {
+		return;
+	}
+
+	/*
+	 * Each piece is built, worn, and thrown away again. The tweak needs the
+	 * item's own tweakerinfo - which mesh part, which skin - and that lives in
+	 * the item, not in its name. Nothing is kept: the body wears the result,
+	 * not the thing that caused it.
+	 */
+	struct Worn { const std::string & path; TweakType type; const char * selection; };
+	const Worn worn[] = {
+		{ g_avatar.helmet,   TWEAK_HEAD,  "head" },
+		{ g_avatar.armour,   TWEAK_TORSO, "chest" },
+		{ g_avatar.leggings, TWEAK_LEGS,  "leggings" }
+	};
+
+	for(const Worn & piece : worn) {
+		if(piece.path.empty()) {
+			continue;
+		}
+		if(Entity * item = AddItem(res::path::load(piece.path))) {
+
+			/*
+			 * Run its script before asking what it changes.
+			 *
+			 * Which mesh part a piece of armour swaps, and which skin it
+			 * repaints, is not written in the item file - the item says it
+			 * itself, by calling setplayertweak when it starts up. Skip that and
+			 * tweakerinfo is still empty, the tweak below does nothing at all,
+			 * and it does it without complaining.
+			 */
+			SendInitScriptEvent(item);
+
+			if(!item->tweakerinfo) {
+				LogWarning << "[coop] " << piece.path << " says nothing about how it is worn";
+			}
+
+			ARX_EQUIPMENT_ApplyTweak(body, item, piece.type, piece.selection);
+			item->destroy();
+
+		} else {
+			LogWarning << "[coop] could not build the armour they are wearing: " << piece.path;
+		}
+	}
+
+	EERIE_Object_Precompute_Fast_Access(body->obj);
+
+	// The weapon and the shield hang off the mesh that was just replaced, so
+	// they have to be hung again on the new one.
+	g_avatarWeapon.clear();
+	g_avatarShield.clear();
+
+}
+
+/*!
+ * Hang the right shield off the body, or take it away when they put it down.
+ *
+ * The player's own shield is linked mesh to mesh - "shield_attach" on the arm
+ * to "shield_attach" on the shield - rather than being drawn as part of the
+ * body the way armour is. So this cannot go through the armour path: a shield
+ * has no tweak to apply, and the body has no slot to keep it in the way it
+ * keeps a weapon. It is a real entity, linked to the arm, and remembered here.
+ */
+void updateAvatarShield(Entity * body) {
+
+	if(g_avatarShield == g_avatar.shield) {
+		return;
+	}
+
+	g_avatarShield = g_avatar.shield;
+
+	delete g_avatarShieldEntity;
+	g_avatarShieldEntity = nullptr;
+
+	if(g_avatarShield.empty()) {
+		return;
+	}
+
+	if(Entity * worn = AddItem(res::path::load(g_avatarShield))) {
+		SendInitScriptEvent(worn);
+		worn->scriptload = 2;
+		// The body never enters a savegame, so nothing hanging off it may either.
+		worn->ioflags |= IO_NOSAVE;
+		worn->show = SHOW_FLAG_LINKED;
+		linkEntities(*body, "shield_attach", *worn, "shield_attach");
+		g_avatarShieldEntity = worn;
+	} else {
+		LogWarning << "[coop] could not build the shield they are carrying: "
+		           << g_avatarShield;
+	}
+
+}
+
 //! Hang the right weapon off the body, or take it away when they sheathe it.
 void updateAvatarWeapon(Entity * body) {
 
@@ -358,6 +506,10 @@ bool isAvatarEntity(const Entity * entity) {
 void resetAvatar() {
 	g_avatarHandle = EntityHandle();
 	g_avatarWeapon.clear();
+	// Forgotten, never deleted: one caller is a level change, which has already
+	// freed every entity in the area. Deleting here would be the second time.
+	g_avatarShield.clear();
+	g_avatarShieldEntity = nullptr;
 	g_bodyTrack.clear();
 }
 
@@ -474,10 +626,20 @@ bool isPartnerScriptContext() {
 void destroyAvatarEntity() {
 
 	if(Entity * body = avatarEntity()) {
+		// Both come off before the body does: deleting the body deletes the mesh
+		// they are linked to, and unlinking afterwards would read it back.
+		delete g_avatarShieldEntity;
+		g_avatarShieldEntity = nullptr;
 		delete body->_npcdata->weapon;
 		body->_npcdata->weapon = nullptr;
 		delete body;
 	}
+
+	// Nothing is dressed any more, so nothing is remembered as dressed.
+	g_dressedBody = nullptr;
+	g_avatarHelmet.clear();
+	g_avatarArmour.clear();
+	g_avatarLeggings.clear();
 
 	resetAvatar();
 
@@ -504,6 +666,22 @@ void captureLocalAvatar(Avatar & out) {
 
 	if(self) {
 		out.anim0 = findAnimIndex(self, self->animlayer[0].cur_anim);
+
+		/*
+		 * Standing still, the engine picks the idle by which camera WE are
+		 * using: third person gets ANIM_WAIT, first person ANIM_WAIT_SHORT.
+		 * The names are the opposite of what they read like - player.asl binds
+		 * ANIM_WAIT to player_wait_short and ANIM_WAIT_SHORT to player_wait_1st
+		 * - so the second one is the first person idle, animated for the arms
+		 * you see from inside your own head and for nothing else.
+		 *
+		 * The other player is looking at the whole body from outside, so they
+		 * are told the third person idle instead. What we look like to them
+		 * cannot depend on which camera we happen to be looking through.
+		 */
+		if(out.anim0 == u8(ANIM_WAIT_SHORT) && self->anims[ANIM_WAIT]) {
+			out.anim0 = u8(ANIM_WAIT);
+		}
 		out.anim1 = findAnimIndex(self, self->animlayer[1].cur_anim);
 		out.anim3 = findAnimIndex(self, self->animlayer[3].cur_anim);
 		out.anim0Flags = u16(self->animlayer[0].flags);
@@ -534,6 +712,28 @@ void captureLocalAvatar(Avatar & out) {
 		 */
 		out.weapon = weapon->classPath().string();
 	}
+
+	/*
+	 * And what they are wearing. Same reasoning as the weapon: the class is
+	 * enough, because the other machine builds its own copy from it.
+	 */
+	out.helmet.clear();
+	out.armour.clear();
+	out.leggings.clear();
+	out.shield.clear();
+	if(Entity * worn = entities.get(player.equiped[EQUIP_SLOT_HELMET])) {
+		out.helmet = worn->classPath().string();
+	}
+	if(Entity * worn = entities.get(player.equiped[EQUIP_SLOT_ARMOR])) {
+		out.armour = worn->classPath().string();
+	}
+	if(Entity * worn = entities.get(player.equiped[EQUIP_SLOT_LEGGINGS])) {
+		out.leggings = worn->classPath().string();
+	}
+	if(Entity * worn = entities.get(player.equiped[EQUIP_SLOT_SHIELD])) {
+		out.shield = worn->classPath().string();
+	}
+
 
 }
 
@@ -687,7 +887,10 @@ void updateAvatar() {
 		}
 	}
 
+	// Armour first: it rebuilds the mesh the weapon and shield hang off.
+	updateAvatarArmour(body);
 	updateAvatarWeapon(body);
+	updateAvatarShield(body);
 
 	/*
 	 * A guest that has just arrived at the host's area lands wherever its own
@@ -742,7 +945,7 @@ void updateAvatar() {
 
 }
 
-static fs::path guestProfilePath() {
+fs::path guestProfileFile() {
 	return fs::getUserDir() / ("coop-profile-" + playthroughId() + ".bin");
 }
 
@@ -790,7 +993,7 @@ void saveGuestProfileIfDue(bool force) {
 	}
 	lastSave = now;
 
-	std::FILE * f = std::fopen(guestProfilePath().string().c_str(), "wb");
+	std::FILE * f = std::fopen(guestProfileFile().string().c_str(), "wb");
 	if(!f) {
 		return;
 	}
@@ -879,23 +1082,67 @@ void applyGuestIdentity() {
 		return;
 	}
 
-	// Strip the host-clone: unequip, then remove everything carried.
+	/*
+	 * Strip the host-clone: unequip, then remove everything carried.
+	 *
+	 * Silently. Joining means loading the host's savegame, so for a moment this
+	 * player is an exact copy of them - wearing their armour, holding their
+	 * weapon, carrying their pack, and every one of those items has the host's
+	 * own id on it. Throwing the copies away is housekeeping that belongs to
+	 * this machine alone.
+	 *
+	 * Announced, it is a disaster: the host hears that its armour has been
+	 * destroyed, believes it, and destroys the real one. The player who was
+	 * wearing it watches it vanish off their body the moment somebody joins.
+	 */
+	ApplyScope silent;
+
 	ARX_EQUIPMENT_UnEquipAllPlayer();
 	if(player.torch) {
 		ARX_PLAYER_KillTorch();
 	}
+	/*
+	 * And take whatever ended up in their hand.
+	 *
+	 * Unequipping does not always put a thing away. With nowhere to file it -
+	 * and this player's pack is about to be emptied anyway - the engine leaves
+	 * it on the cursor instead. An item being dragged is neither worn nor in an
+	 * inventory, so collectBelongings below never sees it, and it is the one
+	 * piece of the host's kit that survives the purge: the guest spawns holding
+	 * a copy of the host's weapon, unable to equip it and unable to put it down
+	 * properly, because it was never really theirs.
+	 */
+	if(g_draggedEntity) {
+		Entity * held = g_draggedEntity;
+		setDraggedEntity(nullptr);
+		held->destroy();
+	}
+
 	std::vector<Entity *> doomed;
 	collectBelongings(doomed, nullptr);
 	for(Entity * e : doomed) {
 		e->destroy();
 	}
 
+	/*
+	 * And build the body again, now that it is carrying nothing.
+	 *
+	 * Emptying the slots is not enough. What a player looks like is baked into
+	 * their mesh - the weapon is an object linked to a hand, the armour is a
+	 * swapped mesh part and a repainted skin - and none of that comes off just
+	 * because the slot behind it was cleared. Without this the guest spawns
+	 * holding the host's weapon and wearing the host's armour while owning
+	 * neither: the clone is gone but its reflection is still standing there.
+	 */
+	ARX_EQUIPMENT_RecreatePlayerMesh();
+
+
 	// Everything this player owns from here on is theirs alone, named in a
 	// range the host's world never uses.
 	ScopedGuestItems ownBelongings;
 
 	std::FILE * f = playthroughId().empty() ? nullptr
-	                : std::fopen(guestProfilePath().string().c_str(), "rb");
+	                : std::fopen(guestProfileFile().string().c_str(), "rb");
 	if(!f) {
 		ARX_PLAYER_MakeFreshHero();
 		LogInfo << "[coop] first join of this playthrough: a fresh adventurer";

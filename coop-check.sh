@@ -67,6 +67,10 @@ check     "zone crossings run in the partner's name" net/CoopNet.cpp      "Scope
 
 check     "a guest with no area still travels"       net/CoopNet.cpp      "Standing nowhere is a reason to travel"
 
+check     "co-op memory travels with the savegame"  net/CoopNet.cpp      "void saveSideState"
+checkgone "the story ledger is not a loose file"     net/CoopNet.cpp      'fopen("coop-story.txt"'
+checkgone "the playthrough id is not a loose file"   net/CoopNet.cpp      'fopen("coop-guid.txt"'
+
 [ $QUIET -eq 0 ] && echo "--- items and identity"
 check     "guest mints items in a private id range"  net/CoopPlayer.cpp   "GuestItemInstanceBase"
 check     "audit never reports our own belongings"   net/CoopWorld.cpp    "isOwnBelonging"
@@ -88,6 +92,26 @@ check     "weapons never wear against a companion"   game/Equipment.cpp   "coop:
 check     "their weapon is whatever they hold"       net/CoopPlayer.cpp   "out.weapon = weapon->classPath().string()"
 checkgone "the held item is not looked for in weapons/" net/CoopPlayer.cpp "Prepare_SetWeapon(body"
 check     "their health is a second life orb"        gui/Hud.cpp          "drawPartnerHealthOrb"
+# A shield is neither worn nor wielded: there is no tweak to apply and no slot
+# on the body to keep it in, so it is a linked entity only one pointer knows of.
+check     "their shield hangs off their arm"          net/CoopPlayer.cpp   "shield_attach"
+# ANIM_WAIT_SHORT is not a short wait: player.asl binds it to player_wait_1st,
+# the first person idle. Which camera we use must not change what they see.
+check     "they idle in third person, whatever we use" net/CoopPlayer.cpp  "u8(ANIM_WAIT)"
+
+[ $QUIET -eq 0 ] && echo "--- cutscenes"
+# A lock is only safe where the thing that lifts it can run. SENDEVENT queues an
+# event, and the queue is drained only where the area is simulated, so a guest
+# that locked itself could never reach its own SET_PLAYER_CONTROLS ON.
+check     "a guest never locks itself for a cutscene" script/ScriptedPlayer.cpp "coop::isReplica()"
+check     "the bars stay up only for the viewer copy" script/ScriptedCamera.cpp "enable && coop::isReplica()"
+# The zone disarms for the world, partner or not: the host runs the whole script
+# in their name, so leaving the trigger armed re-runs a cutscene whose cameras
+# the first run destroyed - and the early return skipped consuming its argument.
+checkgone "a one-shot zone disarms for both players" script/ScriptedAnimation.cpp "isPartnerScriptContext"
+# The SHOW that undoes a HIDE is at the end of the same unreachable chain, so a
+# guest that hid its interface never gets a cursor back. Only hiding is refused.
+check     "a guest keeps its cursor and its hands"   script/ScriptedInterface.cpp 'command == "hide" && (coop::isPartnerScriptContext() || coop::isReplica())'
 
 [ $QUIET -eq 0 ] && echo "--- menu"
 check     "replicas recompute which room they are in" net/CoopWorld.cpp "requestRoomUpdate"

@@ -429,17 +429,27 @@ public:
 	Result execute(Context & context) override {
 		
 		/*
-		 * One-shot trigger zones disarm themselves after firing - the jail
-		 * exit unsets its own zone the first time "the player" steps in.
-		 * When the other player fired it, their travel is already on its
-		 * way, and disarming OUR copy would leave this machine's player in
-		 * a doorway that no longer works. Each consumes their own copy.
+		 * This used to return early when the partner's action was what ran the
+		 * script, to stop a one-shot doorway being consumed out from under this
+		 * machine's own player. It was wrong twice over.
+		 *
+		 * A zone disarms itself because something happened in the world: a trap
+		 * was sprung, a chest was opened, a story moment was lived. When the
+		 * host runs a script in the partner's name it runs ALL of it - the
+		 * cameras are destroyed, the quest is granted, the flags are set, right
+		 * here in the only world there is. Keeping the zone armed left one side
+		 * effect out of a script whose every other side effect had landed, and
+		 * the result was a story cutscene that fired a second time when this
+		 * machine's player walked in - into a chain of cameras the first run had
+		 * already destroyed, so the player was locked with nothing left alive to
+		 * unlock them.
+		 *
+		 * And the early return skipped the getWord() below, so the zone name was
+		 * left in the stream to be read as the next command - the parser then
+		 * reported 'unknown command: ortiernzone' and carried on. Whatever else
+		 * is true, an argument has to be consumed on every path out.
 		 */
-		if(coop::isPartnerScriptContext()) {
-			return Success;
-		}
 
-		
 		std::string zone = context.getWord();
 		
 		DebugScript(' ' << zone);

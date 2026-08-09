@@ -299,3 +299,281 @@ concluding the bare name was intended - true in isolation, wrong here. Only
 after checking where the file actually sits did the real answer appear. The
 lesson is the one already written at the top of this file: the cause is the part
 most likely to be wrong.
+
+---
+
+## The other player was always in their underwear
+
+**The problem.** Equip a helmet, armour or leggings and the other player still
+sees you unarmoured. Reported by a tester, confirmed here.
+
+**Why did it happen?** Two reasons, one on each side.
+
+The avatar carried exactly one piece of equipment - the weapon. Helmet, armour,
+leggings and shield were never put on the wire at all, so the other machine had
+nothing to draw. That much was obvious once the Avatar structure was read.
+
+The second reason is why the first fix did not work. Armour in Arx is not
+carried the way a weapon is: it changes the body itself.
+`ARX_EQUIPMENT_RecreatePlayerMesh` throws the mesh away, loads a fresh one, and
+applies each piece as a *tweak* - a swapped mesh part and a repainted area of
+skin. So the pieces were sent, the body was rebuilt, the tweaks were applied,
+and nothing happened.
+
+Because how a piece of armour changes a body is not written in the item file.
+The item says it itself, by calling `setplayertweak` when its script starts up.
+The armour entities here were created with `AddItem` and never had their script
+run, so `tweakerinfo` was null and the tweak returned immediately - silently,
+which is why it looked like the whole approach had failed rather than one line
+being absent. The weapon path had always called `SendInitScriptEvent` for
+exactly this reason.
+
+**The fix.** Helmet, armour, leggings and shield travel with the avatar
+(protocol 19 -> 20). `applyTweak` was generalised into
+`ARX_EQUIPMENT_ApplyTweak`, which dresses any body rather than only the
+player's. The body is rebuilt when the set changes - not per frame, since it
+means reloading the mesh - and each piece has its script run before being asked
+what it changes. Confirmed by the user.
+
+---
+
+## The other player's armour vanished when either of them changed area
+
+**The problem.** Armour worked, then travelling to another area left the other
+player looking unarmoured again. Reported by the user.
+
+**Why did it happen?** The body is rebuilt to wear armour only when the armour
+changes - reloading a mesh is too expensive to do every frame. But the check
+compared only *what* they were wearing, not *which body* was wearing it.
+Travelling tears the body down and builds a fresh, undressed one; the check saw
+the same armour as before, decided there was nothing to do, and left it in its
+underwear.
+
+**The fix.** The body that was last dressed is remembered alongside the armour,
+so a new body is always dressed. The record is also cleared when the body is
+destroyed. Confirmed by the user.
+
+---
+
+## Cooked food only existed for one player
+
+**The problem.** Food cooked on a fire appeared only on the host's screen, no
+matter which player cooked it. Reported by a tester.
+
+**Why did it happen?** Cooking is the script command `REPLACEME`. Raw bread does
+not *become* bread - a new entity is created and the old one destroyed. The
+other machine watched the raw item disappear and was never told anything had
+replaced it.
+
+`announceSpawn` - the function whose entire purpose is telling the other player
+that something now exists - was written, declared in the header, and **called
+from nowhere at all**. Every entity a script created was born on one machine
+only; cooking was simply the case a tester happened to hit.
+
+**The fix.** `REPLACEME` announces the new entity, but only when it ends up
+lying in the world. If the script or the re-insert put it in someone's pack,
+announcing a spawn would drop a second copy on the floor at the other end.
+Confirmed by the user.
+
+---
+
+## Joining destroyed the host's armour off their body
+
+**The problem.** The host is wearing armour, a guest joins, and the armour
+vanishes from the host - not just visually; the equipment slot emptied.
+
+**Why did it happen?** Joining means loading the host's savegame, so for a
+moment the guest is an exact copy of the host: wearing their armour, holding
+their weapon, carrying their pack. Every one of those items carries the host's
+own id. `applyGuestIdentity` then strips that clone.
+
+It stripped it loudly. The destructions were reported over the network, the host
+heard that its armour had been destroyed, believed it, and destroyed the real
+one.
+
+Proven by tracing the host's equipment slot across a join: `handle=223
+entity=alive` became `handle=-1`. The entity was not lost - the slot was
+cleared, which pointed at a deliberate removal rather than a replication
+failure.
+
+**The fix.** The strip runs inside an `ApplyScope`, so none of it is announced.
+Throwing away a copy is housekeeping that belongs to one machine alone.
+Confirmed by the user.
+
+---
+
+## A joining player spawned holding a copy of the host's weapon
+
+**The problem.** The guest spawned with the host's weapon in hand - not
+equipped, just held, and it could neither be equipped nor dropped properly.
+
+**Why did it happen?** Unequipping does not always put a thing away. With
+nowhere to file it, the engine leaves it on the cursor. And an item being
+dragged is neither worn nor in an inventory, which is exactly what
+`collectBelongings` looks for - so the purge never saw it. It was the one piece
+of the host's kit that survived, carrying the host's entity id on a machine with
+no business owning it, which is why it behaved so strangely afterwards.
+
+Two wrong guesses came first: that the equipment slots were not being cleared
+(they were - traced as `weapon slot=-1`), and that the player mesh was not being
+rebuilt (it was not, and that was worth fixing, but it was not this). The clue
+that solved it was the user's own description: *"I'm holding it not equip it"*.
+
+**The fix.** The cursor is emptied as part of the strip, before the purge runs.
+The player mesh is also rebuilt afterwards, since clearing a slot does not
+undress anybody - the weapon is an object linked to a hand and armour is a
+swapped mesh part, and neither comes off just because the slot behind it was
+emptied. Confirmed by the user.
+
+---
+
+## Fireplaces gave the second player light but no fire
+
+**The problem.** One player lights a fireplace. They see flames; the other sees
+only a glow, and hears nothing. Reported by the user.
+
+**Why did it happen?** Two separate faults, and fixing the first alone changed
+nothing.
+
+A fireplace is not an entity. It is a light the level places, carrying
+`EXTRAS_SPAWNFIRE`, and `m_ignitionStatus` says whether it burns. Nothing about
+static lights was replicated anywhere. The glow the guest did see came from the
+torch entity beside it, whose `ignition` **is** replicated - two systems
+producing two halves of one effect, which is why it looked so strange.
+
+But replicating the flag did nothing, because the flames are drawn by
+`TreatBackgroundActions()`, and that was called inside `if(!worldIsRemote)`. The
+guest never ran it, so it drew no flames for *any* fire, lit by anyone.
+
+**The fix.** Static light ignition is replicated as changes (`MsgLightIgnite`,
+protocol 21), with every lit light described once on joining. And the guest runs
+`TreatBackgroundActions()` too - the flames and the crackle belong to both
+players. The fire damage inside stays with the authority: registered on both, a
+player standing in a fire would burn twice. Confirmed by the user.
+
+## 20. A carried shield was invisible to the other player
+
+**The problem.** One player equips a shield. They carry it; the other sees
+nothing on their arm at all. Reported by the user.
+
+**Why did it happen?** The shield was already being captured and already
+crossing the wire - it arrived in `remote.shield` and then nothing ever read it.
+Only half the feature had been written, and the sending half is the half that
+looks finished.
+
+It was missed because the two pieces of equipment already working solve the
+problem in two different ways, and a shield is neither of them. Armour is not an
+object at all: it is a change to the body, applied by rebuilding the mesh.
+A weapon is an object, and the body has a slot to keep it in - `_npcdata->weapon`
+- so something already owns it. A shield is an object with no slot: linked
+mesh to mesh, `shield_attach` to `shield_attach`, and nothing remembers it.
+
+**The fix.** The receiving side builds the shield from the path that was already
+arriving and links it to the arm the way the engine links your own. Because
+nothing else knows the entity exists, one pointer holds it, and all three
+teardowns had to be handled: an armour change rebuilds the mesh it hangs from,
+so it is rebuilt with it; closing the body deletes the shield *first*, because
+deleting the body destroys the mesh and unlinking afterwards would read it back;
+and an area change forgets it without deleting, because the level teardown has
+already freed every entity there. Confirmed by the user.
+
+## 21. The other player's idle animation looked half-finished
+
+**The problem.** Standing still, the other player breathed through about half an
+animation and snapped back to the start. Reported by the user, who found it
+while looking at the shield fixed above.
+
+**Why did it happen?** The engine chooses the idle by **which camera the player
+is using**, and that choice was travelling to the other machine.
+
+```
+LOADANIM WAIT        "player_wait_short"   <- third person
+LOADANIM WAIT_SHORT  "player_wait_1st"     <- first person
+```
+
+The names in `player.asl` are the opposite of how they read, which is what made
+this hard to see: `ANIM_WAIT_SHORT` is not a short wait, it is the *first person*
+idle - authored for the arms you see from inside your own head and for nothing
+else. Playing in first person, that is what the local player's layer 0 held,
+what `findAnimIndex` reported, and what the other machine dutifully played on a
+whole body viewed from outside.
+
+Both files are 80 frames, so it was never a shorter loop. It was an animation
+that only ever animates the part a first person camera can see.
+
+**The fix.** At capture, an idle of `ANIM_WAIT_SHORT` is sent as `ANIM_WAIT`.
+What we look like to the other player cannot depend on which camera we happen to
+be looking through. These are the only two view-dependent animation choices in
+`ARX_PLAYER_Manage_Visual`, so this is the whole of it.
+
+## 22. Both players stood locked under the black bars, waiting for nothing
+
+**The problem.** Walking into the room where Ortiern greets you, and then walking
+back, left both players held under cinematic bars with no cutscene playing and
+no way out but closing the game. Reported by the user.
+
+**Why did it happen?** Two unrelated faults that produced the same symptom, one
+on each machine. Both were mine.
+
+The story moment locks the player and hands the unlocking to a chain of script
+events that hops camera to camera to speaker and back - `0085 -> 0088 -> 0089 ->
+0091 -> 0090` - ending, many hops later, in the `SET_PLAYER_CONTROLS ON` that
+gives control back.
+
+*On the guest:* `SENDEVENT` does not call a script, it **queues** one with
+`Stack_SendIOScriptEvent`, and the queue is only drained where the area is
+simulated - `if(!coop::isReplica()) { ARX_SCRIPT_EventStackExecute(); ... }`.
+So the guest applied the lock and queued the event that would lift it, and that
+event was never run. Not late: never.
+
+*On the host:* `UNSET_CONTROLLED_ZONE`, which is how the trigger disarms itself
+after firing, returned early whenever the partner's crossing was what ran the
+script. The zone therefore stayed armed, and fired a second time when this
+machine's own player walked in - into a chain of cameras the first run had
+already destroyed, so the lock went on with nothing alive to take it off. The
+same early return also skipped the `getWord()` that consumes the zone name,
+leaving it in the stream to be read as a command: the log shows the parser
+reporting `unknown command: ortiernzone` and carrying on.
+
+**The fix.** The guest no longer locks itself: the script lock and the cinematic
+bars are suppressed under exactly the same `coop::isReplica()` condition that
+mutes the queue, so a lock can never be applied where its key cannot run. The
+guest still watches - the host performs the scene and sends a viewer copy that
+holds them for its length and releases itself.
+
+And the zone disarms for the world, partner or not. When the host runs a script
+in the partner's name it runs all of it - the cameras are destroyed, the quest is
+granted - so leaving the zone armed was omitting one side effect from a script
+whose every other side effect had landed. Confirmed by the user.
+
+## 23. After the cutscene, the second player had no cursor and no hands
+
+**The problem.** With the lock and the bars fixed, the guest came out of the
+Ortiern scene unable to see or use the crosshair, so nothing could be picked up
+or used. Reported by the user.
+
+**Why did it happen?** The same fault as #22, in the third command of the same
+three-line block, which I fixed two of:
+
+```
+SET_PLAYER_CONTROLS OFF     <- fixed in 22
+CINEMASCOPE -s ON           <- fixed in 22
+PLAYER_INTERFACE -s HIDE    <- this one
+```
+
+Every one of them is half of a pair whose other half - ON, OFF, SHOW - sits at
+the end of the queued event chain that a guest never drains. Hiding is therefore
+permanent there, and unlike the lock there is no watchdog behind it and no key
+the player can press: the cursor simply never comes back.
+
+`PLAYER_INTERFACE` also carried the same argument-consumption bug as
+`UNSET_CONTROLLED_ZONE`: an early return placed above its `getWord()`, leaving
+"hide" in the stream to be read as a command. That is the `unknown command:
+hide` sitting in the log next to `unknown command: ortiernzone`. The other two
+commands guarded this way were checked and read their arguments first, so those
+two were the whole of it.
+
+**The fix.** The argument is read before anything is decided, and only *hiding*
+is refused - on a guest, and for the partner's sequence. SHOW is always allowed
+through, whoever asks, because handing the interface back can never be the thing
+that strands someone.

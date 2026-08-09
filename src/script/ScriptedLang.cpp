@@ -382,11 +382,12 @@ public:
 		} else {
 			
 			Entity * entity = entities.getById(target, sender);
+
 			if(!entity) {
 				DebugScript(": target does not exist");
 				return Failed;
 			}
-			
+
 			sender->stat_sent++;
 			Stack_SendIOScriptEvent(sender, entity, event, parameters);
 			

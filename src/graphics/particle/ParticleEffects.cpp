@@ -921,7 +921,15 @@ void TreatBackgroundActions() {
 			continue;
 		}
 		
-		if((light.extras & EXTRAS_SPAWNFIRE) && light.m_ignitionStatus) {
+		/*
+		 * Burning people is the authority's business, everything else is not.
+		 *
+		 * The rest of this function is what a fire looks and sounds like, and
+		 * both players need that. The damage it deals belongs to whoever is
+		 * simulating the area - registered on a replica too, a player standing
+		 * in a fire would be hurt twice.
+		 */
+		if((light.extras & EXTRAS_SPAWNFIRE) && light.m_ignitionStatus && !coop::isReplica()) {
 			Spell * spell = nullptr; // TODO create a real spell for this?
 			DamageParameters & damage = damageGet(spell, light.m_damage);
 			damage.radius = light.ex_radius;

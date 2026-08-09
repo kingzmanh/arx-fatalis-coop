@@ -129,11 +129,20 @@ public:
 		}
 		
 		bool enable = context.getBool();
-		
+
 		DebugScript(' ' << options << ' ' << enable);
-		
+
+		// The bars come down as part of the same locked story moment the guest
+		// cannot run its way out of - see the note on SET_PLAYER_CONTROLS. They
+		// are raised again at the end of a chain that never reaches a replica,
+		// so a guest that lowered them would be left looking through them. The
+		// viewer copy the host sends brings its own bars, and takes them away.
+		if(enable && coop::isReplica()) {
+			return Success;
+		}
+
 		cinematicBorder.set(enable, smooth);
-		
+
 		return Success;
 	}
 	

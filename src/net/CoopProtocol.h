@@ -38,7 +38,7 @@ namespace coop {
  * misread a newer one. Both sides check this during the handshake and refuse
  * the connection rather than desyncing silently later.
  */
-constexpr u32 ProtocolVersion = 19;
+constexpr u32 ProtocolVersion = 21;
 
 //! Default listen port, used when the address the joining player typed has none.
 constexpr unsigned short DefaultPort = 27100;
@@ -133,7 +133,8 @@ enum MessageType : u8 {
 	MsgPartnerEffect = 79, //!< either -> other: your player receives this effect (heal, hunger, ...)
 	MsgCutscenePlay = 80, //!< either -> other: watch this story speech with me, camera and all
 	MsgPlayerTouchNpc = 81, //!< guest -> host: my player is pressing against this creature
-	MsgVoice        = 82 //!< either -> other: a moment of speech, to come out of their mouth
+	MsgVoice        = 82, //!< either -> other: a moment of speech, to come out of their mouth
+	MsgLightIgnite  = 83 //!< host -> guest: a level light was lit or put out
 
 };
 

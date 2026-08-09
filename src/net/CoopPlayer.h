@@ -22,6 +22,8 @@
 
 #include <string>
 
+#include "io/fs/FilePath.h"
+
 #include "game/GameTypes.h"
 #include "graphics/BaseGraphicsTypes.h"
 #include "math/Angle.h"
@@ -75,6 +77,16 @@ struct Avatar {
 	//! Class path of the weapon in hand, empty when unarmed. Used to hang the
 	//! right mesh off the body so the other player can see what you are holding.
 	std::string weapon;
+
+	/*
+	 * What they are wearing. Armour is not carried like a weapon - it changes
+	 * the body itself, swapping mesh parts and repainting skin - so these are
+	 * the classes to dress the copy of them standing here with.
+	 */
+	std::string helmet;
+	std::string armour;
+	std::string leggings;
+	std::string shield;
 
 	//! Local time of the last update, used to fade the body out if they drop.
 	u32 lastUpdate = 0;
@@ -153,6 +165,9 @@ bool updateReviveOpportunity();
  * an entity works on it without being taught about co-op.
  */
 [[nodiscard]] Entity * avatarEntity();
+
+//! Where the guest's own belongings are kept between sessions.
+[[nodiscard]] fs::path guestProfileFile();
 
 /*!
  * True for the other player's body.

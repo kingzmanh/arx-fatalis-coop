@@ -2645,6 +2645,11 @@ void ARX_CHANGELEVEL_Load(const fs::path & savefile) {
 	coop::destroyAvatarEntity();
 	
 	LogDebug("begin ARX_CHANGELEVEL_Load " << savefile);
+
+	// Put co-op's own memory back to what it was when this save was written,
+	// before anything reads it. Hooked here rather than at the menu so every
+	// way of loading - including quickload - goes through it.
+	coop::loadSideState(savefile.parent());
 	
 	progressBarSetTotal(238);
 	progressBarReset();

@@ -66,12 +66,15 @@ Being straight with you, because you will find these anyway:
 
 - **Never properly tested over the internet.** Almost all testing has been two
   windows on one computer. Real latency will find bugs that local testing cannot.
+- **The other player's breathing animation looks half-finished** while they are
+  carrying a shield.
+- **Animals only appear once the host has been near them**, and only move while
+  the host is nearby.
+- **The hob-goblin quest item vanishes** without advancing the quest.
 - **Loot can duplicate** in some cases - both players may find their own copy.
-- **Some quest flags only move on one machine**, which can leave the two of you
+- **Some quest flags only land on one machine**, which can leave the two of you
   out of step on story progress.
-- **What the second player does alone is not always remembered** if they explore
-  away from the host.
-- **Enemies sometimes pick the wrong target** after one player leaves a room.
+- **Enemies sometimes pick the wrong target.**
 
 ## Playing it
 

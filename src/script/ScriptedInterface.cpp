@@ -57,6 +57,7 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 #include "script/ScriptEvent.h"
 #include "script/ScriptUtils.h"
 #include "util/Cast.h"
+#include "net/CoopNet.h"
 #include "net/CoopPlayer.h"
 
 
@@ -253,15 +254,31 @@ public:
 			smooth = test_flag(flg, 's');
 		}
 		
-		if(coop::isPartnerScriptContext()) {
-			// The other player's sequence must not hide THIS screen's hands.
+		// Read the argument before deciding anything. Returning above this line
+		// left the "hide" in the stream to be read as the next command, which
+		// is exactly what the log was reporting as 'unknown command: hide'.
+		std::string command = context.getWord();
+
+		DebugScript(' ' << options << ' ' << command);
+
+		/*
+		 * Hiding is half of a pair, and only half of it can run here.
+		 *
+		 * The SHOW that undoes this sits at the end of the same chain of queued
+		 * script events as the SET_PLAYER_CONTROLS ON - and on a guest sharing
+		 * the host's area that queue is never drained. A guest that hid its
+		 * interface would be left without a cursor or a hand for the rest of
+		 * the session, with no way to ask for it back.
+		 *
+		 * The other player's sequence must not hide THIS screen's hands either.
+		 *
+		 * Only hiding is refused. SHOW is always allowed through, whoever asks:
+		 * giving the interface back can never be the thing that strands anyone.
+		 */
+		if(command == "hide" && (coop::isPartnerScriptContext() || coop::isReplica())) {
 			return Success;
 		}
-		
-		std::string command = context.getWord();
-		
-		DebugScript(' ' << options << ' ' << command);
-		
+
 		if(command == "hide") {
 			g_hudRoot.playerInterfaceFader.requestFade(FadeDirection_Out, smooth);
 		} else if(command == "show") {

@@ -51,6 +51,7 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 #include <string_view>
 
 #include "game/Item.h"
+#include "graphics/data/MeshManipulation.h"
 #include "math/Types.h"
 #include "util/Flags.h"
 
@@ -123,6 +124,14 @@ float getEquipmentModifier(EquipmentModifierType modifier, float baseval);
 
 bool ARX_EQUIPMENT_Strike_Check(Entity * io_source, Entity * io_weapon, float ratioaim, long flags, EntityHandle targ = EntityHandle());
 void ARX_EQUIPMENT_RecreatePlayerMesh();
+
+/*!
+ * Put a piece of armour on a body - swapping the mesh part and repainting the
+ * skin, which is how Arx wears armour. Any body, not only the player's, so the
+ * other player can be seen wearing theirs.
+ */
+void ARX_EQUIPMENT_ApplyTweak(Entity * io, Entity * item, TweakType tw,
+                              std::string_view selection);
 Entity * getWeapon(Entity & entity) noexcept;
 std::string_view getWeaponMaterial(Entity & entity) noexcept;
 DamageType getDamageTypeFromWeaponMaterial(std::string_view material) noexcept;

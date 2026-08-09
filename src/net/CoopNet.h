@@ -30,6 +30,7 @@
 #include "graphics/BaseGraphicsTypes.h"
 #include "math/Angle.h"
 #include "math/Vector.h"
+#include "io/fs/FilePath.h"
 #include "platform/Platform.h"
 
 class Entity;
@@ -173,6 +174,15 @@ void reportPartnerEffect(u8 kind, float value);
 
 //! Host: read the persisted ledger once at hosting start.
 void loadStoryLedger();
+
+/*!
+ * Keep co-op's own memory with the savegame it belongs to - which sequences
+ * have been watched, and what the guest is carrying. Without this, loading an
+ * older save rolls the world back but not the story, and quests that were
+ * already spoken through can never be spoken through again.
+ */
+void saveSideState(const fs::path & saveFolder);
+void loadSideState(const fs::path & saveFolder);
 
 /*!
  * The playthrough's identity: a random id minted at New Quest on the host,

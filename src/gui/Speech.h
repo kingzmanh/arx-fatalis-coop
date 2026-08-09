@@ -132,6 +132,9 @@ Speech * ARX_SPEECH_AddSpeech(Entity & speaker, std::string_view data, long mood
 
 //! Whether any speech with a cinematic camera is still playing.
 bool ARX_SPEECH_IsAnyCinematicActive();
+
+//! True while any speech is being said.
+bool ARX_SPEECH_IsAnySpeechActive();
 void ARX_SPEECH_ReleaseIOSpeech(const Entity & entity);
 void ARX_SPEECH_ClearIOSpeech(const Entity & entity);
 

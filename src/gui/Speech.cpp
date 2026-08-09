@@ -254,6 +254,12 @@ Speech * ARX_SPEECH_AddSpeech(Entity & speaker, std::string_view data, long mood
 	return &speech;
 }
 
+//! Is anybody saying anything at all? Used to notice a cutscene lock that has
+//! outlived whatever it was waiting for.
+bool ARX_SPEECH_IsAnySpeechActive() {
+	return !g_speech.empty();
+}
+
 bool ARX_SPEECH_IsAnyCinematicActive() {
 	for(const Speech & speech : g_speech) {
 		if(speech.cine.type != ARX_CINE_SPEECH_NONE) {

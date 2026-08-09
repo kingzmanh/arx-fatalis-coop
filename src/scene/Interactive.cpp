@@ -514,6 +514,7 @@ void PrepareIOTreatZone(long flag) {
 				}
 			}
 			treat = (dists < square(TREATZONE_LIMIT));
+
 		}
 		if(&entity == g_draggedEntity) {
 			treat = true;

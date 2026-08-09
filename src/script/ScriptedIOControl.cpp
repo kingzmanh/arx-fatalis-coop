@@ -170,6 +170,23 @@ public:
 			}
 		}
 		
+		/*
+		 * Tell the other player it exists.
+		 *
+		 * This is how a thing becomes another thing in Arx - raw bread becomes
+		 * bread, dough becomes a pie - and it happens on whichever machine owns
+		 * the area. The other one has just watched the old item disappear and
+		 * has no idea anything replaced it, so the cooked food is invisible
+		 * there until something else forces it to be described.
+		 *
+		 * Only when it ends up lying in the world. If the init script or the
+		 * re-insert above put it in someone's pack, announcing it as a spawn
+		 * would drop a second copy on the floor at the other end.
+		 */
+		if(ioo->show == SHOW_FLAG_IN_SCENE && !locateInInventories(ioo)) {
+			coop::announceSpawn(*ioo);
+		}
+
 		return removed ? AbortRefuse : Success;
 	}
 	
