@@ -583,6 +583,8 @@ void sendAvatar() {
 	writer.put(local.anim0);
 	writer.put(local.anim1);
 	writer.put(local.anim3);
+	writer.put(local.anim3Flags);
+	writer.put(local.anim3Time);
 	writer.put(local.anim0Flags);
 	writer.put(local.anim1Flags);
 	writer.put(local.anim0Time);
@@ -672,6 +674,8 @@ void receiveAvatar(Reader & reader) {
 	u8 anim0 = reader.getU8();
 	u8 anim1 = reader.getU8();
 	u8 anim3 = reader.getU8();
+	u16 anim3Flags = reader.getU16();
+	s32 anim3Time = reader.getS32();
 	u16 anim0Flags = reader.getU16();
 	u16 anim1Flags = reader.getU16();
 	s32 anim0Time = reader.getS32();
@@ -702,6 +706,8 @@ void receiveAvatar(Reader & reader) {
 	remote.anim0 = anim0;
 	remote.anim1 = anim1;
 	remote.anim3 = anim3;
+	remote.anim3Flags = anim3Flags;
+	remote.anim3Time = anim3Time;
 	remote.anim0Flags = anim0Flags;
 	remote.anim1Flags = anim1Flags;
 	remote.anim0Time = anim0Time;

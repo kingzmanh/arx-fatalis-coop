@@ -391,8 +391,22 @@ void updateAvatarShield(Entity * body) {
 
 	g_avatarShield = g_avatar.shield;
 
-	delete g_avatarShieldEntity;
-	g_avatarShieldEntity = nullptr;
+	/*
+	 * Unlink BEFORE deleting, or the body keeps drawing a shield that is gone.
+	 *
+	 * ~Entity detaches everything that calls IT owner, but it never removes
+	 * itself from its OWNER's linked list - that only happens in setOwner(),
+	 * which the destructor does not call. So a shield deleted while the body
+	 * lives on leaves its EERIE_LINKED record behind, holding a raw pointer to
+	 * a mesh that has just been freed, and the draw loop walks that list every
+	 * frame. Put down one shield and pick up another and the body carries a
+	 * dead record and a live one.
+	 */
+	if(g_avatarShieldEntity) {
+		unlinkEntity(*g_avatarShieldEntity);
+		delete g_avatarShieldEntity;
+		g_avatarShieldEntity = nullptr;
+	}
 
 	if(g_avatarShield.empty()) {
 		return;
@@ -628,8 +642,11 @@ void destroyAvatarEntity() {
 	if(Entity * body = avatarEntity()) {
 		// Both come off before the body does: deleting the body deletes the mesh
 		// they are linked to, and unlinking afterwards would read it back.
-		delete g_avatarShieldEntity;
-		g_avatarShieldEntity = nullptr;
+		if(g_avatarShieldEntity) {
+			unlinkEntity(*g_avatarShieldEntity);
+			delete g_avatarShieldEntity;
+			g_avatarShieldEntity = nullptr;
+		}
 		delete body->_npcdata->weapon;
 		body->_npcdata->weapon = nullptr;
 		delete body;
@@ -684,6 +701,8 @@ void captureLocalAvatar(Avatar & out) {
 		}
 		out.anim1 = findAnimIndex(self, self->animlayer[1].cur_anim);
 		out.anim3 = findAnimIndex(self, self->animlayer[3].cur_anim);
+		out.anim3Flags = u16(self->animlayer[3].flags);
+		out.anim3Time = s32(toMsi(self->animlayer[3].ctime));
 		out.anim0Flags = u16(self->animlayer[0].flags);
 		out.anim1Flags = u16(self->animlayer[1].flags);
 		out.anim0Time = s32(toMsi(self->animlayer[0].ctime));
@@ -843,7 +862,7 @@ void updateAvatar() {
 
 	applyAnimLayer(body, 0, g_avatar.anim0, g_avatar.anim0Flags, g_avatar.anim0Time);
 	applyAnimLayer(body, 1, g_avatar.anim1, g_avatar.anim1Flags, g_avatar.anim1Time);
-	applyAnimLayer(body, 3, g_avatar.anim3, 0, 0);
+	applyAnimLayer(body, 3, g_avatar.anim3, g_avatar.anim3Flags, g_avatar.anim3Time);
 
 	/*
 	 * Authoritative separation. Creatures normally stop at the body's edge, but

@@ -66,8 +66,6 @@ Being straight with you, because you will find these anyway:
 
 - **Never properly tested over the internet.** Almost all testing has been two
   windows on one computer. Real latency will find bugs that local testing cannot.
-- **The other player's breathing animation looks half-finished** while they are
-  carrying a shield.
 - **Animals only appear once the host has been near them**, and only move while
   the host is nearby.
 - **The hob-goblin quest item vanishes** without advancing the quest.

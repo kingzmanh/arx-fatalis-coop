@@ -98,6 +98,11 @@ check     "their shield hangs off their arm"          net/CoopPlayer.cpp   "shie
 # ANIM_WAIT_SHORT is not a short wait: player.asl binds it to player_wait_1st,
 # the first person idle. Which camera we use must not change what they see.
 check     "they idle in third person, whatever we use" net/CoopPlayer.cpp  "u8(ANIM_WAIT)"
+# The shield hold is a LOOPING clip on layer 3, and only exists while a shield
+# is equipped. Sent with no flags it stopped looping; sent with a playhead of 0
+# it was dragged back to the start every second. Every layer carries both.
+checkgone "the shield hold is not sent timeless"     net/CoopPlayer.cpp   "anim3, 0, 0)"
+check     "every animation layer carries its clock"  net/CoopPlayer.cpp   "g_avatar.anim3Flags, g_avatar.anim3Time"
 
 [ $QUIET -eq 0 ] && echo "--- cutscenes"
 # A lock is only safe where the thing that lifts it can run. SENDEVENT queues an

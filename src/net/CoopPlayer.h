@@ -64,10 +64,20 @@ struct Avatar {
 	u8 anim0 = 0xff;
 	u8 anim1 = 0xff;
 	u8 anim3 = 0xff;
+	/*
+	 * Every layer needs its flags and its playhead, layer 3 included.
+	 *
+	 * Layer 3 is where the shield hold lives - ANIM_SHIELD_CYCLE, started with
+	 * EA_LOOP and running for as long as a shield is equipped. Sent without
+	 * flags it does not loop, and sent with a playhead of zero it is dragged
+	 * back to the start every time it drifts a second away from that zero.
+	 */
 	u16 anim0Flags = 0;
 	u16 anim1Flags = 0;
+	u16 anim3Flags = 0;
 	s32 anim0Time = 0;
 	s32 anim1Time = 0;
+	s32 anim3Time = 0;
 
 	bool dead = false;
 	bool combat = false;

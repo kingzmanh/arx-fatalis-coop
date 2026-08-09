@@ -3,6 +3,34 @@
 Every release keeps its own build. Older versions are never replaced, so if a
 new one breaks something for you, the previous download is still there.
 
+## 0.8
+
+**Fixed**
+
+- The other player's stance reset about once a second while they carried a
+  shield. Equipping a shield starts a looping hold animation on its own layer,
+  and that layer was sent without its loop flag or its playhead - so it stopped
+  looping, and was dragged back to the start every time it drifted a second from
+  the zero it was being told. Every layer now carries both.
+- A shield that was put down or swapped left the body drawing one that no longer
+  existed.
+
+**Changed**
+
+- Network protocol 21 -> 22. Both players need this build; older ones are
+  refused at the handshake rather than left to desync.
+
+**Known issues**
+
+- Animals only appear once the host has been near them, and only move while the
+  host is nearby
+- The hob-goblin quest item vanishes without advancing the quest
+- Loot can duplicate - both players may find their own copy
+- Some quest flags only land on one machine
+- Enemies sometimes pick the wrong target
+- Never properly tested over the internet; almost all testing has been two
+  windows on one computer
+
 ## 0.7
 
 **Fixed**

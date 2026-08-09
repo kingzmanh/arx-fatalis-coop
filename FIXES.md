@@ -577,3 +577,60 @@ two were the whole of it.
 is refused - on a guest, and for the partner's sequence. SHOW is always allowed
 through, whoever asks, because handing the interface back can never be the thing
 that strands someone.
+
+## 24. The other player's stance reset over and over, but only with a shield
+
+**The problem.** Carrying a shield, the other player put a hand out, snapped
+back to the start, and did it again about once a second. Without a shield they
+were fine. Reported by the user, who also supplied the fact that broke it open:
+*a player holding a shield does not stand the same way*.
+
+**Why did it happen?** Because that is true, and I had not found it. Equipping a
+shield starts a hold animation on a layer of its own:
+
+```
+ManageNONCombatModeAnimations():
+    if(shield equipped)  changeAnimation(io, 3, ANIM_SHIELD_START)
+                         changeAnimation(io, 3, ANIM_SHIELD_CYCLE, EA_LOOP)
+```
+
+Layer 3 exists only while a shield is equipped, which is exactly why nothing
+else showed a difference. And layer 3 was the one layer sent bare:
+
+```
+applyAnimLayer(body, 0, anim0, anim0Flags, anim0Time);
+applyAnimLayer(body, 1, anim1, anim1Flags, anim1Time);
+applyAnimLayer(body, 3, anim3, 0, 0);          // <- no flags, no playhead
+```
+
+Two failures from one line. Flags of zero meant EA_LOOP never arrived, so a clip
+written to loop stopped looping. And a playhead of zero, sent every packet, met
+the rule that resynchronises a layer drifting more than a second from what the
+other machine reports - so once the clip passed one second it was dragged back
+to the start, forever.
+
+Time was lost proving layer 0 innocent in great detail - right clip, adopted
+once, full length, clean loop, playhead within 30ms - because that is where the
+breathing lives and the report was about breathing. Layer 0 was never at fault.
+The measurements were sound and pointed at the wrong layer, and a Blender
+reconstruction of layer 0 alone could not reproduce the fault for the same
+reason. What ended it was the user saying the stance itself differs with a
+shield, which no amount of staring at layer 0 would ever have suggested.
+
+**The fix.** Layer 3 carries its flags and its playhead, exactly as 0 and 1 do.
+Protocol 21 -> 22, since the packet grew. Registered twice in coop-check.sh: the
+bare call must never return, and the full one must be present. Confirmed by the
+user.
+
+## 25. A shield put down was still drawn
+
+**The problem.** Found by reading, not by playing, while hunting the above.
+
+**Why did it happen?** ~Entity detaches everything that calls IT owner, but never
+removes itself from its OWNER's linked list - that only happens in setOwner(),
+which the destructor does not call. So deleting the shield while the body lived
+on left its EERIE_LINKED record in place, holding a raw pointer to a mesh that
+had just been freed, and the draw loop walks that list every frame. Swapping one
+shield for another left the body carrying a dead record and a live one.
+
+**The fix.** Unlink before deleting, at both sites that delete a shield.
