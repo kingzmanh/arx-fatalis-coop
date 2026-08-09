@@ -1975,6 +1975,30 @@ public:
 		}
 
 		{
+			/*
+			 * Whose screen a story moment belongs to. Click to move on.
+			 *
+			 * Only bites while you are standing in the same part of the world:
+			 * apart, each of you runs your own ground and plays your own
+			 * scenes, and walking into one has always been enough to see it.
+			 * Together, only one machine is simulating, so somebody has to say
+			 * whose scene it is - and by default it is whoever walked into it.
+			 */
+			auto slider = std::make_unique<CycleTextWidget>(sliderSize(), hFontMenu,
+			                                               "Cutscenes", hFontControls);
+			slider->valueChanged = [](int pos, std::string_view /* string */) {
+				config.misc.cutscenes = (pos == 1) ? CutscenesForHost : CutscenesForTrigger;
+				config.save();
+			};
+			slider->addEntry("whoever triggers one");
+			slider->addEntry("player one only");
+			if(config.misc.cutscenes == CutscenesForHost) {
+				slider->selectLast();
+			}
+			addCenter(std::move(slider));
+		}
+
+		{
 			auto txt = std::make_unique<TextWidget>(hFontMenu, "HOST GAME");
 			txt->clicked = [this](Widget * /* widget */) {
 				if(m_port) {

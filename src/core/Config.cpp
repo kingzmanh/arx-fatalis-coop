@@ -92,6 +92,8 @@ constexpr const int
 	bufferSize = 0,
 	quickLevelTransition = JumpToChangeLevel;
 
+const CutsceneAudience cutscenes = CutscenesForTrigger;
+
 constexpr const bool
 	fullscreen = true,
 	viewBobbing = true,
@@ -331,7 +333,8 @@ constexpr const std::string_view
 	migration = "migration",
 	quicksaveSlots = "quicksave_slots",
 	debugLevels = "debug",
-	realtimeOverride = "realtime_override";
+	realtimeOverride = "realtime_override",
+	cutscenes = "cutscenes";
 
 } // namespace Key
 
@@ -556,6 +559,7 @@ bool Config::save() {
 	writer.writeKey(Key::quicksaveSlots, misc.quicksaveSlots);
 	writer.writeKey(Key::debugLevels, misc.debug);
 	writer.writeKey(Key::realtimeOverride, misc.realtimeOverride);
+	writer.writeKey(Key::cutscenes, misc.cutscenes);
 	
 	return writer.flush();
 }
@@ -691,6 +695,7 @@ bool Config::init(const fs::path & file) {
 	misc.quicksaveSlots = std::max(reader.getKey(Section::Misc, Key::quicksaveSlots, Default::quicksaveSlots), 1);
 	misc.debug = reader.getKey(Section::Misc, Key::debugLevels, Default::debugLevels);
 	misc.realtimeOverride = reader.getKey(Section::Misc, Key::realtimeOverride, Default::realtimeOverride);
+	misc.cutscenes = CutsceneAudience(reader.getKey(Section::Misc, Key::cutscenes, Default::cutscenes));
 	
 	return loaded;
 }

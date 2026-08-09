@@ -101,6 +101,21 @@ enum QuickLevelTransition {
 	ChangeLevelImmediately = 2,
 };
 
+/*!
+ * Who watches a story moment when two people share one world.
+ *
+ * Only meaningful while both players are in the same area: apart, each machine
+ * runs its own half of the world and plays its own scenes, which is already
+ * exactly right. Together, only the host simulates, so a scene set off by
+ * either of them fires there and somebody has to decide whose screen it is.
+ */
+enum CutsceneAudience {
+	CutscenesForTrigger = 0, //!< whoever walked into it, and only them
+	CutscenesForBoth = 1,
+	CutscenesForHost = 2,
+	CutscenesForGuest = 3,
+};
+
 enum AutoReadyWeapon {
 	NeverAutoReadyWeapon = 0,
 	AutoReadyWeaponNearEnemies = 1,
@@ -242,7 +257,9 @@ public:
 		std::string debug; //!< Logger debug levels.
 		
 		std::string realtimeOverride;
-		
+
+		CutsceneAudience cutscenes;
+
 	} misc;
 	
 	bool setActionKey(ControlAction actionId, size_t index, InputKeyId key);
