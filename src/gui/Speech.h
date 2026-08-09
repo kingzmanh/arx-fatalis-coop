@@ -131,6 +131,9 @@ struct Speech {
 };
 
 void ARX_SPEECH_Reset();
+
+//! Cut every breakable line short, exactly as pressing skip does.
+void ARX_SPEECH_Skip();
 void ARX_SPEECH_Update();
 
 Speech * getSpeechForEntity(const Entity & entity);

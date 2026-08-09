@@ -1582,11 +1582,24 @@ struct QueuedEvent {
 	Entity * entity;
 	ScriptEventName event;
 	ScriptParameters parameters;
-	
+
+	/*!
+	 * Whether this was queued while acting for the other player.
+	 *
+	 * SENDEVENT does not call, it queues, and the queue is drained later from
+	 * the top of the frame where nothing remembers who set any of it off. A
+	 * story moment is almost entirely made of these hops - the goblin sends
+	 * the camera an event, the camera takes the view - so without carrying it
+	 * the scene forgets whose it was somewhere in the middle and lands on the
+	 * wrong screen. Timers already carry it for exactly the same reason.
+	 */
+	bool partnerContext;
+
 	void clear() {
 		exists = false;
 		sender = nullptr;
 		entity = nullptr;
+		partnerContext = false;
 		event = ScriptEventName();
 		parameters.clear();
 	}
@@ -1633,6 +1646,9 @@ void ARX_SCRIPT_EventStackExecute(size_t limit) {
 		if(ValidIOAddress(event.entity)) {
 			Entity * sender = ValidIOAddress(event.sender) ? event.sender : nullptr;
 			LogDebug("running queued " << event.event << " for " << event.entity->idString());
+			// Still their errand, however many hops later this runs.
+			coop::ScopedPlayerContext context(event.partnerContext ? coop::avatarEntity()
+			                                                       : nullptr);
 			SendIOScriptEvent(sender, event.entity, event.event, event.parameters);
 		} else {
 			LogDebug("could not run queued " << event.event
@@ -1661,6 +1677,7 @@ void Stack_SendIOScriptEvent(Entity * sender, Entity * entity, const ScriptEvent
 			entry.entity = entity;
 			entry.event = event;
 			entry.parameters = parameters;
+			entry.partnerContext = coop::isPartnerScriptContext();
 			entry.exists = true;
 			return;
 		}

@@ -387,7 +387,8 @@ public:
 		 * player is never parked under cutscene bars waiting for a line that
 		 * cannot play. Ordinary barks have no follow-up and are untouched.
 		 */
-		bool sequence = (BLOCK_PLAYER_CONTROLS || cinematicBorder.isActive());
+		bool sequence = BLOCK_PLAYER_CONTROLS || cinematicBorder.isActive()
+		                || coop::isPartnerCutscene();
 		/*
 		 * The guest NEVER performs sequence cutscenes - not because of any
 		 * ledger state, but categorically: its sequence machinery is muted
@@ -404,6 +405,16 @@ public:
 			return Success;
 		}
 		
+		/*
+		 * Whether a line is written on screen depends on whether the bars are
+		 * down - and the bars belong to whoever the scene belongs to. Asked on
+		 * this machine about a scene we declined, the answer is always "no
+		 * subtitles", and that answer was then sent to the one person actually
+		 * watching it. So remember what the SCRIPT asked for and let their
+		 * screen decide the rest.
+		 */
+		bool quiet = (flags & ARX_SPEECH_FLAG_NOTEXT);
+
 		if(!cinematicBorder.isActive()) {
 			flags |= ARX_SPEECH_FLAG_NOTEXT;
 		}
@@ -424,11 +435,26 @@ public:
 			}
 		}
 		
-		if(sequence || acs.type != ARX_CINE_SPEECH_NONE) {
-			// Both players watch story moments together: the other machine
-			// gets a viewer copy - same speaker, same line, same camera.
+		/*
+		 * Two different reasons to send a line across.
+		 *
+		 * A story moment goes to whoever the scene belongs to, which the
+		 * cutscene setting decides. But an ordinary line spoken BECAUSE of the
+		 * other player - the goblin answering the person who just handed him a
+		 * form, or who just spoke to him - is theirs no matter what: it is
+		 * being said to them, and they are the one machine that would otherwise
+		 * never hear it, since the script it came from runs only here.
+		 */
+		bool storyMoment = sequence || acs.type != ARX_CINE_SPEECH_NONE;
+		bool spokenToThem = coop::isPartnerScriptContext();
+
+		if((storyMoment && coop::relaysCutscene()) || spokenToThem) {
+			// The other machine gets a viewer copy - same speaker, same line,
+			// same camera - whenever the scene is theirs to watch, and the
+			// words with it unless the script itself asked for silence.
+			SpeechFlags theirs = quiet ? flags : (flags & ~ARX_SPEECH_FLAG_NOTEXT);
 			coop::reportCutscenePlay(std::string(context.getEntity()->idString()),
-			                         data, long(mood), u32(flags), acs);
+			                         data, long(mood), u32(theirs), acs);
 		}
 		
 		return Success;

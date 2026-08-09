@@ -317,6 +317,19 @@ bool shouldReplicate(const Entity & entity) {
 		return false; // that is the other player's own body coming back at them
 	}
 
+	/*
+	 * A camera the other player is watching a scene through is the exception.
+	 *
+	 * Cameras are otherwise worth nothing on the wire - nobody looks through
+	 * ours - but one handed over IS the scene: it flies a path, and if its
+	 * position never leaves this machine the watcher sits in a locked view of
+	 * wherever the level happened to park it. Sent before the treat-zone and
+	 * visibility tests, both of which a camera fails by nature.
+	 */
+	if(&entity == partnerCameraEntity()) {
+		return true;
+	}
+
 	if(entity.ioflags & (IO_CAMERA | IO_MARKER)) {
 		return false; // no visible state to speak of
 	}
@@ -1177,6 +1190,21 @@ void applyCombineRequest(std::string_view sourceId, std::string_view sourceClass
 	if(taken) {
 		reportCombineTaken(sourceId);
 	}
+
+}
+
+void applyChatRequest(std::string_view npcId) {
+
+	Entity * npc = entities.getById(npcId);
+	if(!npc || !npc->script.valid) {
+		return;
+	}
+
+	// In their name, so a line meant for the person who spoke to it reaches
+	// them, and so anything it decides to do lands on the right player.
+	Entity * cause = avatarEntity();
+	ScopedPlayerContext context(cause);
+	SendIOScriptEvent(cause ? cause : entities.player(), npc, SM_CHAT);
 
 }
 

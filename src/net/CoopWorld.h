@@ -130,6 +130,9 @@ void applyCombineRequest(std::string_view sourceId, std::string_view sourceClass
 //! The thing we offered was taken: drop our copy.
 void applyCombineTaken(std::string_view sourceId);
 
+//! Handle a guest talking to a creature: it answers in their name.
+void applyChatRequest(std::string_view npcId);
+
 //! A script on the other machine gave our player an item; make it and take it.
 void applyGiveItem(std::string_view classPath, s16 count);
 

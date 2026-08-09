@@ -55,6 +55,7 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 #include "io/resource/PakReader.h"
 #include "io/resource/ResourcePath.h"
 #include "scene/GameSound.h"
+#include "net/CoopNet.h"
 #include "scene/Interactive.h"
 #include "scene/LinkedObject.h"
 #include "script/ScriptUtils.h"
@@ -401,6 +402,27 @@ public:
 
 } // anonymous namespace
 
+/*!
+ * "replayscenes" - let every story moment happen again.
+ *
+ * A scene plays once per playthrough and is written down, which is right for
+ * playing and useless for testing: the first attempt eats the thing the second
+ * needs. Load a save from before the scene, type this on BOTH machines, and it
+ * can be walked into again.
+ */
+class ReplayScenesCommand : public Command {
+
+public:
+
+	ReplayScenesCommand() : Command("replayscenes") { }
+
+	Result execute(Context & /* context */) override {
+		coop::forgetCutscenes();
+		return Success;
+	}
+
+};
+
 class NoCineCommand : public Command {
 
 public:
@@ -566,6 +588,7 @@ void setupScriptedControl() {
 	
 	ScriptEvent::registerCommand(std::make_unique<ActivatePhysicsCommand>());
 	ScriptEvent::registerCommand(std::make_unique<NoCineCommand>());
+	ScriptEvent::registerCommand(std::make_unique<ReplayScenesCommand>());
 	ScriptEvent::registerCommand(std::make_unique<HereCommand>());
 	ScriptEvent::registerCommand(std::make_unique<WarpCommand>());
 	ScriptEvent::registerCommand(std::make_unique<AttractorCommand>());

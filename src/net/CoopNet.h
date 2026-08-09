@@ -299,6 +299,101 @@ void broadcastBlood2(const Vec3f & pos, float dmgs, u32 color, std::string_view 
 // means the caller must *not* also perform the action locally: doing both is
 // how an item ends up picked up twice.
 
+/*!
+ * Whether a story moment starting right now belongs on THIS screen.
+ *
+ * Asked by the handful of commands that make a cutscene a cutscene rather than
+ * a conversation: the controls going dead, the bars coming down, the hands
+ * going away. Answered on whichever machine is running the script, which in a
+ * shared area is always the host.
+ *
+ * Apart, the question does not arise - each of them owns the ground they stand
+ * on and plays their own scenes - so this says yes and stays out of the way.
+ */
+[[nodiscard]] bool presentsCutscene();
+
+/*!
+ * Whether the other player should be sent this scene to watch.
+ *
+ * Their copy is a performance, not a script: it holds them for exactly as long
+ * as the show and lets them go by itself. That is what makes it safe to give a
+ * guest a cutscene at all - the machinery that would end a real one over there
+ * is muted, and a lock with no key is how a player ends up staring at black
+ * bars until the watchdog cuts them loose.
+ */
+[[nodiscard]] bool relaysCutscene();
+
+/*!
+ * Remember that a scene is running here for the other player, not for us.
+ *
+ * What tells the engine it is inside a story moment rather than a passing
+ * remark is that the controls are dead and the bars are down. Declining both
+ * on their behalf takes that signal away with them - and the signal is also
+ * what decides that a line is worth sending them at all, so without this the
+ * scene would be suppressed here and never sent anywhere.
+ */
+void noteCutsceneForPartner(bool active);
+
+//! Whether a scene is running here for the other player right now.
+[[nodiscard]] bool isPartnerCutscene();
+
+/*!
+ * Point the other player's eyes at the camera this scene is shot through.
+ *
+ * The lines and the bars were already being sent; without this the scene they
+ * are watching is framed from wherever they happen to be standing, which for a
+ * conversation staged around a doorway is usually a wall. An empty name gives
+ * them their own eyes back.
+ */
+void reportCutsceneCamera(const Entity * camera);
+
+/*!
+ * The camera a scene of theirs is being shot through, if any.
+ *
+ * Cameras are normally left out of the snapshot - nobody looks through the
+ * other machine's camera, so it has no visible state worth sending. One handed
+ * to the other player is the exception, and the exception matters: a camera
+ * that does not move is the whole scene not moving.
+ */
+[[nodiscard]] const Entity * partnerCameraEntity();
+
+/*!
+ * Whether a scene of ours is being performed on the other machine right now.
+ *
+ * While it is, the screen is not ours to redress: our own copy of the same
+ * script - zones run on both machines - would otherwise raise the bars the
+ * moment they came down.
+ */
+[[nodiscard]] bool isSceneHeld();
+
+/*!
+ * Ask the machine performing our scene to move it along.
+ *
+ * Skip belongs to whoever is watching, and the scene is not theirs to end:
+ * the bars go up when the script reaches the end of its line, and that
+ * script is running one machine away.
+ */
+void reportSceneSkip();
+
+/*!
+ * Tell the other player their scene has begun, or that it is over.
+ *
+ * Standing still under the bars is the rest of what a cutscene is, and it is
+ * the one part they cannot run for themselves: the events that would end it
+ * are queued over here. So both ends are sent, and their machine gives them a
+ * deadline in case the second one is lost.
+ */
+void reportSceneHold(bool active);
+
+/*!
+ * Forget every story moment this playthrough has lived through.
+ *
+ * A scene plays once and is written down, which is right for playing and
+ * hopeless for testing it: the first attempt consumes the very thing the next
+ * attempt needs. Reload a save from before it and this lets it happen again.
+ */
+void forgetCutscenes();
+
 //! Ask the authority to run an entity's action script on this player's behalf.
 bool requestAction(const Entity & target);
 
@@ -320,6 +415,17 @@ bool requestTake(const Entity & item);
  * name to DESTROY - and answers whether it was kept.
  */
 bool requestCombine(const Entity & source, const Entity & target);
+
+/*!
+ * Ask the authority to let this creature talk to us.
+ *
+ * What an NPC says depends on where its script has got to, and that lives
+ * in variables on the entity - who it has met, what it has been given, how
+ * far through its dialogue it is. Those belong to the machine that runs it.
+ * A guest asking its own copy gets the answers of a goblin who has never
+ * met anybody, which is silence.
+ */
+bool requestChat(const Entity & npc);
 
 //! Answer a give: whoever it was offered to kept it, so it leaves their pack.
 void reportCombineTaken(std::string_view sourceId);

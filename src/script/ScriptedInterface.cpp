@@ -277,7 +277,7 @@ public:
 		 * Only hiding is refused. SHOW is always allowed through, whoever asks:
 		 * giving the interface back can never be the thing that strands anyone.
 		 */
-		if(command == "hide" && coop::isReplica()) {
+		if(command == "hide" && (coop::isReplica() || !coop::presentsCutscene())) {
 			return Success;
 		}
 

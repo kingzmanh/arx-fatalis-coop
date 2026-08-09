@@ -322,14 +322,29 @@ public:
 		DebugScript(' ' << enable);
 		
 		/*
-		 * Whoever tripped it, a story moment is the host's to perform.
+		 * Somebody has to perform the scene, and it is not always us.
 		 *
-		 * This used to bow out when the other player set it off, which left
-		 * nobody performing the scene at all: the guest's own sequence
-		 * machinery is muted, so the lock was refused on both machines and the
-		 * cutscene played on neither. The host plays it exactly as it would
-		 * alone, and the guest is sent a viewer copy to watch.
+		 * In a shared area only the host simulates, so a trigger either of
+		 * them walks into fires here - and by default it belongs to the one
+		 * who walked into it. When that is the other player this screen stays
+		 * free and they are sent the scene to watch instead. Refusing on BOTH
+		 * machines was the old fault: it played on neither.
 		 */
+		// Being held for a scene the other machine is performing: our own copy
+		// of that script does not get to hand us back early.
+		if(coop::isSceneHeld()) {
+			return Success;
+		}
+
+		if(!coop::presentsCutscene()) {
+			coop::noteCutsceneForPartner(!enable);
+			// Not ours to obey, but theirs to be held by: this is the bracket
+			// around the whole scene, and it is the only thing that can tell
+			// them when to stand still and when they have themselves back.
+			coop::reportSceneHold(!enable);
+			return Success;
+		}
+
 
 		if(enable) {
 			if(BLOCK_PLAYER_CONTROLS) {

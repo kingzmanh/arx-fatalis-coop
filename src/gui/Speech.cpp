@@ -74,6 +74,7 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 #include "io/resource/ResourcePath.h"
 #include "io/log/Logger.h"
 
+#include "net/CoopNet.h"
 #include "net/CoopPlayer.h"
 
 #include "scene/GameSound.h"
@@ -101,17 +102,35 @@ Speech * getSpeechForEntity(const Entity & entity) {
 	return it == g_speech.end() ? nullptr : &*it;
 }
 
-static void ARX_CONVERSATION_CheckAcceleratedSpeech() {
-	
-	if(REQUEST_SPEECH_SKIP) {
-		for(Speech & speech : g_speech) {
-			if(!(speech.flags & ARX_SPEECH_FLAG_UNBREAKABLE)) {
-				speech.duration = 0;
-			}
+void ARX_SPEECH_Skip() {
+
+	for(Speech & speech : g_speech) {
+		if(!(speech.flags & ARX_SPEECH_FLAG_UNBREAKABLE)) {
+			speech.duration = 0;
 		}
+	}
+
+}
+
+static void ARX_CONVERSATION_CheckAcceleratedSpeech() {
+
+	if(REQUEST_SPEECH_SKIP) {
+
+		/*
+		 * Skipping a scene being performed on the OTHER machine has to travel.
+		 * Cutting our own copy of the line short only takes the words away:
+		 * the bars, the camera and the hold belong to the machine running the
+		 * script, and it is that script reaching the end of the line that
+		 * lifts them.
+		 */
+		if(coop::isSceneHeld()) {
+			coop::reportSceneSkip();
+		}
+
+		ARX_SPEECH_Skip();
 		REQUEST_SPEECH_SKIP = false;
 	}
-	
+
 }
 
 static void releaseSpeech(Speech & speech) {

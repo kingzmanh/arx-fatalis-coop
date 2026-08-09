@@ -77,18 +77,50 @@ public:
 		
 		DebugScript(' ' << target);
 		
+		/*
+		 * The view itself, which is most of what a cutscene IS.
+		 *
+		 * Bars, dead controls and hidden hands were already handed to whoever
+		 * the scene belongs to; this was not, so a scene declined here still
+		 * took this screen's eyes and pointed them at the show. Everything
+		 * else about it said "not yours" and the camera said otherwise, which
+		 * on screen is the only vote that counts.
+		 */
+		bool ours = coop::presentsCutscene();
+
 		if(target == "none") {
-			g_cameraEntity = nullptr;
+			if(coop::relaysCutscene() || coop::partnerCameraEntity()) {
+				coop::reportCutsceneCamera(nullptr);
+			}
+			if(ours) {
+				g_cameraEntity = nullptr;
+			}
 			return Success;
 		}
-		
+
 		Entity * t = entities.getById(target, context.getEntity());
 		if(!t || !(t->ioflags & IO_CAMERA)) {
 			return Failed;
 		}
-		
-		g_cameraEntity = t;
-		
+
+		/*
+		 * Resolved first, and only then sent.
+		 *
+		 * Cameras name themselves: the script that takes the view is the
+		 * camera's own, and it says CAMERAACTIVATE SELF. "self" means whoever
+		 * is running - which on the machine receiving it is nobody at all, so
+		 * the word has to be turned into a name that means the same thing on
+		 * both sides before it leaves.
+		 */
+
+		if(coop::relaysCutscene()) {
+			coop::reportCutsceneCamera(t);
+		}
+
+		if(ours) {
+			g_cameraEntity = t;
+		}
+
 		return Success;
 	}
 	
@@ -107,7 +139,11 @@ public:
 		DebugScript(' ' << smoothing);
 		
 		context.getEntity()->_camdata->smoothing = smoothing;
-		
+
+		if(context.getEntity() == coop::partnerCameraEntity()) {
+			coop::reportCutsceneCamera(context.getEntity());
+		}
+
 		return Success;
 	}
 	
@@ -137,6 +173,20 @@ public:
 		// are raised again at the end of a chain that never reaches a replica,
 		// so a guest that lowered them would be left looking through them. The
 		// viewer copy the host sends brings its own bars, and takes them away.
+		// Bars come down for the audience only. Raising them is never refused:
+		// giving the screen back can not be the thing that strands anyone.
+		if(!coop::presentsCutscene()) {
+			coop::noteCutsceneForPartner(enable);
+			return Success;
+		}
+
+		// While a scene of ours plays over there, the screen is not ours to
+		// redress: our own copy of the same script would raise the bars the
+		// moment the other machine brought them down.
+		if(coop::isSceneHeld()) {
+			return Success;
+		}
+
 		if(enable && coop::isReplica()) {
 			return Success;
 		}
@@ -182,7 +232,11 @@ public:
 		DebugScript(' ' << x << ' ' << y << ' ' << z);
 		
 		context.getEntity()->_camdata->translatetarget = Vec3f(x, y, z);
-		
+
+		if(context.getEntity() == coop::partnerCameraEntity()) {
+			coop::reportCutsceneCamera(context.getEntity());
+		}
+
 		return Success;
 	}
 	

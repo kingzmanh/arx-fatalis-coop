@@ -780,7 +780,59 @@ void onHandshakeComplete() {
 }
 
 static bool g_cutsceneViewer = false;
+
+//! Set while our view is borrowed by a scene being performed on the other machine.
+static bool g_viewerCamera = false;
 static PlatformInstant g_transitTraceUntil = 0;
+
+/*
+ * Set while the other machine performs a scene that belongs to US.
+ *
+ * The lines and the camera were already being sent; this is the rest of what a
+ * cutscene is - standing still, under the bars, until it is over. It cannot be
+ * driven by the script, because the events that would end it are queued on a
+ * machine that is not this one, so the two ends of the scene are sent
+ * explicitly and the hold is given a deadline in case the second never comes.
+ */
+static bool g_sceneHold = false;
+static PlatformInstant g_sceneHoldSince = PlatformInstant(0);
+
+static void releaseSceneHold() {
+
+	if(!g_sceneHold) {
+		return;
+	}
+
+	g_sceneHold = false;
+	g_sceneHoldSince = PlatformInstant(0);
+	if(player.lifePool.current > 0.f && !g_session.travelHold) {
+		BLOCK_PLAYER_CONTROLS = false;
+	}
+	// set(false), not reset(): reset only clears the flag and leaves the bars
+	// standing at full height with nothing left to pull them back down.
+	cinematicBorder.set(false, true);
+	if(g_viewerCamera) {
+		g_cameraEntity = nullptr;
+		g_viewerCamera = false;
+	}
+
+
+}
+
+static void applySceneHold(bool active) {
+
+	if(!active) {
+		releaseSceneHold();
+		return;
+	}
+
+	g_sceneHold = true;
+	g_sceneHoldSince = platform::getTime();
+	BLOCK_PLAYER_CONTROLS = true;
+	cinematicBorder.set(true, true);
+
+
+}
 
 static void applyCutscenePlay(Reader & reader) {
 
@@ -819,6 +871,25 @@ static void applyCutscenePlay(Reader & reader) {
 		cine.ionum = EntityHandle_Player;
 	}
 
+
+	/*
+	 * Drop whatever this speaker was already saying HERE, without running the
+	 * rest of its script.
+	 *
+	 * Zone crossings run on both machines, so this machine has very likely
+	 * just performed its own copy of the same scene - refusing the bars and
+	 * the lock, as a replica must, but still leaving a speech behind with the
+	 * script's "and when this line ends, jump to the end of the scene" attached
+	 * to it. Adding a speech clears the speaker's old one, and clearing a
+	 * speech RUNS that follow-up: the end of the scene, which is bars off,
+	 * controls back, camera released. So the host would set the scene up and
+	 * our own leftover would tear it down in the same frame.
+	 *
+	 * Releasing instead of ending drops the line and its follow-up together.
+	 * Nothing is lost: the scene is being performed on the other machine, and
+	 * every consequence of it belongs to the world over there.
+	 */
+	ARX_SPEECH_ReleaseIOSpeech(*speaker);
 	Speech * speech = ARX_SPEECH_AddSpeech(*speaker, data,
 	                                       long(mood), SpeechFlags::load(flags));
 	if(!speech) {
@@ -1075,6 +1146,15 @@ void handleMessage(const u8 * data, size_t size) {
 			break;
 		}
 
+		case MsgTalkTo: {
+			std::string id = reader.getString();
+			if(reader.ok()) {
+				ApplyScope scope;
+				applyChatRequest(id);
+			}
+			break;
+		}
+
 		case MsgCombine: {
 			std::string sourceId = reader.getString();
 			std::string sourceClass = reader.getString();
@@ -1091,6 +1171,59 @@ void handleMessage(const u8 * data, size_t size) {
 			if(reader.ok()) {
 				ApplyScope scope;
 				applyCombineTaken(sourceId);
+			}
+			break;
+		}
+
+		case MsgSceneSkip: {
+			ApplyScope scope;
+			// Their scene, their skip. Ours is the hand that has to obey it.
+			ARX_SPEECH_Skip();
+			break;
+		}
+
+		case MsgSceneHold: {
+			bool active = reader.getBool();
+			if(reader.ok()) {
+				ApplyScope scope;
+				applySceneHold(active);
+			}
+			break;
+		}
+
+		case MsgCutsceneCamera: {
+			std::string cameraId = reader.getString();
+			if(cameraId.empty()) {
+				if(reader.ok()) {
+					ApplyScope scope;
+					g_cameraEntity = nullptr;
+					g_viewerCamera = false;
+				}
+				break;
+			}
+			std::string targetId = reader.getString();
+			float smoothing = reader.getFloat();
+			Vec3f translate = reader.getVec3f();
+			if(reader.ok()) {
+				ApplyScope scope;
+				Entity * camera = entities.getById(cameraId);
+				if(camera && (camera->ioflags & IO_CAMERA) && camera->_camdata) {
+					camera->_camdata->smoothing = smoothing;
+					camera->_camdata->translatetarget = translate;
+					// What it looks at is the half that decides where it POINTS;
+					// without it the engine aims flat along the camera's own
+					// yaw, which is a camera staring at a wall.
+					if(Entity * target = entities.getById(targetId)) {
+						camera->targetinfo = target->index();
+						GetTargetPos(camera);
+					} else {
+						camera->targetinfo = EntityHandle(TARGET_NONE);
+					}
+					camera->_camdata->lastinfovalid = false;
+					g_cameraEntity = camera;
+					g_viewerCamera = true;
+				} else {
+				}
 			}
 			break;
 		}
@@ -2074,6 +2207,77 @@ void reportCutscenePlay(const std::string & speakerId, const std::string & data,
 
 }
 
+//! The camera we handed to the other player, so the snapshot keeps it moving.
+static Entity * g_partnerCamera = nullptr;
+
+bool isSceneHeld() {
+	return g_sceneHold;
+}
+
+const Entity * partnerCameraEntity() {
+	return g_partnerCamera;
+}
+
+void reportCutsceneCamera(const Entity * camera) {
+
+	if(!isPlaying()) {
+		return;
+	}
+
+	g_partnerCamera = const_cast<Entity *>(camera);
+
+	Writer writer(MsgCutsceneCamera);
+	if(!camera) {
+		writer.put(std::string_view());
+		send(writer, ChannelEvent);
+		return;
+	}
+
+	/*
+	 * Not just which camera, but everything it needs to aim.
+	 *
+	 * A camera's view is rebuilt every frame from where it stands, what it is
+	 * told to look at, and how lazily it is allowed to swing. Their machine
+	 * runs that same arithmetic itself - so given the target, it follows the
+	 * goblin as faithfully as ours does, and the position arrives with the
+	 * snapshot like any other moving thing.
+	 */
+	Entity * target = (camera->targetinfo != EntityHandle(TARGET_NONE)
+	                   && camera->targetinfo != EntityHandle(TARGET_PATH))
+	                  ? entities.get(camera->targetinfo) : nullptr;
+
+	writer.put(std::string_view(camera->idString()));
+	writer.put(target ? std::string_view(target->idString()) : std::string_view());
+	writer.put(camera->_camdata ? camera->_camdata->smoothing : 0.f);
+	writer.put(camera->_camdata ? camera->_camdata->translatetarget : Vec3f(0.f));
+	send(writer, ChannelEvent);
+
+
+}
+
+void reportSceneSkip() {
+
+	if(!isPlaying()) {
+		return;
+	}
+
+	Writer writer(MsgSceneSkip);
+	send(writer, ChannelEvent);
+
+}
+
+void reportSceneHold(bool active) {
+
+	if(!isPlaying()) {
+		return;
+	}
+
+	Writer writer(MsgSceneHold);
+	writer.put(u8(active ? 1 : 0));
+	send(writer, ChannelEvent);
+
+}
+
 void updateCutsceneViewer() {
 
 	if(g_cutsceneViewer && !ARX_SPEECH_IsAnyCinematicActive()) {
@@ -2081,7 +2285,19 @@ void updateCutsceneViewer() {
 		if(player.lifePool.current > 0.f && !g_session.travelHold) {
 			BLOCK_PLAYER_CONTROLS = false;
 		}
-		cinematicBorder.reset();
+		// set(false), not reset(): reset only clears the flag and leaves the bars
+	// standing at full height with nothing left to pull them back down.
+	cinematicBorder.set(false, true);
+		/*
+		 * And give them their own eyes back. The scene normally releases the
+		 * camera itself, but that is one more message that has to arrive; a
+		 * viewer left looking through a camera in a corner of the room, with
+		 * no way to ask for the view back, is the worst way for this to fail.
+		 */
+		if(g_viewerCamera) {
+			g_cameraEntity = nullptr;
+			g_viewerCamera = false;
+		}
 	}
 
 	/*
@@ -2100,6 +2316,12 @@ void updateCutsceneViewer() {
 	 * seconds is longer than any gap between lines in the game and short
 	 * enough that a player has not yet decided the mod is broken.
 	 */
+	// A scene of ours can outlast any one line - it is a whole sequence - but
+	// not a minute. If its end never arrives, take ourselves back.
+	if(g_sceneHold && platform::getTime() - g_sceneHoldSince > 60000ms) {
+		releaseSceneHold();
+	}
+
 	static PlatformInstant lockedSince = 0;
 
 	bool locked = BLOCK_PLAYER_CONTROLS || cinematicBorder.isActive();
@@ -2108,6 +2330,7 @@ void updateCutsceneViewer() {
 	                          || isInCinematic()
 	                          || g_session.travelHold
 	                          || g_cutsceneViewer
+	                          || g_sceneHold
 	                          || player.lifePool.current <= 0.f;
 
 	if(!isPlaying() || !locked || waitingOnSomething) {
@@ -2125,7 +2348,9 @@ void updateCutsceneViewer() {
 		lockedSince = 0;
 		LogWarning << "[coop] a cutscene locked the player and never finished; releasing";
 		BLOCK_PLAYER_CONTROLS = false;
-		cinematicBorder.reset();
+		// set(false), not reset(): reset only clears the flag and leaves the bars
+	// standing at full height with nothing left to pull them back down.
+	cinematicBorder.set(false, true);
 	}
 
 }
@@ -2519,6 +2744,15 @@ void loadStoryLedger() {
 	}
 }
 
+void forgetCutscenes() {
+
+	size_t had = g_seenCutscenes.size();
+	g_seenCutscenes.clear();
+	persistStoryLedger();
+	LogWarning << "[coop] story ledger cleared (" << had << " sequences); they can be lived again";
+
+}
+
 bool isCutsceneSeen(std::string_view name) {
 	return isPlaying() && g_seenCutscenes.find(name) != g_seenCutscenes.end();
 }
@@ -2791,6 +3025,76 @@ bool requestTake(const Entity & item) {
 	// Taking is announced, not asked: the item is already in our pack. The other
 	// side simply removes it from the shared world so it cannot be taken twice.
 	return false;
+}
+
+//! Set while a story moment is being performed here for the other player.
+bool g_partnerCutscene = false;
+
+void noteCutsceneForPartner(bool active) {
+	g_partnerCutscene = active;
+}
+
+bool isPartnerCutscene() {
+	// Tied to the session rather than trusted on its own: a scene interrupted
+	// by a disconnection or a walk into another level must not leave the flag
+	// standing for the rest of the game.
+	return g_partnerCutscene && isPlaying() && sharingArea();
+}
+
+bool presentsCutscene() {
+
+	/*
+	 * Nobody to share it with, or nobody standing where we are: it is ours by
+	 * default. A guest alone in its own area is the authority there and runs
+	 * its scenes in full, which is why walking into a trigger on the far side
+	 * of the world already plays for the one who walked into it.
+	 */
+	if(!isPlaying() || !sharingArea()) {
+		return true;
+	}
+
+	switch(config.misc.cutscenes) {
+		case CutscenesForBoth:    return true;
+		case CutscenesForHost:    return isHost();
+		case CutscenesForGuest:   return !isHost();
+		case CutscenesForTrigger: break;
+	}
+
+	// Whoever set it off. The script runs here either way; only the audience
+	// changes, so the story moves for both of them regardless.
+	return !isPartnerScriptContext();
+}
+
+bool relaysCutscene() {
+
+	if(!isPlaying() || !sharingArea()) {
+		// A viewer copy names entities by id. Sent to somebody standing in a
+		// different level it names things they do not have, and the speaker
+		// falls back to their own body saying somebody else's line.
+		return false;
+	}
+
+	switch(config.misc.cutscenes) {
+		case CutscenesForBoth:    return true;
+		case CutscenesForHost:    return !isHost();
+		case CutscenesForGuest:   return isHost();
+		case CutscenesForTrigger: break;
+	}
+
+	return isPartnerScriptContext();
+}
+
+bool requestChat(const Entity & npc) {
+
+	if(!isReplica() || !sharingArea() || isApplyingRemote()) {
+		return false;
+	}
+
+	Writer writer(MsgTalkTo);
+	writer.put(std::string_view(npc.idString()));
+	send(writer, ChannelEvent);
+
+	return true;
 }
 
 bool requestCombine(const Entity & source, const Entity & target) {
@@ -3242,7 +3546,9 @@ void onAreaLoaded(AreaId area) {
 		// is touched, so the AI cannot be collateral damage this time.
 		LogInfo << "[coop] arrival was control-locked; releasing";
 		BLOCK_PLAYER_CONTROLS = false;
-		cinematicBorder.reset();
+		// set(false), not reset(): reset only clears the flag and leaves the bars
+	// standing at full height with nothing left to pull them back down.
+	cinematicBorder.set(false, true);
 	}
 
 	if(isGuest() && isPlaying() && entities.player()) {
