@@ -23,6 +23,27 @@ if [ ! -f "$HERE/build/arx.exe" ]; then
 	exit 1
 fi
 
+# A published build is never replaced. Someone is running the last one, and if
+# this release breaks something for them the only way back is the old download
+# still being there. Bump the version instead - that is what versions are for.
+if [ -f "$HERE/release/arx-coop-$VERSION-windows.zip" ] && [ "$2" != "--replace" ]; then
+	echo "arx-coop-$VERSION-windows.zip already exists."
+	echo "Bump the version, or pass --replace if it was never published."
+	exit 1
+fi
+
+if [ ! -f "$HERE/CHANGELOG.md" ]; then
+	echo "CHANGELOG.md is missing - every release says what changed and what is"
+	echo "still broken, so nobody has to guess which build they are on."
+	exit 1
+fi
+
+if ! grep -q "^## $VERSION$" "$HERE/CHANGELOG.md"; then
+	echo "CHANGELOG.md has no '## $VERSION' section."
+	echo "Write what changed, what was fixed and what is still known broken first."
+	exit 1
+fi
+
 echo "packaging arx-coop-$VERSION"
 rm -rf "$OUT"
 mkdir -p "$OUT"
@@ -34,6 +55,10 @@ mkdir -p "$OUT"
 # one - which works, but takes away playing vanilla and needs a file
 # verification to undo. Nothing of theirs is touched this way.
 cp "$HERE/build/arx.exe" "$OUT/arx-coop.exe"
+
+# What changed, what was fixed, and what is still broken - in the folder, so a
+# player who never opens the repository still knows which build they have.
+cp "$HERE/CHANGELOG.md" "$OUT/WHAT CHANGED.txt"
 
 # Ask the binary what it needs, then follow the chain: the libraries have
 # libraries of their own, and missing one of those fails just as hard.
