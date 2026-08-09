@@ -1075,6 +1075,36 @@ void handleMessage(const u8 * data, size_t size) {
 			break;
 		}
 
+		case MsgCombine: {
+			std::string sourceId = reader.getString();
+			std::string sourceClass = reader.getString();
+			std::string targetId = reader.getString();
+			if(reader.ok()) {
+				ApplyScope scope;
+				applyCombineRequest(sourceId, sourceClass, targetId);
+			}
+			break;
+		}
+
+		case MsgCombineTaken: {
+			std::string sourceId = reader.getString();
+			if(reader.ok()) {
+				ApplyScope scope;
+				applyCombineTaken(sourceId);
+			}
+			break;
+		}
+
+		case MsgGiveItem: {
+			std::string classPath = reader.getString();
+			s16 count = reader.getS16();
+			if(reader.ok()) {
+				ApplyScope scope;
+				applyGiveItem(classPath, count);
+			}
+			break;
+		}
+
 		case MsgTake: {
 			std::string id = reader.getString();
 			if(reader.ok()) {
@@ -2761,6 +2791,71 @@ bool requestTake(const Entity & item) {
 	// Taking is announced, not asked: the item is already in our pack. The other
 	// side simply removes it from the shared world so it cannot be taken twice.
 	return false;
+}
+
+bool requestCombine(const Entity & source, const Entity & target) {
+
+	if(!isReplica() || !sharingArea() || isApplyingRemote()) {
+		return false;
+	}
+
+	/*
+	 * The class path travels with the id because the host has very probably
+	 * thrown its own copy of this item away: picking it up destroyed it there,
+	 * which is exactly right for an item that is now in a pack the host does
+	 * not own. Given the class it can make a stand-in to hand over.
+	 */
+	Writer writer(MsgCombine);
+	writer.put(std::string_view(source.idString()));
+	writer.put(std::string_view(source.classPath().string()));
+	writer.put(std::string_view(target.idString()));
+	send(writer, ChannelEvent);
+
+	LogInfo << "[coop] offering " << source.idString() << " to " << target.idString();
+
+	return true;
+}
+
+void reportCombineTaken(std::string_view sourceId) {
+
+	if(!isPlaying()) {
+		return;
+	}
+
+	Writer writer(MsgCombineTaken);
+	writer.put(sourceId);
+	send(writer, ChannelEvent);
+
+}
+
+bool giveToPartner(Entity * item) {
+
+	if(!item || !isPartnerScriptContext() || !isPlaying()) {
+		return false;
+	}
+
+	Writer writer(MsgGiveItem);
+	writer.put(std::string_view(item->classPath().string()));
+	writer.put(s16((item->ioflags & IO_ITEM) && item->_itemdata ? item->_itemdata->count : 1));
+	send(writer, ChannelEvent);
+
+	LogInfo << "[coop] " << item->classPath().string() << " was earned by the other player";
+
+	/*
+	 * They have it now, so this machine must not.
+	 *
+	 * An item the script has just conjured never belonged to the shared world
+	 * and leaves without a word. One lifted out of the world does belong to it,
+	 * and its removal is news: destroy() records it in the savegame and tells
+	 * the other machine, so nobody is left looking at a reward twice.
+	 */
+	if(item->scriptload) {
+		delete item;
+	} else {
+		item->destroy();
+	}
+
+	return true;
 }
 
 void reportItemDropped(const Entity & item, const Vec3f & at, const Vec3f & velocity) {

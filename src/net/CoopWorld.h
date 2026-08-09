@@ -116,6 +116,24 @@ void applyActionRequest(std::string_view entityId);
 void applyTakeRequest(std::string_view entityId);
 
 /*!
+ * Handle a guest giving one of their items to a world entity.
+ *
+ * Runs the receiving entity's COMBINE script here, where the quest lives, in
+ * the giver's name. The item is in their pack and so does not exist here; a
+ * stand-in carrying the same id and class stands in for it just long enough
+ * for the script to look at it, and its fate decides whether the real one
+ * leaves their pack.
+ */
+void applyCombineRequest(std::string_view sourceId, std::string_view sourceClass,
+                         std::string_view targetId);
+
+//! The thing we offered was taken: drop our copy.
+void applyCombineTaken(std::string_view sourceId);
+
+//! A script on the other machine gave our player an item; make it and take it.
+void applyGiveItem(std::string_view classPath, s16 count);
+
+/*!
  * Move our copy of an item the other player has just put down.
  *
  * The entity is found by id, because it is the same entity on both machines.

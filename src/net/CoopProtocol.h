@@ -38,7 +38,7 @@ namespace coop {
  * misread a newer one. Both sides check this during the handshake and refuse
  * the connection rather than desyncing silently later.
  */
-constexpr u32 ProtocolVersion = 23;
+constexpr u32 ProtocolVersion = 24;
 
 //! Default listen port, used when the address the joining player typed has none.
 constexpr unsigned short DefaultPort = 27100;
@@ -135,7 +135,16 @@ enum MessageType : u8 {
 	MsgCutscenePlay = 80, //!< either -> other: watch this story speech with me, camera and all
 	MsgPlayerTouchNpc = 81, //!< guest -> host: my player is pressing against this creature
 	MsgVoice        = 82, //!< either -> other: a moment of speech, to come out of their mouth
-	MsgLightIgnite  = 83 //!< host -> guest: a level light was lit or put out
+	MsgLightIgnite  = 83, //!< host -> guest: a level light was lit or put out
+
+	// -- handing things over ---------------------------------------------------
+	// Giving an item to someone is how most of this game's quests actually
+	// advance, and the quest lives on the authority. So the give travels, the
+	// script runs there, and the two answers that matter - did they keep it,
+	// and did they hand something back - travel home.
+	MsgCombine      = 84, //!< guest -> host: I am giving this item to that entity
+	MsgCombineTaken = 85, //!< host -> guest: they kept it; it leaves your pack
+	MsgGiveItem     = 86 //!< host -> guest: a script over here gave you this
 
 };
 

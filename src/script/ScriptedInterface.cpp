@@ -270,12 +270,14 @@ public:
 		 * interface would be left without a cursor or a hand for the rest of
 		 * the session, with no way to ask for it back.
 		 *
-		 * The other player's sequence must not hide THIS screen's hands either.
+		 * The host is a different case: it drains that queue, so the SHOW does
+		 * arrive. A scene the other player set off is still performed here in
+		 * full, hands and all, and sent over as a viewer copy.
 		 *
 		 * Only hiding is refused. SHOW is always allowed through, whoever asks:
 		 * giving the interface back can never be the thing that strands anyone.
 		 */
-		if(command == "hide" && (coop::isPartnerScriptContext() || coop::isReplica())) {
+		if(command == "hide" && coop::isReplica()) {
 			return Success;
 		}
 

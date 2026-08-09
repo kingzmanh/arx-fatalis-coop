@@ -387,8 +387,7 @@ public:
 		 * player is never parked under cutscene bars waiting for a line that
 		 * cannot play. Ordinary barks have no follow-up and are untouched.
 		 */
-		bool sequence = (BLOCK_PLAYER_CONTROLS || cinematicBorder.isActive())
-		                && !coop::isPartnerScriptContext();
+		bool sequence = (BLOCK_PLAYER_CONTROLS || cinematicBorder.isActive());
 		/*
 		 * The guest NEVER performs sequence cutscenes - not because of any
 		 * ledger state, but categorically: its sequence machinery is muted

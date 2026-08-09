@@ -1062,6 +1062,113 @@ void applyTakeRequest(std::string_view entityId) {
 
 }
 
+void applyCombineRequest(std::string_view sourceId, std::string_view sourceClass,
+                         std::string_view targetId) {
+
+	Entity * target = entities.getById(targetId);
+	if(!target || !target->script.valid) {
+		LogWarning << "[coop] the other player offered something to " << targetId
+		           << ", which we do not have";
+		return;
+	}
+
+	/*
+	 * The item is in their pack, which is why this machine has no copy: taking
+	 * it destroyed ours. A script asks two things of what it is handed - what
+	 * class it is, and a name to DESTROY or send an event to - and a stand-in
+	 * built from the class, wearing their id, answers both.
+	 */
+	Entity * source = entities.getById(sourceId);
+	Entity * standIn = nullptr;
+	if(!source) {
+		EntityInstance instance = EntityId(sourceId).instance();
+		standIn = AddItem(res::path::load(sourceClass), instance > 0 ? instance : -1);
+		if(!standIn) {
+			LogWarning << "[coop] could not stand in for " << sourceClass;
+			return;
+		}
+		standIn->scriptload = 1;
+		standIn->ioflags |= IO_NOSAVE;
+		standIn->show = SHOW_FLAG_HIDDEN;
+		SendInitScriptEvent(standIn);
+		source = standIn;
+	}
+
+	{
+		// In their name, so a reward goes to the one who did the giving and a
+		// trap on it springs on them.
+		Entity * cause = avatarEntity();
+		ScopedPlayerContext context(cause);
+		SendIOScriptEvent(cause ? cause : entities.player(), target, SM_COMBINE,
+		                  ScriptParameters(source->idString()));
+	}
+
+	/*
+	 * Did they keep it? DESTROY is deferred to the end of the frame, so the
+	 * question is whether it is queued, not whether it is gone; a script that
+	 * pockets it instead has the same answer.
+	 */
+	bool taken = ARX_INTERACTIVE_IsDestroyPending(source) || bool(locateInInventories(source));
+
+	LogInfo << "[coop] " << targetId << " was offered " << sourceId << " and "
+	        << (taken ? "kept it" : "gave it back");
+
+	if(standIn) {
+		// A prop, and only ever a prop: the real one is in their pack, and
+		// this one leaves without troubling the savegame or the wire.
+		ARX_INTERACTIVE_DestroyIOdelayedRemove(standIn);
+		removeFromInventories(standIn);
+		delete standIn;
+	}
+
+	if(taken) {
+		reportCombineTaken(sourceId);
+	}
+
+}
+
+void applyCombineTaken(std::string_view sourceId) {
+
+	Entity * item = entities.getById(sourceId);
+	if(!item) {
+		// Already gone - the destruction beat the answer here, which is fine.
+		return;
+	}
+
+	LogInfo << "[coop] " << sourceId << " was accepted; it leaves our pack";
+
+	// One out of a stack, exactly as many as were handed over.
+	if((item->ioflags & IO_ITEM) && item->_itemdata && item->_itemdata->count > 1) {
+		item->_itemdata->count--;
+	} else {
+		removeFromInventories(item);
+		item->destroy();
+	}
+
+}
+
+void applyGiveItem(std::string_view classPath, s16 count) {
+
+	Entity * item = AddItem(res::path::load(classPath));
+	if(!item) {
+		LogWarning << "[coop] could not make " << classPath << ", which we were given";
+		return;
+	}
+
+	item->scriptload = 1;
+	SendInitScriptEvent(item);
+
+	if((item->ioflags & IO_ITEM) && item->_itemdata) {
+		item->_itemdata->count = std::max(s16(1), count);
+	}
+
+	// Falls at their feet if there is no room for it, rather than evaporating.
+	giveToPlayer(item);
+
+	LogInfo << "[coop] earned " << item->idString() << " on the other machine";
+
+}
+
 void applyItemDropped(std::string_view entityId, std::string_view classPath, s16 count,
                       float durability, const Vec3f & at, float angleYaw,
                       const Vec3f & velocity) {

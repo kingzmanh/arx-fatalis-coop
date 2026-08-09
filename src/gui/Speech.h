@@ -116,7 +116,18 @@ struct Speech {
 	Entity * scriptEntity = nullptr;
 	const EERIE_SCRIPT * script = nullptr;
 	size_t scriptPos = 0;
-	
+
+	/*!
+	 * Whether this line is being said to the other player.
+	 *
+	 * A script that hands something over usually speaks first and pays after -
+	 * SPEAK [line] GOTO AFTER_SIGNED - so the half that matters runs when the
+	 * line ends, long after the call that started it has returned and taken
+	 * its "this is for them" with it. Remembering it here is what carries that
+	 * across the pause, so the reward reaches the player who earned it.
+	 */
+	bool forPartner = false;
+
 };
 
 void ARX_SPEECH_Reset();

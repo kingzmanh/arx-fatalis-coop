@@ -74,6 +74,8 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 #include "io/resource/ResourcePath.h"
 #include "io/log/Logger.h"
 
+#include "net/CoopPlayer.h"
+
 #include "scene/GameSound.h"
 #include "scene/Interactive.h"
 
@@ -160,14 +162,17 @@ static void endSpeech(Speech & speech) {
 	Entity * scriptEntity = speech.scriptEntity;
 	const EERIE_SCRIPT * script = speech.script;
 	size_t scriptPos = speech.scriptPos;
-	
+	bool forPartner = speech.forPartner;
+
 	releaseSpeech(speech);
-	
+
 	if(script) {
 		arx_assert(ValidIOAddress(scriptEntity));
+		// Still their errand, however long the line took to say.
+		coop::ScopedPlayerContext context(forPartner ? coop::avatarEntity() : nullptr);
 		ScriptEvent::resume(script, scriptEntity, scriptPos);
 	}
-	
+
 }
 
 void ARX_SPEECH_ClearIOSpeech(const Entity & entity) {
@@ -196,6 +201,7 @@ Speech * ARX_SPEECH_AddSpeech(Entity & speaker, std::string_view data, long mood
 	speech.flags = flags;
 	speech.sample = audio::SourcedSample();
 	speech.mood = mood;
+	speech.forPartner = coop::isPartnerScriptContext();
 
 	LogDebug("speech \"" << data << '"');
 	

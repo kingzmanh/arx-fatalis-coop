@@ -1787,7 +1787,16 @@ void ArxGame::manageEditorControls() {
 				if(COMBINEGOLD) {
 					SendIOScriptEvent(nullptr, io, SM_COMBINE, "gold_coin");
 				} else if(io != COMBINE) {
-					combineEntities(COMBINE, io);
+					/*
+					 * Handing something over is how this game's quests move,
+					 * and the quest belongs to the world - which is the host's.
+					 * Run here by a guest, the goblin takes the form on one
+					 * screen and refuses it on the other. So it is asked for,
+					 * and the answer decides whether the item leaves the pack.
+					 */
+					if(!coop::requestCombine(*COMBINE, *io)) {
+						combineEntities(COMBINE, io);
+					}
 				}
 			} else if(COMBINE) { // GLights
 				float fMaxdist = player.m_telekinesis ? 850 : 300;

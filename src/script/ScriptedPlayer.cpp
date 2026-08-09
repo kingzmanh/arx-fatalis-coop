@@ -321,13 +321,16 @@ public:
 		
 		DebugScript(' ' << enable);
 		
-		if(coop::isPartnerScriptContext()) {
-			// The other player tripped this sequence; their machine owns
-			// their controls. Locking OURS on their behalf froze the wrong
-			// human at the wrong keyboard.
-			return Success;
-		}
-		
+		/*
+		 * Whoever tripped it, a story moment is the host's to perform.
+		 *
+		 * This used to bow out when the other player set it off, which left
+		 * nobody performing the scene at all: the guest's own sequence
+		 * machinery is muted, so the lock was refused on both machines and the
+		 * cutscene played on neither. The host plays it exactly as it would
+		 * alone, and the guest is sent a viewer copy to watch.
+		 */
+
 		if(enable) {
 			if(BLOCK_PLAYER_CONTROLS) {
 				for(Entity & npc : entities(IO_NPC)) {

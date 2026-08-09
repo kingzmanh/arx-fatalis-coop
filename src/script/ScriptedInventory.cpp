@@ -59,6 +59,7 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 #include "graphics/data/Mesh.h"
 #include "gui/hud/SecondaryInventory.h"
 #include "io/resource/ResourcePath.h"
+#include "net/CoopNet.h"
 #include "scene/Interactive.h"
 #include "scene/GameSound.h"
 #include "script/ScriptUtils.h"
@@ -193,8 +194,12 @@ class InventoryCommand : public Command {
 				return Failed;
 			}
 			
-			giveToPlayer(t);
-			
+			// "The player" means whoever this script is running for, and while
+			// it runs for the other one, the reward is not ours to keep.
+			if(!coop::giveToPartner(t)) {
+				giveToPlayer(t);
+			}
+
 			return Success;
 		}
 		
@@ -248,8 +253,14 @@ class InventoryCommand : public Command {
 				DebugScript(' ' << file);
 			}
 			
-			giveToPlayer(ioo);
-			
+			if(coop::giveToPartner(ioo)) {
+				// It is on their machine now, so nothing here can be told to
+				// look at it. ^LAST_SPAWNED reads "none" rather than a corpse.
+				LASTSPAWNED = nullptr;
+			} else {
+				giveToPlayer(ioo);
+			}
+
 			return Success;
 		}
 		

@@ -306,6 +306,34 @@ bool requestAction(const Entity & target);
 bool requestTake(const Entity & item);
 
 /*!
+ * Ask the authority to give one of this player's items to a world entity.
+ *
+ * This is how nearly every quest in the game moves: a form handed to a goblin,
+ * a badge to a guard, a gem to a dealer. The script that decides what it means
+ * lives with the world, so the give has to be made there - run locally by a
+ * guest it convinces nobody but the guest, and the portcullis stays shut on
+ * the host's screen while their partner walks into it.
+ *
+ * The item itself is in their pack, which means this machine destroyed its own
+ * copy when they picked it up. The host makes a stand-in bearing the same id
+ * and class - the two things a script asks of what it is handed, ISCLASS and a
+ * name to DESTROY - and answers whether it was kept.
+ */
+bool requestCombine(const Entity & source, const Entity & target);
+
+//! Answer a give: whoever it was offered to kept it, so it leaves their pack.
+void reportCombineTaken(std::string_view sourceId);
+
+/*!
+ * Hand an item a script just produced to the other player instead of this one.
+ *
+ * Only true while running a script on their behalf. "Give it to the player" in
+ * a script means the player who earned it, and when they are the one who did
+ * the handing over, the reward is not ours to keep.
+ */
+bool giveToPartner(Entity * item);
+
+/*!
  * Say that this player has just put an item down in the world.
  *
  * An announcement, not a request. Both machines already have the entity - they
