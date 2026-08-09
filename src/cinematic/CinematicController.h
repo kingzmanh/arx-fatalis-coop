@@ -25,6 +25,15 @@
 void cinematicInit();
 void cinematicDestroy();
 
+/*!
+ * When set, cinematics do not play and the entities that drive them - the
+ * cursor that starts the intro, the cameras that take the view - are not
+ * created when a level loads. Lets a player stand in a place that exists only
+ * to be filmed. Starts from the ARX_NO_CINE environment variable and can be
+ * changed at any time with the "nocine" script command.
+ */
+extern bool g_noCinematics;
+
 void cinematicPrepare(std::string_view name, bool preload);
 
 void cinematicRequestStart();

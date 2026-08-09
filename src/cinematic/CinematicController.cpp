@@ -19,6 +19,8 @@
 
 #include "cinematic/CinematicController.h"
 
+#include <cstdlib>
+
 #include <string>
 
 #include "core/Application.h"
@@ -64,6 +66,11 @@ void cinematicInit() {
 void cinematicDestroy() {
 	delete ControlCinematique, ControlCinematique = nullptr;
 }
+
+bool g_noCinematics = []() {
+	const char * env = std::getenv("ARX_NO_CINE");
+	return env && *env && *env != '0';
+}();
 
 void cinematicPrepare(std::string_view name, bool preload) {
 

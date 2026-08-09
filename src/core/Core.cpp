@@ -189,6 +189,7 @@ Vec3f LastValidPlayerPos;
 
 // START - Information for Player Teleport between/in Levels-------------------------------------
 AreaId g_teleportToArea;
+RememberedSpot g_rememberedSpot;
 std::string TELEPORT_TO_POSITION;
 long TELEPORT_TO_ANGLE;
 // END -   Information for Player Teleport between/in Levels---------------------------------------

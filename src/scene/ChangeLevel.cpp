@@ -1456,7 +1456,16 @@ static bool ARX_CHANGELEVEL_Pop_Player(std::string_view target, float angle) {
 	const ARX_CHANGELEVEL_PLAYER * asp = reinterpret_cast<const ARX_CHANGELEVEL_PLAYER *>(dat + pos);
 	pos += sizeof(ARX_CHANGELEVEL_PLAYER);
 	
-	if(target.empty()) {
+	if(g_rememberedSpot.pending) {
+		// Coming back to a spot rather than to a doorway: the level has loaded,
+		// so put the player exactly where they were standing.
+		g_rememberedSpot.pending = false;
+		player.pos = g_rememberedSpot.pos;
+		player.desiredangle.setYaw(g_rememberedSpot.yaw);
+		player.angle.setYaw(g_rememberedSpot.yaw);
+		LogWarning << "[here] returned to " << player.pos.x << ',' << player.pos.y
+		           << ',' << player.pos.z;
+	} else if(target.empty()) {
 		player.angle = asp->angle;
 		player.pos = asp->pos.toVec3();
 		LogWarning << "[coop-chain] player placed from SAVE FILE at " << player.pos.x

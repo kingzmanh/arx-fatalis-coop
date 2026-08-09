@@ -46,6 +46,10 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 #include "scene/LoadLevel.h"
 
+#include "cinematic/CinematicController.h"
+
+#include <cstdlib>
+
 #include <stddef.h>
 #include <cstdio>
 #include <ctime>
@@ -329,6 +333,25 @@ bool DanaeLoadLevel(AreaId area, bool loadEntities) {
 			}
 			
 			res::path classPath = res::path::load(pathstr).remove_ext();
+
+			/*
+			 * ARX_NO_CINE=1 also stops the entities that DRIVE a cinematic from
+			 * being created at all.
+			 *
+			 * Blocking the CINE command alone is not enough to stand in level 10:
+			 * the "cursor" entity runs CINE INTRODUCTION on spawn AND grabs the
+			 * view with CAMERAACTIVATE, and the level's cameras take the view
+			 * whether or not a film is playing. With no cursor and no cameras the
+			 * set is just a place, and the player keeps their own eyes.
+			 */
+			if(g_noCinematics) {
+				std::string_view cls = classPath.filename();
+				if(cls == "cursor" || cls == "camera" || cls == "intro_draw") {
+					LogWarning << "[nocine] not creating " << cls << '_' << dli->ident;
+					continue;
+				}
+			}
+
 			LoadInter_Ex(classPath, dli->ident, dli->pos.toVec3() + trans, dli->angle);
 		}
 		
@@ -507,7 +530,7 @@ bool DanaeLoadLevel(AreaId area, bool loadEntities) {
 	USE_PLAYERCOLLISIONS = true;
 	
 	LogInfo << "Done loading level";
-	
+
 	return true;
 	
 }

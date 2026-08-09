@@ -662,7 +662,22 @@ static bool HandleGameFlowTransitions() {
 		benchmark::begin(benchmark::LoadLevel);
 		
 		ARX_CHANGELEVEL_StartNew();
-		
+
+		/*
+		 * With ARX_COOP_DEBUG set, a new game opens the script console straight
+		 * away. Normally it is unlocked by casting Aam-Mega-Stregum-Comunicatum-
+		 * Spacium, which is a lot of ceremony when the console is how you get at
+		 * the parts of the game no door leads to - "teleport -l 10 MARKER_0033"
+		 * reaches the one level nothing in the game points at.
+		 *
+		 * Behind the debug switch on purpose: someone who downloads this and
+		 * starts a game must never be dropped into a developer console.
+		 */
+		if(coop::debugTrace()) {
+			g_console.open();
+			LogInfo << "[coop-debug] console opened for a new game";
+		}
+
 		progressBarReset();
 		progressBarSetTotal(108);
 		LoadLevelScreen(g_areaToLoad);
@@ -1673,7 +1688,26 @@ void ArxGame::updateInput() {
 	if(GInput->actionNowPressed(CONTROLS_CUST_DEBUG)) {
 		drawDebugCycleViews();
 	}
-	
+
+	/*
+	 * ` opens the script console, the way every other game does it.
+	 *
+	 * Vanilla hides it behind casting Aam-Mega-Stregum-Comunicatum-Spacium,
+	 * which is a lot of ceremony for the one tool that reaches the parts of the
+	 * game no door leads to - "teleport -l 10 MARKER_0033" is the only way into
+	 * the single level nothing in the game points at.
+	 *
+	 * The key is left of 1 and types nothing anyone needs in a game, so it
+	 * cannot be pressed by accident; and it only ever OPENS, because the console
+	 * closes itself on Escape and stealing that would be worse than useless.
+	 */
+	// Only when the player has asked for it in Options -> Controls. Opening it
+	// sets the same flag, so casting the rune sequence still works and ticks the
+	// box - the two ways in agree instead of fighting.
+	if(config.input.allowConsole && GInput->isKeyPressedNowPressed(Keyboard::Key_Grave)) {
+		g_console.open();   // already a no-op when it is open
+	}
+
 	g_console.update();
 	
 #ifdef ARX_DEBUG

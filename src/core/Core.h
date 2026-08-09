@@ -78,6 +78,23 @@ extern Entity * COMBINE;
 extern res::path LastLoadedScene;
 
 extern AreaId g_teleportToArea;
+
+/*!
+ * A place to come back to, set by the "here" console command.
+ *
+ * Travel normally lands on a MARKER, and there is never a marker where you
+ * happen to be standing - so returning to a spot needs the exact position
+ * carried across the level change and applied once the new level is up.
+ */
+struct RememberedSpot {
+	AreaId area;
+	Vec3f pos;
+	float yaw = 0.f;
+	bool valid = false;
+	//! Set while a return is in flight, so the arrival uses pos instead of a marker.
+	bool pending = false;
+};
+extern RememberedSpot g_rememberedSpot;
 extern std::string TELEPORT_TO_POSITION;
 
 extern float PULSATE;

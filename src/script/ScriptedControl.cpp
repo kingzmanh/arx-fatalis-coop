@@ -43,6 +43,8 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 #include "script/ScriptedControl.h"
 
+#include <cstdlib>
+
 #include "ai/Anchors.h"
 
 #include "core/Core.h"
@@ -57,6 +59,10 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 #include "scene/LinkedObject.h"
 #include "script/ScriptUtils.h"
 #include "cinematic/CinematicController.h"
+#include "window/RenderWindow.h"
+#include "core/Application.h"
+#include <sstream>
+#include "game/Player.h"
 
 
 extern bool GLOBAL_MAGIC_MODE;
@@ -225,9 +231,25 @@ public:
 		}
 		
 		std::string name = context.getWord();
-		
+
 		DebugScript(' ' << options << " \"" << name << '"');
-		
+
+		/*
+		 * ARX_NO_CINE=1 turns every cinematic into a no-op.
+		 *
+		 * Level 10 is the set the opening film was shot on: the cursor entity
+		 * it places runs "CINE INTRODUCTION" the moment it spawns, so arriving
+		 * there plays the intro and the level ends with it. With this set you
+		 * can stand in the place instead of watching the film made in it.
+		 */
+		// "kill" and "play" are how a cinematic is stopped and resumed - swallowing
+		// those would leave a film that cannot be ended rather than one that never
+		// starts. Only an actual film is refused.
+		if(g_noCinematics && name != "kill" && name != "play") {
+			LogWarning << "[nocine] skipping cinematic \"" << name << '"';
+			return Success;
+		}
+
 		if(name == "kill") {
 			cinematicKill();
 		} else if(name == "play") {
@@ -379,9 +401,173 @@ public:
 
 } // anonymous namespace
 
+class NoCineCommand : public Command {
+
+public:
+
+	NoCineCommand() : Command("nocine") { }
+
+	Result execute(Context & context) override {
+
+		std::string arg = context.getWord();
+
+		if(arg == "on" || arg == "1") {
+			g_noCinematics = true;
+		} else if(arg == "off" || arg == "0") {
+			g_noCinematics = false;
+		} else if(arg.empty() || arg == "toggle") {
+			g_noCinematics = !g_noCinematics;
+		} else {
+			ScriptWarning << "expected on, off or toggle";
+			return Failed;
+		}
+
+		// Levels decide what to create as they load, so this takes effect on the
+		// next one - which is the point: "nocine on" then travel, and the place
+		// arrives without the film crew.
+		LogWarning << "[nocine] cinematics are now "
+		           << (g_noCinematics ? "OFF - takes effect on the next level load"
+		                              : "ON - back to normal");
+
+		return Success;
+	}
+
+};
+
+/*!
+ * "here"      - remember where I am standing
+ * "here back" - take me back there, across a level change if need be
+ *
+ * Travel lands on markers, and there is no marker where a player happens to be,
+ * so going somewhere to look at it is a one way trip unless the exact spot is
+ * kept. This keeps it.
+ */
+class HereCommand : public Command {
+
+public:
+
+	HereCommand() : Command("here") { }
+
+	Result execute(Context & context) override {
+
+		std::string arg = context.getWord();
+
+		if(arg.empty() || arg == "set" || arg == "save") {
+			g_rememberedSpot.area = g_currentArea;
+			g_rememberedSpot.pos = player.pos;
+			g_rememberedSpot.yaw = player.angle.getYaw();
+			g_rememberedSpot.valid = true;
+			// Built as a command you can keep: several spots can be collected this
+			// way, where "here back" only ever remembers the last one. It also
+			// goes straight to the clipboard, so it can be pasted into notes -
+			// reading coordinates off a console and typing them back is exactly
+			// the sort of thing that gets a digit wrong.
+			std::ostringstream line;
+			line << "warp " << u32(g_currentArea) << ' '
+			     << long(player.pos.x) << ' ' << long(player.pos.y) << ' '
+			     << long(player.pos.z) << ' ' << long(player.angle.getYaw());
+
+			bool copied = false;
+			if(mainApp && mainApp->getWindow()) {
+				mainApp->getWindow()->setClipboardText(line.str());
+				copied = true;
+			}
+
+			LogWarning << "[here] " << line.str()
+			           << (copied ? "   (copied to clipboard)" : "   (clipboard unavailable)");
+			return Success;
+		}
+
+		if(arg == "back" || arg == "return") {
+
+			if(!g_rememberedSpot.valid) {
+				ScriptWarning << "nothing remembered yet - type \"here\" first";
+				return Failed;
+			}
+
+			if(g_rememberedSpot.area == g_currentArea) {
+				// Same level: no need to reload anything, just stand there again.
+				player.pos = g_rememberedSpot.pos;
+				player.desiredangle.setYaw(g_rememberedSpot.yaw);
+				player.angle.setYaw(g_rememberedSpot.yaw);
+				LogWarning << "[here] back to " << player.pos.x << ',' << player.pos.y
+				           << ',' << player.pos.z << " (same level)";
+			} else {
+				g_rememberedSpot.pending = true;
+				g_teleportToArea = g_rememberedSpot.area;
+				TELEPORT_TO_POSITION.clear();      // no marker; the spot decides
+				TELEPORT_TO_ANGLE = long(g_rememberedSpot.yaw);
+				CHANGE_LEVEL_ICON = ChangeLevelNow;
+				LogWarning << "[here] travelling back to area " << u32(g_rememberedSpot.area);
+			}
+
+			return Success;
+		}
+
+		ScriptWarning << "expected nothing, or \"back\"";
+		return Failed;
+	}
+
+};
+
+/*!
+ * "warp <area> <x> <y> <z> [yaw]" - stand exactly there, in that level.
+ *
+ * The stock teleport can only land on a MARKER, and levels have markers only
+ * where the designers put doors. This takes the coordinates themselves, so any
+ * spot can be written down and returned to later - which is what "here" prints.
+ */
+class WarpCommand : public Command {
+
+public:
+
+	WarpCommand() : Command("warp") { }
+
+	Result execute(Context & context) override {
+
+		float area = context.getFloat();
+		float x = context.getFloat();
+		float y = context.getFloat();
+		float z = context.getFloat();
+		float yaw = context.getFloat();
+
+		if(area < 0.f) {
+			ScriptWarning << "usage: warp <area> <x> <y> <z> [yaw]";
+			return Failed;
+		}
+
+		AreaId destination = AreaId(u32(area));
+		Vec3f position(x, y, z);
+
+		if(destination == g_currentArea) {
+			// Already here: no reload, just stand there.
+			player.pos = position;
+			player.desiredangle.setYaw(yaw);
+			player.angle.setYaw(yaw);
+			LogWarning << "[warp] moved to " << x << ',' << y << ',' << z;
+		} else {
+			g_rememberedSpot.pos = position;
+			g_rememberedSpot.yaw = yaw;
+			g_rememberedSpot.pending = true;   // arrival uses the spot, not a marker
+			g_teleportToArea = destination;
+			TELEPORT_TO_POSITION.clear();
+			TELEPORT_TO_ANGLE = long(yaw);
+			CHANGE_LEVEL_ICON = ChangeLevelNow;
+			LogWarning << "[warp] travelling to area " << u32(destination) << " at "
+			           << x << ',' << y << ',' << z;
+		}
+
+		return Success;
+	}
+
+};
+
 void setupScriptedControl() {
 	
 	ScriptEvent::registerCommand(std::make_unique<ActivatePhysicsCommand>());
+	ScriptEvent::registerCommand(std::make_unique<NoCineCommand>());
+	ScriptEvent::registerCommand(std::make_unique<HereCommand>());
+	ScriptEvent::registerCommand(std::make_unique<WarpCommand>());
 	ScriptEvent::registerCommand(std::make_unique<AttractorCommand>());
 	ScriptEvent::registerCommand(std::make_unique<AmbianceCommand>());
 	ScriptEvent::registerCommand(std::make_unique<AnchorBlockCommand>());

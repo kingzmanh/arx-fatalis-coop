@@ -1534,7 +1534,27 @@ public:
 			cb->setValue(int(config.input.quickLevelTransition));
 			addCenter(std::move(cb));
 		}
-		
+
+		{
+			/*
+			 * The console, without having to know the rune sequence.
+			 *
+			 * It is the only way into parts of the game no door leads to - the
+			 * level the opening film was shot on, for one - so it belongs in the
+			 * options next to everything else you can turn on, rather than behind
+			 * Aam-Mega-Stregum-Comunicatum-Spacium. Off by default: a player who
+			 * never wants it never meets it, and the setting is remembered.
+			 */
+			std::string_view label = getLocalised("system_menus_options_input_allow_console",
+			                                      "Console (` key)");
+			auto cb = std::make_unique<CheckboxWidget>(checkboxSize(), hFontMenu, label);
+			cb->setChecked(config.input.allowConsole);
+			cb->stateChanged = [](bool checked) noexcept {
+				config.input.allowConsole = checked;
+			};
+			addCenter(std::move(cb));
+		}
+
 		addBackButton(Page_Options);
 		
 		{
