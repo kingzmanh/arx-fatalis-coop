@@ -386,6 +386,8 @@ void reportReward(long xp, long gold);
 
 //! A quest entry or keyring key was gained, which is shared story progress.
 void reportQuest(std::string_view questKey);
+//! Tell the other player every rune we know; they keep the union of both.
+void reportRunes();
 void reportKey(std::string_view key);
 void reportMapMarker(float x, float y, int level, std::string_view name);
 

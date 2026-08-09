@@ -53,6 +53,8 @@ last one is worth more than you would think.
 - **Fighting together** - creatures notice both of you and fight both of you
 - **Items** - picking up, dropping, throwing, carrying
 - **Doors, levers, and travelling between areas** together
+- **Magic is learned together** - when either of you learns a rune, so does the
+  other, and joining up shares whatever each of you already knew
 - **Both health bars** on screen, so you can see when your friend is in trouble
 - **Friendly fire** - you can hurt each other, on purpose or otherwise
 - **Proximity voice chat** - speak and it comes out of your character's mouth,

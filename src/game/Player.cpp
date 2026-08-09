@@ -335,6 +335,11 @@ void ARX_Player_Rune_Add(RuneFlag rune) {
 	});
 	
 	player.rune_flags |= rune;
+
+	// Runes are knowledge, and the two of them are learning the same magic.
+	// reportRunes() ignores this while we are applying THEIR runes, so the two
+	// machines cannot bounce the same discovery back and forth.
+	coop::reportRunes();
 	
 	size_t spellsAfter = std::count_if(spellicons.begin(), spellicons.end(), [](const SPELL_ICON & spell) {
 		return !spell.bSecret && player.hasAllRunes(spell.symbols);

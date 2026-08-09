@@ -5,6 +5,13 @@ new one breaks something for you, the previous download is still there.
 
 ## 0.8
 
+**Added**
+
+- Magic is learned together. When either player learns a rune the other learns
+  it too, and connecting shares whatever each of you already knew, so nobody has
+  to go and find the same rune twice. Nothing is ever taken away - runes are only
+  ever added.
+
 **Fixed**
 
 - The other player's stance reset about once a second while they carried a
@@ -17,7 +24,7 @@ new one breaks something for you, the previous download is still there.
 
 **Changed**
 
-- Network protocol 21 -> 22. Both players need this build; older ones are
+- Network protocol 21 -> 23. Both players need this build; older ones are
   refused at the handshake rather than left to desync.
 
 **Known issues**

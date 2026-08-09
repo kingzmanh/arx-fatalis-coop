@@ -770,6 +770,11 @@ void onHandshakeComplete() {
 
 	restoreVitalsForSpawn();
 
+	// Magic is shared, so say what we know as soon as there is someone to tell.
+	// Both sides do this and both keep the union, so it does not matter who
+	// arrived with which runes, or who was first.
+	reportRunes();
+
 	reportAreaChange(g_currentArea);
 
 }
@@ -1215,6 +1220,29 @@ void handleMessage(const u8 * data, size_t size) {
 			if(reader.ok() && !quest.empty()) {
 				ApplyScope scope;
 				ARX_PLAYER_Quest_Add(quest);
+			}
+			break;
+		}
+
+		case MsgRunes: {
+			u32 theirs = reader.getU32();
+			if(reader.ok()) {
+				ApplyScope scope;
+				RuneFlags known = RuneFlags::load(theirs);
+				bool learned = false;
+				for(size_t i = 0; i < RUNE_COUNT; i++) {
+					RuneFlag rune = RuneFlag(1 << i);
+					if((known & rune) && !(player.rune_flags & rune)) {
+						// One at a time, through the engine's own function, so
+						// the book lights up for a spell that has just become
+						// castable exactly as it would had we found the rune.
+						ARX_Player_Rune_Add(rune);
+						learned = true;
+					}
+				}
+				if(learned) {
+					LogInfo << "[coop] learned runes from the other player";
+				}
 			}
 			break;
 		}
@@ -2910,6 +2938,28 @@ void reportQuest(std::string_view questKey) {
 
 	Writer writer(MsgQuest);
 	writer.put(questKey);
+	send(writer, ChannelEvent);
+
+}
+
+/*!
+ * Share what we can cast.
+ *
+ * A rune is knowledge, not an object - learning one takes nothing away from
+ * anybody, so both players simply keep the union of the two sets. The whole set
+ * goes over rather than the one rune just learned: it costs four bytes, it is
+ * the same message whether it is sent on learning one or on meeting for the
+ * first time, and a lost packet repairs itself the next time either of them
+ * learns anything.
+ */
+void reportRunes() {
+
+	if(!isPlaying() || isApplyingRemote()) {
+		return;
+	}
+
+	Writer writer(MsgRunes);
+	writer.put(u32(player.rune_flags));
 	send(writer, ChannelEvent);
 
 }

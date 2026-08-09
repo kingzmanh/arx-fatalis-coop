@@ -104,6 +104,11 @@ check     "they idle in third person, whatever we use" net/CoopPlayer.cpp  "u8(A
 checkgone "the shield hold is not sent timeless"     net/CoopPlayer.cpp   "anim3, 0, 0)"
 check     "every animation layer carries its clock"  net/CoopPlayer.cpp   "g_avatar.anim3Flags, g_avatar.anim3Time"
 
+[ $QUIET -eq 0 ] && echo "--- shared knowledge"
+# A rune is knowledge, not an object: both keep the union, and nothing removes.
+check     "runes learned by either are learned by both" game/Player.cpp    "coop::reportRunes()"
+check     "runes are shared on meeting, not only on learning" net/CoopNet.cpp "reportRunes();"
+
 [ $QUIET -eq 0 ] && echo "--- cutscenes"
 # A lock is only safe where the thing that lifts it can run. SENDEVENT queues an
 # event, and the queue is drained only where the area is simulated, so a guest
