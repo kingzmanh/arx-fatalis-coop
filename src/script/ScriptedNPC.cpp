@@ -49,6 +49,7 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 #include "game/EntityManager.h"
 #include "game/NPC.h"
 #include "game/Player.h"
+#include "net/CoopNet.h"
 #include "net/CoopPlayer.h"
 #include "graphics/Math.h"
 #include "graphics/data/Mesh.h"
@@ -534,7 +535,14 @@ public:
 			}
 			ARX_NPC_LaunchPathfind(io, i);
 		}
-		
+
+		// A cutscene camera is told what to look at AFTER it is switched on, so
+		// the aim has to be sent again once it is known - otherwise the other
+		// player is looking through a camera pointed at nothing.
+		if(io == coop::partnerCameraEntity()) {
+			coop::reportCutsceneCamera(io);
+		}
+
 		return Success;
 	}
 	

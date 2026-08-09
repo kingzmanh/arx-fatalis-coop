@@ -655,7 +655,12 @@ void ArxGame::managePlayerControls() {
 			if(t->ioflags & IO_NPC) {
 				if(t->script.valid) {
 					if(t->_npcdata->lifePool.current > 0.f) {
-						SendIOScriptEvent(entities.player(), t, SM_CHAT);
+						// What it says depends on how far its script has got, which
+						// is knowledge the authority keeps. Asking our own copy gets
+						// the answers of someone who has never met us.
+						if(!coop::requestChat(*t)) {
+							SendIOScriptEvent(entities.player(), t, SM_CHAT);
+						}
 						DRAGGING = false;
 					} else {
 						if(t->inventory) {
