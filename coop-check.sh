@@ -121,7 +121,32 @@ check     "the bars stay up only for the viewer copy" script/ScriptedCamera.cpp 
 checkgone "a one-shot zone disarms for both players" script/ScriptedAnimation.cpp "isPartnerScriptContext"
 # The SHOW that undoes a HIDE is at the end of the same unreachable chain, so a
 # guest that hid its interface never gets a cursor back. Only hiding is refused.
-check     "a guest keeps its cursor and its hands"   script/ScriptedInterface.cpp 'command == "hide" && (coop::isPartnerScriptContext() || coop::isReplica())'
+check     "a guest keeps its cursor and its hands"   script/ScriptedInterface.cpp 'command == "hide" && coop::isReplica()'
+# Whoever trips a story moment, the host performs it - bars, hands, locked
+# controls and all - and sends the guest a viewer copy. Bowing out because the
+# OTHER player set it off left the scene playing on neither machine.
+checkgone "the host performs a scene it did not trip" script/ScriptedPlayer.cpp "their machine owns"
+check     "and the guest is sent a copy to watch"    script/ScriptedConversation.cpp "bool sequence = (BLOCK_PLAYER_CONTROLS || cinematicBorder.isActive());"
+
+[ $QUIET -eq 0 ] && echo "--- giving things away"
+# Handing an item over is how the quests move, and the quest lives with the
+# world. Run locally by a guest, the goblin takes the form on one screen and
+# refuses it on the other.
+check     "a give is made where the quest lives"     gui/Interface.cpp    "coop::requestCombine"
+check     "and the item only then leaves the pack"   net/CoopWorld.cpp    "applyCombineTaken"
+# "Give it to the player" means the one who earned it, and the paying half of
+# these scripts usually runs after the line is spoken, long after the call that
+# knew whose errand it was has returned.
+check     "the reward follows the giver"             script/ScriptedInventory.cpp "coop::giveToPartner"
+check     "even when it is paid after the speech"    gui/Speech.cpp       "forPartner ? coop::avatarEntity()"
+
+[ $QUIET -eq 0 ] && echo "--- breathing"
+# Idle breathing is not a looping clip: it is played once and started again by
+# hand. That restart changes nothing about WHAT is playing, so the snapshot
+# left it out and the replica, forbidden from winding a one-shot back, held the
+# last frame forever.
+check     "a clip started over is worth sending"     net/CoopWorld.cpp    "20 < a.animTime"
+check     "and the replica is allowed to follow"     net/CoopWorld.cpp    "!(layer.flags & EA_LOOP) && !restarted"
 
 [ $QUIET -eq 0 ] && echo "--- menu"
 check     "replicas recompute which room they are in" net/CoopWorld.cpp "requestRoomUpdate"

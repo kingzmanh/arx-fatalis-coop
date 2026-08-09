@@ -3,6 +3,47 @@
 Every release keeps its own build. Older versions are never replaced, so if a
 new one breaks something for you, the previous download is still there.
 
+## 0.9
+
+**Added**
+
+- A developer console, off by default. Turn it on under Options -> Control with
+  the "Console" checkbox, then press ` to open or close it. It can teleport you
+  to a level and a marker, spawn any item by name, and suppress the opening
+  cinematic so the areas behind it can be reached. `here` copies your current
+  position to the clipboard as a command you can paste back later to return to
+  the exact same spot.
+
+**Fixed**
+
+- Giving a quest item to someone no longer does nothing. The second player can
+  hand over the signed form, the gem dealer's badge, or anything else a quest
+  asks for, and it advances for both of you. Whatever is handed back in return
+  goes to the player who did the giving, even when the script pays up after the
+  conversation rather than during it.
+- Cutscenes triggered by the second player now actually play. The host performs
+  the scene and the other player is sent a copy to watch; before, each machine
+  left it to the other and it played on neither.
+- Creatures breathe on the second player's screen. Idle breathing is played once
+  and restarted rather than looped, and that restart was invisible over the
+  network, so every creature held one pose forever.
+
+**Changed**
+
+- Network protocol 23 -> 24. Both players need this build; older ones are
+  refused at the handshake rather than left to desync.
+
+**Known issues**
+
+- Animals only appear once the host has been near them, and only move while the
+  host is nearby
+- Giving gold instead of a quest item still only counts on the giver's machine
+- Loot can duplicate - both players may find their own copy
+- Some quest flags only land on one machine
+- Enemies sometimes pick the wrong target
+- Never properly tested over the internet; almost all testing has been two
+  windows on one computer
+
 ## 0.8
 
 **Added**

@@ -634,3 +634,84 @@ had just been freed, and the draw loop walks that list every frame. Swapping one
 shield for another left the body carrying a dead record and a live one.
 
 **The fix.** Unlink before deleting, at both sites that delete a shield.
+
+## 26. A quest item given by the guest did not advance the quest
+
+**The problem.** The second player hands the signed form to the goblin lord. The
+goblin takes it on their screen and knows nothing about it on the host's, so the
+way never opens and the item is eaten for nothing.
+
+**Why did it happen?** Handing something over is a script event on the receiving
+entity, and it was the one interaction never routed to the authority. Two lines
+apart in the same file, clicking a lever asked the host to run the script and
+giving an item did not:
+
+    if(!coop::requestAction(*t)) { SendIOScriptEvent(..., SM_ACTION); }
+    ...
+    combineEntities(COMBINE, io);        // nobody asked anybody
+
+So the goblin's COMBINE script ran on the guest against the guest's own replica
+of the goblin. Every consequence - the counter that opens the gate, the quest
+book entry, the portcullis - landed on the copy, and the copy is overwritten by
+the next snapshot from the authority.
+
+The complication is that the item does not exist on the host at all: picking it
+up destroys the host's copy, which is correct for something now in a pack the
+host does not own. A script asks exactly two things of what it is handed - what
+class it is, and a name to DESTROY or send an event to - so the host now builds
+a stand-in from the class, wearing the guest's id, runs the give against it, and
+answers one question back: was it kept? Only then does the real one leave their
+pack. If it was refused, nothing is lost.
+
+**The fix.** MsgCombine / MsgCombineTaken, protocol 23 -> 24. Rewards follow the
+giver: "give it to the player" means the player this script is running for, and
+because these scripts usually speak first and pay afterwards - SPEAK [line] GOTO
+AFTER_SIGNED - a speech now remembers whose errand it was and re-enters that
+context when the line ends and the script resumes. Confirmed by the user.
+
+## 27. A story moment the guest set off played on neither screen
+
+**The problem.** Found immediately after the above, by playing it: the give now
+worked and the scene around it did not.
+
+**Why did it happen?** Three separate guards, each written for a good reason,
+added up to nobody performing the scene. The guest refuses to lock its own
+controls, hide its own interface or lower its own bars, because the events that
+undo all three are queued and a guest never drains that queue - a real fix for a
+real soft-lock. The host then refused the same three whenever the OTHER player
+had tripped the script, on the reasoning that freezing this keyboard for their
+sequence freezes the wrong human.
+
+Both halves are individually defensible and together they leave a cutscene with
+nowhere to run. Neither machine performed it, so the goblin simply spoke into
+the air while the scene it belonged to never happened.
+
+**The fix.** The host performs a story moment in full whoever tripped it, and
+sends the guest a viewer copy to watch - which is what it already did for its
+own. Only the guest still refuses, which is the half that was load-bearing. The
+speech is no longer excluded from being a sequence for belonging to the partner,
+so it is ledgered once for both and relayed. Confirmed by the user.
+
+## 28. Creatures stopped breathing on the guest's screen
+
+**The problem.** Enemies stand perfectly still for the second player - not
+frozen in place, but holding one pose, never taking a breath.
+
+**Why did it happen?** Idle breathing is not a looping animation. The engine
+plays ANIM_WAIT once and, when it ends, starts it again by hand. That restart
+changes nothing about what is playing - same clip, same variant, same flags -
+and the snapshot compares exactly those three things to decide whether a
+creature is worth sending. Playback time is deliberately not compared, because
+it changes every frame and the receiver runs the clip itself.
+
+So the restart was invisible on the wire. And on the receiving side a one-shot
+may never be wound backwards - a rule added because a settled door otherwise
+replayed the last slice of its animation forever - so even the periodic full
+snapshot could not undo it. The creature played its idle once and held the last
+frame for the rest of the session.
+
+**The fix.** A playhead only moves forward through a clip; one that has gone
+backwards is the clip being started again, and that is the only trace such a
+restart leaves. The host treats it as worth sending and the replica takes it as
+permission to begin the clip again. Settled doors are untouched: their playhead
+sits still at the end rather than jumping back. Confirmed by the user.
