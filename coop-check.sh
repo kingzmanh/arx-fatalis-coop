@@ -95,6 +95,13 @@ check     "every hit records who threw it"           game/Damage.cpp      "coop:
 # HALO -o is how the game says "this one matters" - a quest item, the thing you
 # were just asked to find. It is set by a script, scripts run on the authority,
 # and it was missing from the snapshot, so the other player saw plain scenery.
+# The treat zone admits things near the PARTNER by room-graph distance, and
+# outdoors that graph claimed a pig at arm's length (crow 669) was a 10,822-unit
+# walk - so everything near the partner alone was frozen and unsent. The
+# partner's leg now takes the smaller of graph and straight line; the camera's
+# leg stays vanilla.
+check     "the room graph cannot veto the partner"   scene/Interactive.cpp "arx::distance2(probe, partnerPos));"
+
 check     "a glow put on by a script travels"        net/CoopWorld.cpp    "halo_native.flags"
 # ...and is promoted to the copy the renderer reads. The two are joined only by
 # ARX_HALO_SetToNative, which nothing calls on this side for a remote glow, so
@@ -116,6 +123,15 @@ check     "their shield hangs off their arm"          net/CoopPlayer.cpp   "shie
 # ANIM_WAIT_SHORT is not a short wait: player.asl binds it to player_wait_1st,
 # the first person idle. Which camera we use must not change what they see.
 check     "they idle in third person, whatever we use" net/CoopPlayer.cpp  "u8(ANIM_WAIT)"
+# Choosing a face used to overwrite the PIXELS in a shared texture - the engine
+# said so in a TODO of its own - so with two heroes on screen whoever picked
+# last decided what both looked like. Now both bodies simply point their head
+# materials at the file for the face they were given, through one shared
+# routine, and nothing overwrites anything.
+check     "the other player keeps their own face"    net/CoopPlayer.cpp   "paintAvatarFace"
+check     "faces rebind materials, never repaint"    game/Player.cpp      "void ARX_PLAYER_ApplySkin"
+checkgone "the shared-texture overwrite is gone"     game/Player.cpp      "PLAYER_SKIN_TC->LoadFile"
+
 # The shield hold is a LOOPING clip on layer 3, and only exists while a shield
 # is equipped. Sent with no flags it stopped looping; sent with a playhead of 0
 # it was dragged back to the start every second. Every layer carries both.

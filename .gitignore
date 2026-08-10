@@ -68,3 +68,14 @@ release/
 # it needs saying outright - it is 500 KB of somebody else's tree and does not
 # belong in this repository's history.
 /coop-source/engine-files/
+
+# Locally unpacked game scripts and pages generated from them. The data is
+# Arkane's and must never be committed.
+/unpak-scripts/
+/Script Map.html
+/Engine Map.html
+# A disposable local sandbox copy of the game - never ours to commit.
+/game-studio/
+
+# Python bytecode
+__pycache__/

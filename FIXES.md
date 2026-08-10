@@ -844,3 +844,83 @@ what was happening.
 
 **The fix.** Halo flags, colour and radius in the snapshot, and the promotion
 called after applying them. Confirmed by the user.
+
+## 34. Everything near the second player alone was frozen and invisible
+
+**The problem.** Animals near the second player did not appear until they stood
+almost on top of them, and then hung mid-stride. Standing still beside them woke
+them; taking a step froze them again. The user's real worry was the right one:
+this could not just be about animals.
+
+**Why did it happen?** It was not. The treat zone - the circle inside which the
+engine simulates, animates and replicates anything at all - admits entities by
+ROOM-GRAPH walking distance, and outdoors that graph lies enormously: measured
+at the farm, a pig 669 units from the partner in a straight line was claimed to
+be a 10,822-unit walk. Verdict: too far. Not simulated, not sent. What the
+second player saw up close was their own machine's local copy from the world
+transfer, drawn in whatever pose the savegame carried. Stepping into the
+animal's own room made the graph truthful (same room = direct distance), which
+is why standing exactly there worked and one step out did not. Vanilla shipped
+with this arithmetic; with one player it is unobservable, because the only
+observer is always the camera, and the camera is only ever close to things
+whose rooms connect sanely.
+
+Three prior theories died by measurement before this one was even suspected:
+the partner's room lookup failing (measured: always known), and the snapshot's
+192-entity cap overflowing (measured: never hit). The diagnosis that survived
+came from logging the exact arithmetic of the rejection.
+
+**The fix.** The partner's leg of the distance test takes whichever is smaller:
+the room graph's answer or the straight line. A walk can honestly be longer
+than the crow flies, but not sixteen times longer to something at arm's length
+- and the straight line is already the engine's own fallback one branch below,
+whenever rooms are unknown. The camera's leg stays exactly as vanilla shipped
+it. Approved by the user before it was applied, per the house rule. Confirmed
+by the user: animals now move before they are even in sight.
+
+## 35. Finishing the character sheet threw the second player out of the world
+
+**The problem.** A joining player now gets the character creation screen on
+their first join - and pressing Done teleported them to the start of the game
+with the camera in the floor.
+
+**Why did it happen?** In the original game that screen has exactly one
+meaning: the last step before a new game begins. Finishing it therefore raises
+START_NEW_QUEST, and the engine loads level one and places the player at the
+beginning of the story. A joining player fills in the same sheet mid-session,
+already standing in somebody else's world - and "now begin" took them out of
+it.
+
+**The fix.** The flag is only raised when it really is a new game; a joining
+player finishing the sheet just closes it and stays where they are.
+Confirmed by the user.
+
+## 36. Choosing a face changed the other player's face too
+
+**The problem.** The second player picks a face on the new character sheet -
+and the first player's face changes with it. Meanwhile the chooser keeps the
+default.
+
+**Why did it happen?** Vanilla faces do not change the character; they
+overwrite the PIXELS INSIDE four shared head textures, and every model using
+them changes at once - the engine's own TODO at that spot says as much. With
+one hero in the world that was invisible. With two, whoever picked last decided
+what both looked like, and there was no way to give the second player a face of
+their own. Their choice was in fact already crossing the wire, arriving, and
+being ignored.
+
+**The wrong turns, in order.** First binding the partner's head to a private
+texture container kept out of the global list - which is also the list the
+renderer uploads from, so the head drew as nothing and the gore stump behind it
+showed through. Then falling back to a "twin" texture that turned out, by
+checksum, to be a different face entirely, which put the same wrong head on
+both. The real fix is the one the engine's TODO asked for all along.
+
+**The fix.** Faces rebind the head materials on ONE body to the files for the
+chosen face - a routine shared by the local player and the partner's body, so
+nothing overwrites anything and two heroes wear two faces. Rebound again after
+armour changes, which rebuild the mesh with the shared textures on it. Also
+fixed on the way: the rebind is applied through entities.get() rather than
+entities.player(), which is entries[0] with no bounds check and crashed at
+startup when the routine ran before the hero entity existed. Confirmed by the
+user.
