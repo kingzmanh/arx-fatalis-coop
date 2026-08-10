@@ -85,6 +85,22 @@ check     "the release impulse travels with a drop"  net/CoopNet.cpp      "write
 check     "creatures block and can be fought"        physics/Collisions.cpp "lagDriven"
 check     "creatures can reach the other player"     game/NPC.cpp         "coop::isAvatarEntity(target)"
 check     "a struck creature turns on its attacker"  net/CoopPlayer.cpp   "scriptContextPlayer()"
+# ...and KEEPS turning on them. The aggro pass re-runs every frame from sight
+# and distance alone, so without a remembered grudge it handed the creature
+# straight back to whoever stood nearer - the one not fighting it.
+check     "and keeps facing them for a while"        net/CoopPlayer.cpp   "GrudgeWindow"
+check     "every hit records who threw it"           game/Damage.cpp      "coop::noteAttacker"
+
+[ $QUIET -eq 0 ] && echo "--- what stands out"
+# HALO -o is how the game says "this one matters" - a quest item, the thing you
+# were just asked to find. It is set by a script, scripts run on the authority,
+# and it was missing from the snapshot, so the other player saw plain scenery.
+check     "a glow put on by a script travels"        net/CoopWorld.cpp    "halo_native.flags"
+# ...and is promoted to the copy the renderer reads. The two are joined only by
+# ARX_HALO_SetToNative, which nothing calls on this side for a remote glow, so
+# setting the native value alone was invisible until something else touched it.
+check     "and is the copy actually drawn"           net/CoopWorld.cpp    "ARX_HALO_SetToNative(entity)"
+
 check     "weapons never wear against a companion"   game/Equipment.cpp   "coop::isAvatarEntity(target)"
 
 [ $QUIET -eq 0 ] && echo "--- what the other player looks like"

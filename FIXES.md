@@ -789,3 +789,58 @@ lines - were never sent anywhere.
 something, so the one who answers is the one who remembers you. And a line
 spoken because of the other player travels to them whatever kind of line it is.
 Confirmed by the user for the item replies.
+
+## 32. Creatures fought whoever stood nearer, not whoever was hitting them
+
+**The problem.** Alone, a creature attacks the second player correctly. With
+both players present it commits to the first and stays there - the second player
+can stand behind it hacking away while it walks at someone who has not moved.
+
+**Why did it happen?** Being hit carried no weight in the decision at all. Once
+both players are seen, the choice falls through to distance with hysteresis:
+
+    if(current == first) return (toOther + margin < toFirst) ? other : first;
+
+Margin is 150 units, so the second player had to get a hundred and fifty units
+NEARER to take a creature that was already facing the first. Standing side by
+side, that never happens.
+
+A hit did retarget briefly - applyHitRequest runs the victim's ON OUCH in the
+striker's name - but the aggro pass re-runs every frame from sight and distance
+alone, with no memory of the blow, and handed the creature straight back.
+
+**The fix.** Remember who last hurt each creature and prefer them for six
+seconds, checked before sight and before distance.
+
+**The wrong turn.** The hook first went in damageCharacter(), which reads like
+the one place all damage passes through and is not: it is contact damage and one
+script command, and it CALLS the real one. Nothing was ever recorded, so the
+grudge table was always empty. The choke point is damageNpc() - every melee,
+arrow and spell that lands on a creature arrives there. Confirmed by the user.
+
+## 33. Quest items did not glow for the second player
+
+**The problem.** Things the game lights up to say "this one matters" were plain
+scenery on the guest's screen. Some of them, not all, and - the user's word -
+random.
+
+**Why did it happen?** Two mistakes, one behind the other.
+
+The glow is set by the script command HALO -o, scripts run on the authority, and
+the halo was not in the entity snapshot at all. That is the "some, not all": an
+item already glowing when the level loaded arrives in the shared savegame and
+looks right, while anything lit mid-game by a script never travels.
+
+Replicating it changed nothing, because there are two copies of it. halo_native
+is what scripts set; halo is what the renderer reads. They are joined only by
+ARX_HALO_SetToNative(), called by the script command, by two spells, and at
+level load - none of which run on this side for a glow lit on the other machine.
+The value arrived and sat there unread.
+
+That is exactly what "random" meant, and it was the clue that solved it: a
+correct value only sometimes visible means something unrelated is occasionally
+doing the promotion - a spell touching the item, a reload - which is precisely
+what was happening.
+
+**The fix.** Halo flags, colour and radius in the snapshot, and the promotion
+called after applying them. Confirmed by the user.

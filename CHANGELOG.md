@@ -3,6 +3,33 @@
 Every release keeps its own build. Older versions are never replaced, so if a
 new one breaks something for you, the previous download is still there.
 
+## 0.11
+
+**Fixed**
+
+- Creatures now fight whoever is actually hitting them. With both players
+  present a creature committed to the first and stayed there - the second could
+  stand behind it hacking away while it walked at someone who had not moved,
+  because the only thing being weighed was who stood nearer. Whoever lands a
+  blow now holds its attention for a few seconds, before any question of sight
+  or distance.
+- Quest items glow for the second player. Things the game lights up to say "this
+  one matters" were plain scenery on their screen unless the glow happened to be
+  on before the level loaded.
+
+**Changed**
+
+- Network protocol 28 -> 29. Both players need this build; older ones are
+  refused at the handshake rather than left to desync.
+
+**Known issues**
+
+- Never properly tested over the internet; almost all testing has been two
+  windows on one computer
+- Animals only appear once the host has been near them, and only move while the
+  host is nearby
+- Loot can duplicate - both players may find their own copy
+
 ## 0.10
 
 **Added**
