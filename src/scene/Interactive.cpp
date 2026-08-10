@@ -438,6 +438,7 @@ void PrepareIOTreatZone(long flag) {
 	RoomHandle partnerRoom = hasPartner
 	                         ? ARX_PORTALS_GetRoomNumForPosition(partnerPos, RoomPositionForCamera)
 	                         : RoomHandle();
+
 	RoomHandle playerRoom = ARX_PORTALS_GetRoomNumForPosition(player.pos, RoomPositionForCamera);
 	
 	for(EntityHandle equipment : player.equiped) {
@@ -505,8 +506,24 @@ void PrepareIOTreatZone(long flag) {
 				}
 				dists = square(SP_GetRoomDist(probe, cameraPos, entity.room, cameraRoom));
 				if(hasPartner && partnerRoom) {
-					dists = std::min(dists, square(SP_GetRoomDist(probe, partnerPos,
-					                                              entity.room, partnerRoom)));
+					/*
+					 * The partner's leg takes whichever is smaller: the room
+					 * graph's answer or the straight line. A walk can honestly
+					 * be longer than the crow flies, but not sixteen times
+					 * longer to a pig the partner is standing beside - and that
+					 * is what the graph claimed (measured: crow 669, graph
+					 * 10822). Outdoors its rooms connect so sparsely that
+					 * everything near the partner alone was refused - frozen,
+					 * unsent - until they stepped into its own room. The
+					 * straight line is already the engine's own fallback, one
+					 * branch below, whenever rooms are unknown.
+					 *
+					 * The camera's leg stays exactly as vanilla shipped it.
+					 */
+					float partnerD = std::min(
+					    square(SP_GetRoomDist(probe, partnerPos, entity.room, partnerRoom)),
+					    arx::distance2(probe, partnerPos));
+					dists = std::min(dists, partnerD);
 				}
 			} else {
 				dists = arx::distance2(probe, cameraPos);
