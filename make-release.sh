@@ -26,7 +26,14 @@ fi
 # A published build is never replaced. Someone is running the last one, and if
 # this release breaks something for them the only way back is the old download
 # still being there. Bump the version instead - that is what versions are for.
-if [ -f "$HERE/release/arx-coop-$VERSION-windows.zip" ] && [ "$2" != "--replace" ]; then
+#
+# release/backup is checked as well as release itself: packaged zips are filed
+# away there once published, and a build that has been tidied out of sight is
+# still a build somebody downloaded. Tidying must not quietly make it
+# overwritable.
+if { [ -f "$HERE/release/arx-coop-$VERSION-windows.zip" ] \
+     || [ -f "$HERE/release/backup/arx-coop-$VERSION-windows.zip" ]; } \
+   && [ "$2" != "--replace" ]; then
 	echo "arx-coop-$VERSION-windows.zip already exists."
 	echo "Bump the version, or pass --replace if it was never published."
 	exit 1
