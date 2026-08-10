@@ -1,5 +1,6 @@
 /*
  * Copyright 2013-2022 Arx Libertatis Team (see the AUTHORS file)
+ * Copyright 2026 kingzmanh
  *
  * This file is part of Arx Libertatis.
  *

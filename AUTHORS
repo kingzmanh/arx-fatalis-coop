@@ -6,6 +6,17 @@ We welcome your criticism, suggestions and contributions!
 You can find us at https://arx-libertatis.org/
 
 
+~ARX FATALIS CO-OP
+
+The two player co-op in this build - everything under src/net, and the changes
+to the engine that made room for a second player - was written by:
+
+kingzmanh (https://github.com/kingzmanh/arx-fatalis-coop)
+
+Everything else is the work of the people below, without whom none of it could
+exist. Arx Libertatis is their decade of work; this only stands on top of it.
+
+
 ~ARX LIBERTATIS CONTRIBUTORS
 
 Erik Lund (Akhilla)

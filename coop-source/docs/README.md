@@ -15,6 +15,11 @@ the open source version of Arkane Studios' *Arx Fatalis*.
 
 ---
 
+**This is free.** The only official download is the
+[Releases page](https://github.com/kingzmanh/arx-fatalis-coop/releases) of this
+repository. If you paid for it, you were charged for something I am giving away
+for free.
+
 ## What this is
 
 Arx Fatalis is a single player game. This makes it a two player one.
