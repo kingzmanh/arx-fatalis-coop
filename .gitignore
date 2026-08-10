@@ -5,8 +5,14 @@
 # use their own copy of the game. Committing any of it here is the one mistake
 # that could get this repository taken down - and because git keeps history,
 # deleting it afterwards would not undo it.
-game/
-data/
+# Anchored with a leading slash so they mean THESE folders, at the top of the
+# repository, and nothing else. Unanchored, "game/" matches a directory called
+# game at any depth - which quietly swallowed src/game/, the engine's own source.
+# Its files were already tracked so they still committed, but git refused to
+# stage them by name, and a NEW file added there would never have been committed
+# at all, with nothing to say so.
+/game/
+/data/
 *.pak
 *.ftl
 *.tea
@@ -56,3 +62,9 @@ desktop.ini
 
 # Packaged releases - these go on the GitHub releases page, not in the repo
 release/
+
+# A working copy of the engine's sources, kept beside the mod for reference.
+# It was hidden by the unanchored "game/" rule above; now that that is anchored,
+# it needs saying outright - it is 500 KB of somebody else's tree and does not
+# belong in this repository's history.
+/coop-source/engine-files/
