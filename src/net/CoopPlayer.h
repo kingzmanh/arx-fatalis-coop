@@ -248,6 +248,32 @@ void applyRemoteDamage(float damage, u32 damageType);
 void noteAttacker(const Entity & victim, const Entity & attacker);
 
 /*!
+ * Whether this player should be asked who they are, and clear the request.
+ *
+ * The first player is asked at New Game: face, attributes, skills. A joining
+ * player never was - they arrived as a default adventurer with a face they did
+ * not pick, which is a strange way to meet somebody you are about to spend a
+ * playthrough with.
+ *
+ * Asked once per playthrough, on the first join, because from the second join
+ * onward there is a saved character to restore and asking again would throw it
+ * away. Read from the main loop rather than acted on where it is set, because
+ * where it is set the world is still loading and there is no screen to show.
+ */
+[[nodiscard]] bool takeCharacterCreationRequest();
+
+/*!
+ * True while a joining player is on the character sheet, mid-session.
+ *
+ * Finishing that screen normally means "start the new game you were setting
+ * up", so it raises START_NEW_QUEST and the game loads level one and puts the
+ * player at the beginning. For somebody already standing in their friend's
+ * world that is a teleport out of it - which is exactly what it did.
+ */
+[[nodiscard]] bool isJoiningCharacterCreation();
+void setJoiningCharacterCreation(bool active);
+
+/*!
  * Marks a stretch of script execution as being *about* the other player.
  *
  * Scripts have one word, "player", and outside co-op it can only mean one

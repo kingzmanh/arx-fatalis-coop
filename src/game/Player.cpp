@@ -1028,14 +1028,17 @@ void ARX_PLAYER_FrameCheck(PlatformDuration delta) {
 }
 TextureContainer * PLAYER_SKIN_TC = nullptr;
 
-void ARX_PLAYER_Restore_Skin() {
+/*!
+ * The four head textures a chosen face uses - bare, chainmail, mithril, leather.
+ *
+ * Lifted out of ARX_PLAYER_Restore_Skin so that the other player's body can ask
+ * the same question without a second copy of the table drifting out of step
+ * with this one.
+ */
+void ARX_PLAYER_SkinTextures(unsigned char skin, res::path & tx, res::path & tx2,
+                             res::path & tx3, res::path & tx4) {
 	
-	res::path tx;
-	res::path tx2;
-	res::path tx3;
-	res::path tx4;
-	
-	switch(player.skin) {
+	switch(skin) {
 		case 0:
 			tx  = "graph/obj3d/textures/npc_human_base_hero_head";
 			tx2 = "graph/obj3d/textures/npc_human_chainmail_hero_head";
@@ -1079,25 +1082,78 @@ void ARX_PLAYER_Restore_Skin() {
 			tx4 = "graph/obj3d/textures/npc_human_leather_hero_head";
 			break;
 	}
-
-	TextureContainer * tmpTC;
 	
-	// TODO maybe it would be better to replace the textures in the player object instead of replacing the texture data for all objects that use these textures
+}
 
-	if(PLAYER_SKIN_TC && !tx.empty())
-		PLAYER_SKIN_TC->LoadFile(tx);
+void ARX_PLAYER_Restore_Skin() {
+	
+	res::path tx;
+	res::path tx2;
+	res::path tx3;
+	res::path tx4;
+	
+	ARX_PLAYER_SkinTextures(player.skin, tx, tx2, tx3, tx4);
+	
+	/*
+	 * Rebind the head textures on this body rather than repainting the shared
+	 * ones - which is what the TODO that used to sit here asked for.
+	 *
+	 * The old way overwrote the PIXELS INSIDE those four textures, so every
+	 * model using them changed at once. With one hero in the world that was
+	 * invisible; with two it meant whoever picked a face last decided what BOTH
+	 * of them looked like, and there was no way to give the other player a face
+	 * of their own.
+	 */
+	/*
+	 * entities.get rather than entities.player(): player() is entries[0] with no
+	 * bounds check, and this is called before the hero entity exists as well as
+	 * after - it used to touch nothing but textures, so it never cared. get()
+	 * answers nullptr instead of reading off the end of an empty list.
+	 */
+	Entity * hero = entities.get(EntityHandle_Player);
+	ARX_PLAYER_ApplySkin(hero ? hero->obj : nullptr, player.skin);
 
-	tmpTC = TextureContainer::Find("graph/obj3d/textures/npc_human_chainmail_hero_head");
-	if(tmpTC && !tx2.empty())
-		tmpTC->LoadFile(tx2);
+}
 
-	tmpTC = TextureContainer::Find("graph/obj3d/textures/npc_human_chainmail_mithril_hero_head");
-	if(tmpTC && !tx3.empty())
-		tmpTC->LoadFile(tx3);
+/*!
+ * Put a chosen face on one body.
+ *
+ * Recognises every head texture the game has for a hero, whichever face it
+ * belongs to, so it can be called again to change from one face to another -
+ * and after a mesh rebuild, which brings the default textures back with it.
+ */
+void ARX_PLAYER_ApplySkin(EERIE_3DOBJ * obj, unsigned char skin) {
 
-	tmpTC = TextureContainer::Find("graph/obj3d/textures/npc_human_leather_hero_head");
-	if(tmpTC && !tx4.empty())
-		tmpTC->LoadFile(tx4);
+	if(!obj) {
+		return;
+	}
+
+	res::path want[4];
+	ARX_PLAYER_SkinTextures(skin, want[0], want[1], want[2], want[3]);
+
+	for(TextureContainer *& material : obj->materials) {
+
+		if(!material) {
+			continue;
+		}
+
+		bool replaced = false;
+		for(unsigned char face = 0; face <= 6 && !replaced; face++) {
+			res::path known[4];
+			ARX_PLAYER_SkinTextures(face, known[0], known[1], known[2], known[3]);
+			for(size_t slot = 0; slot < 4; slot++) {
+				if(material->m_texName == known[slot]) {
+					if(TextureContainer * chosen = TextureContainer::Load(want[slot])) {
+						material = chosen;
+					}
+					replaced = true;
+					break;
+				}
+			}
+		}
+
+	}
+
 }
 
 /*!

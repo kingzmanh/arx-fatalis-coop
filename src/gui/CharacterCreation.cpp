@@ -26,6 +26,7 @@
 #include "core/Localisation.h"
 #include "game/Player.h"
 #include "gui/Cursor.h"
+#include "net/CoopPlayer.h"
 #include "gui/Interface.h"
 #include "gui/Menu.h"
 #include "gui/MenuWidgets.h"
@@ -48,7 +49,22 @@ static long SP_HEAD = 0;
 extern bool START_NEW_QUEST;
 
 static void ARX_MENU_NEW_QUEST_Clicked_QUIT() {
-	START_NEW_QUEST = true;
+
+	/*
+	 * Normally this screen is the last step of starting a new game, so finishing
+	 * it says "now begin" - and beginning means loading the first level and
+	 * putting the player at the start of the story.
+	 *
+	 * A joining player fills the same sheet in for a different reason: they are
+	 * already standing in somebody else's world and are only saying who they
+	 * are. Beginning would take them out of it, which is what it did - dropped
+	 * at the start of the game with the camera on the floor.
+	 */
+	if(!coop::isJoiningCharacterCreation()) {
+		START_NEW_QUEST = true;
+	}
+
+	coop::setJoiningCharacterCreation(false);
 	g_canResumeGame = true;
 	ARX_MENU_Clicked_QUIT();
 }

@@ -115,6 +115,7 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 #include "gui/Interface.h"
 #include "gui/LoadLevelScreen.h"
 #include "gui/Logo.h"
+#include "gui/CharacterCreation.h"
 #include "gui/Menu.h"
 #include "gui/MenuPublic.h"
 #include "gui/MenuWidgets.h"
@@ -1180,6 +1181,25 @@ void ArxGame::doFrame() {
 	// Take delivery of everything the other player sent before this frame reads
 	// any of it, so a frame never sees half of an update.
 	coop::poll();
+
+	/*
+	 * A joining player is asked who they are, once, on their first arrival.
+	 *
+	 * The request is raised while the world is still loading, where there is no
+	 * screen to put it on, so it waits here until the game is actually running.
+	 * The session keeps breathing behind the menu: poll() above and flush()
+	 * below sit outside every mode branch, so the host sees a partner standing
+	 * still rather than one who has stopped answering.
+	 */
+	if(ARXmenu.mode() == Mode_InGame && coop::takeCharacterCreationRequest()) {
+		g_characterCreation.loadData();
+		g_playerBook.forcePage(BOOKMODE_STATS);
+		ARX_PLAYER_Restore_Skin();
+		// Marked so that finishing the sheet returns them to where they are
+		// standing, rather than starting the game they are already inside.
+		coop::setJoiningCharacterCreation(true);
+		ARXmenu.requestMode(Mode_CharacterCreation);
+	}
 
 	updateTime();
 

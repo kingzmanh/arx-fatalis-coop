@@ -57,6 +57,7 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 #include "game/Spells.h"
 #include "game/GameTypes.h"
 #include "gui/book/Necklace.h"
+#include "io/resource/ResourcePath.h"
 #include "math/Types.h"
 #include "util/Flags.h"
 
@@ -455,7 +456,13 @@ void ARX_PLAYER_PutPlayerInNormalStance();
 void ARX_PLAYER_Start_New_Quest();
 void ARX_PLAYER_Rune_Add_All();
  
+//! The four head textures a chosen face uses: bare, chainmail, mithril, leather.
+void ARX_PLAYER_SkinTextures(unsigned char skin, res::path & tx, res::path & tx2,
+                             res::path & tx3, res::path & tx4);
 void ARX_PLAYER_Restore_Skin();
+
+//! Put a chosen face on one body, replacing whichever face it wears now.
+void ARX_PLAYER_ApplySkin(EERIE_3DOBJ * obj, unsigned char skin);
 float GetPlayerStealth();
 
 void ARX_GAME_Reset();

@@ -172,6 +172,9 @@ void shareAnimations(Entity * body) {
 
 }
 
+//! Defined below; the body has to be built before it can be given a face.
+void paintAvatarFace(Entity * body, u8 skin);
+
 Entity * createAvatarEntity() {
 
 	Entity * source = entities.player();
@@ -189,6 +192,9 @@ Entity * createAvatarEntity() {
 		delete body;
 		return nullptr;
 	}
+
+	// Their face, not a repaint of ours. See paintAvatarFace.
+	paintAvatarFace(body, g_avatar.skin);
 
 	body->ioflags = IO_NPC;
 	body->_npcdata = new IO_NPCDATA;
@@ -299,6 +305,47 @@ Entity * g_avatarShieldEntity = nullptr;
  * Rebuilt only when the set actually changes, because it means reloading the
  * mesh - too expensive to do every frame and pointless when nothing has moved.
  */
+/*!
+ * Give the other player their own face.
+ *
+ * Choosing a face does not repaint your character - it overwrites the PIXELS
+ * INSIDE a shared texture, and every model using that texture changes with it.
+ * The engine says so itself, in a TODO above the four lines that do it. With
+ * one hero on screen that was harmless; with two it means whoever picks last
+ * decides what both of them look like.
+ *
+ * So the other player's head is bound to its own container instead, loaded
+ * with NoInsert so it never enters the global list - which is where the
+ * overwrite goes looking. Their face is then theirs no matter what this player
+ * chooses, and picking a face here stops changing the person standing next to
+ * you.
+ *
+ * Called again after every rebuild: putting armour on throws the whole mesh
+ * away and loads a fresh one, and a fresh one comes with the shared textures.
+ */
+//! The face currently painted on, so it is only redone when it changes.
+u8 g_paintedSkin = 0xff;
+
+void paintAvatarFace(Entity * body, u8 skin) {
+
+	if(!body || !body->obj) {
+		return;
+	}
+
+	g_paintedSkin = skin;
+
+	/*
+	 * The same routine the local player uses on itself.
+	 *
+	 * Both bodies simply point their head material at the file for the face
+	 * they were given, and nothing overwrites anything, so two heroes can stand
+	 * in the same room wearing different faces - which the engine had never had
+	 * to do before.
+	 */
+	ARX_PLAYER_ApplySkin(body->obj, skin);
+
+}
+
 void updateAvatarArmour(Entity * body) {
 
 	if(!body) {
@@ -364,6 +411,9 @@ void updateAvatarArmour(Entity * body) {
 			LogWarning << "[coop] could not build the armour they are wearing: " << piece.path;
 		}
 	}
+
+	// The mesh that was just loaded wears the shared hero textures again.
+	paintAvatarFace(body, g_avatar.skin);
 
 	EERIE_Object_Precompute_Fast_Access(body->obj);
 
@@ -958,6 +1008,16 @@ void updateAvatar() {
 
 	// Armour first: it rebuilds the mesh the weapon and shield hang off.
 	updateAvatarArmour(body);
+
+	/*
+	 * Their face can change after the body exists - most obviously when a
+	 * joining player is still choosing one while standing here. Painted only
+	 * at build time, the body kept whatever they had when they arrived,
+	 * which is the default nobody picked.
+	 */
+	if(g_avatar.skin != g_paintedSkin) {
+		paintAvatarFace(body, g_avatar.skin);
+	}
 	updateAvatarWeapon(body);
 	updateAvatarShield(body);
 
@@ -1145,6 +1205,26 @@ s32 firstFreeInstanceHint() {
 
 }
 
+//! Set on the first join of a playthrough; consumed by the main loop.
+static bool g_askWhoTheyAre = false;
+
+//! Set while that player is actually on the character sheet.
+static bool g_onCharacterSheet = false;
+
+bool isJoiningCharacterCreation() {
+	return g_onCharacterSheet;
+}
+
+void setJoiningCharacterCreation(bool active) {
+	g_onCharacterSheet = active;
+}
+
+bool takeCharacterCreationRequest() {
+	bool ask = g_askWhoTheyAre;
+	g_askWhoTheyAre = false;
+	return ask;
+}
+
 void applyGuestIdentity() {
 
 	if(!isGuest() || !entities.player()) {
@@ -1214,7 +1294,14 @@ void applyGuestIdentity() {
 	                : std::fopen(guestProfileFile().string().c_str(), "rb");
 	if(!f) {
 		ARX_PLAYER_MakeFreshHero();
-		LogInfo << "[coop] first join of this playthrough: a fresh adventurer";
+		/*
+		 * First join, so there is nobody to restore - which makes this the
+		 * one moment worth asking who they want to be. Every later join finds
+		 * a profile and skips this, so the character they make here is the
+		 * one they keep.
+		 */
+		g_askWhoTheyAre = true;
+		LogInfo << "[coop] first join of this playthrough: asking who they are";
 		return;
 	}
 
