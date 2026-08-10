@@ -3,6 +3,35 @@
 Every release keeps its own build. Older versions are never replaced, so if a
 new one breaks something for you, the previous download is still there.
 
+## 0.12
+
+**Added**
+
+- The second player creates their own character on the first join - face,
+  attributes, skills, the same screen the first player gets at New Game. Asked
+  once per playthrough; every later join restores the character you made. And
+  your face is yours: choosing one no longer changes how the other player looks.
+
+**Fixed**
+
+- The world now lives around the second player. Creatures near them alone used
+  to be frozen and invisible until you stood right on top of them - the engine's
+  room-graph distance claimed a pig at arm's length was a ten-thousand-unit walk
+  away, so nothing near you was simulated or sent. Everything within range of
+  either player is awake now.
+
+**Changed**
+
+- Network protocol unchanged (29): 0.11 and 0.12 can play together. Both players
+  on the same version is still the recommendation.
+
+**Known issues**
+
+- Never properly tested over the internet; almost all testing has been two
+  windows on one computer
+- Loot can duplicate - both players may find their own copy
+- Enemies sometimes pick the wrong target in crowded fights
+
 ## 0.11
 
 **Added**
