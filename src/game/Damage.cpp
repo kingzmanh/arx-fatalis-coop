@@ -751,6 +751,7 @@ void damageCharacter(Entity & entity, float dmg, Entity & source, Spell * spell,
 		dmg = dmg * (g_gameTime.lastFrameDuration() / 1s);
 	}
 
+
 	/*
 	 * A hit on the other player - a sword swing, a fireball, a poison cloud -
 	 * is settled on their machine, which is where their health, their poison
@@ -833,6 +834,18 @@ float damageNpc(Entity & npc, float dmg, Entity * source, Spell * spell, DamageT
 
 	arx_assert(npc.ioflags & IO_NPC);
 	arx_assert(npc != *entities.player());
+
+	/*
+	 * Whoever threw this, remembered before anything downstream can refuse it.
+	 *
+	 * Every blow that lands on a creature arrives here - melee, arrow, spell,
+	 * from either player - which makes it the one place that sees them all.
+	 * damageCharacter() looks like the choke point and is not: it is contact
+	 * damage and one script command, and it CALLS this.
+	 */
+	if(dmg > 0.f && source) {
+		coop::noteAttacker(npc, *source);
+	}
 
 	if((npc.ioflags & IO_INVULNERABILITY)) {
 		return 0.f;

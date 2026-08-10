@@ -233,6 +233,21 @@ void applyRemoteDamage(float damage, u32 damageType);
 [[nodiscard]] Entity * chooseTargetPlayer(const Entity * io, const Entity * current = nullptr);
 
 /*!
+ * Remember which player just hurt this creature.
+ *
+ * Being hit is the loudest thing that can happen to something, and until now it
+ * carried no weight at all in deciding who to fight. A creature already facing
+ * the first player kept facing them unless the second got a hundred and fifty
+ * units closer - so the one hacking at its back was ignored in favour of the
+ * one standing still, which is exactly backwards.
+ *
+ * Remembered rather than applied immediately because the aggro pass re-runs
+ * every frame from sight and distance alone, and would hand the creature
+ * straight back a moment later.
+ */
+void noteAttacker(const Entity & victim, const Entity & attacker);
+
+/*!
  * Marks a stretch of script execution as being *about* the other player.
  *
  * Scripts have one word, "player", and outside co-op it can only mean one

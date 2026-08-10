@@ -38,7 +38,7 @@ namespace coop {
  * misread a newer one. Both sides check this during the handshake and refuse
  * the connection rather than desyncing silently later.
  */
-constexpr u32 ProtocolVersion = 28;
+constexpr u32 ProtocolVersion = 29;
 
 //! Default listen port, used when the address the joining player typed has none.
 constexpr unsigned short DefaultPort = 27100;

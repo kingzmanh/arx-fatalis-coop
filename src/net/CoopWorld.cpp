@@ -234,6 +234,19 @@ struct SentState {
 	float ignition = 0.f;
 	u16 gameFlags = 0;
 	u32 ioFlags = 0;
+	/*
+	 * The glow a script puts on things that matter.
+	 *
+	 * HALO -o is how the game says "this one is worth your attention" - a quest
+	 * item, the thing a character has just asked you to find. Scripts set it,
+	 * scripts run on the authority, and it was never in the snapshot: the other
+	 * player walked past lit-up things seeing plain scenery. Only SOME items
+	 * looked wrong, because anything already glowing when the level loaded came
+	 * across in the savegame and was fine.
+	 */
+	u16 haloFlags = 0;
+	Color3f haloColor = Color3f::black;
+	float haloRadius = 0.f;
 };
 
 std::map<std::string, SentState, std::less<>> g_sentStates;
@@ -264,7 +277,10 @@ bool sentStateDiffers(const SentState & a, const SentState & b) {
 	    || glm::abs(a.invisibility - b.invisibility) > 0.01f
 	    || glm::abs(a.ignition - b.ignition) > 0.25f
 	    || a.gameFlags != b.gameFlags
-	    || a.ioFlags != b.ioFlags;
+	    || a.ioFlags != b.ioFlags
+	    || a.haloFlags != b.haloFlags
+	    || a.haloColor != b.haloColor
+	    || glm::abs(a.haloRadius - b.haloRadius) > 0.01f;
 }
 
 /*!
@@ -413,6 +429,9 @@ void writeEntitySnapshot(Writer & writer, bool full) {
 		state.ignition = entity.ignition;
 		state.gameFlags = u16(entity.gameFlags & ReplicatedGameFlags);
 		state.ioFlags = u32(entity.ioflags & ReplicatedEntityFlags);
+		state.haloFlags = u16(entity.halo_native.flags);
+		state.haloColor = entity.halo_native.color;
+		state.haloRadius = entity.halo_native.radius;
 
 		if(!full) {
 			auto known = g_sentStates.find(entity.idString());
@@ -460,6 +479,11 @@ void writeEntitySnapshot(Writer & writer, bool full) {
 		writer.put(entity->ignition);
 		writer.put(u16(entity->gameFlags & ReplicatedGameFlags));
 		writer.put(u32(entity->ioflags & ReplicatedEntityFlags));
+		writer.put(u16(entity->halo_native.flags));
+		writer.put(entity->halo_native.color.r);
+		writer.put(entity->halo_native.color.g);
+		writer.put(entity->halo_native.color.b);
+		writer.put(entity->halo_native.radius);
 
 	}
 
@@ -503,6 +527,12 @@ void readEntitySnapshot(Reader & reader, u32 serverTimeMs) {
 		float ignition = reader.getFloat();
 		u16 gameFlags = reader.getU16();
 		u32 ioFlags = reader.getU32();
+		u16 haloFlags = reader.getU16();
+		Color3f haloColor;
+		haloColor.r = reader.getFloat();
+		haloColor.g = reader.getFloat();
+		haloColor.b = reader.getFloat();
+		float haloRadius = reader.getFloat();
 
 		if(!reader.ok()) {
 			return;
@@ -641,6 +671,22 @@ void readEntitySnapshot(Reader & reader, u32 serverTimeMs) {
 		// turned to smoke stays solid here.
 		entity->ioflags &= ~ReplicatedEntityFlags;
 		entity->ioflags |= EntityFlags::load(ioFlags) & ReplicatedEntityFlags;
+
+		/*
+		 * Both copies, not just the native one.
+		 *
+		 * halo_native is what a script sets; halo is what the renderer actually
+		 * looks at, and the two are joined only by ARX_HALO_SetToNative() -
+		 * called by the script command, by a couple of spells, and at level
+		 * load. None of those run over here for a glow lit on the other
+		 * machine, so setting the native value alone changed nothing visible,
+		 * until something unrelated happened to touch the same entity and the
+		 * glow appeared out of nowhere.
+		 */
+		entity->halo_native.flags = HaloFlags::load(haloFlags);
+		entity->halo_native.color = haloColor;
+		entity->halo_native.radius = haloRadius;
+		ARX_HALO_SetToNative(entity);
 
 		// The authority is looking at it, so we are too: without this the
 		// replicated entities fall out of our own treat zone and stop drawing.

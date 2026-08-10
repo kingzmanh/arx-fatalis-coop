@@ -559,6 +559,41 @@ float pathDistanceToPlayer(const Entity * io, const Vec3f & playerPos) {
 	return fdist(io->pos, playerPos);
 }
 
+/*!
+ * Who last hurt each creature, and when.
+ *
+ * Keyed by id string rather than handle: handles are reused the moment an
+ * entity is freed, and a stale one would hand a creature's grudge to whatever
+ * took its slot. Entries are never swept - they are only ever read through a
+ * time window, so an old one is simply ignored.
+ */
+struct RecentAttacker {
+	bool partner = false;
+	PlatformInstant when = PlatformInstant(0);
+};
+std::map<std::string, RecentAttacker, std::less<>> g_recentAttackers;
+
+/*
+ * Long enough to survive the walk across a room and a few swings, short enough
+ * that a creature is not still nursing a grudge from another fight entirely.
+ */
+constexpr PlatformDuration GrudgeWindow = 6s;
+
+void noteAttacker(const Entity & victim, const Entity & attacker) {
+
+	if(!isPlaying() || !(victim.ioflags & IO_NPC)) {
+		return;
+	}
+
+	bool byPartner = isAvatarEntity(&attacker);
+	if(!byPartner && attacker.index() != EntityHandle_Player) {
+		return; // creature fighting creature; not ours to arbitrate
+	}
+
+	g_recentAttackers[victim.idString()] = { byPartner, platform::getTime() };
+
+}
+
 Entity * chooseTargetPlayer(const Entity * io, const Entity * current) {
 
 	Entity * first = entities.player();
@@ -585,6 +620,21 @@ Entity * chooseTargetPlayer(const Entity * io, const Entity * current) {
 	 */
 	if(scriptContextPlayer()) {
 		return other;
+	}
+
+	/*
+	 * Whoever hit it last, before any question of eyes or distance.
+	 *
+	 * A creature turns on what is hurting it. That is true of the game with one
+	 * player and was the one thing missing with two: the second player could
+	 * stand behind a goblin and take it apart while it walked at the first
+	 * player, who had not moved, because the only vote being counted was who
+	 * was nearer.
+	 */
+	if(auto it = g_recentAttackers.find(io->idString()); it != g_recentAttackers.end()) {
+		if(platform::getTime() - it->second.when < GrudgeWindow) {
+			return it->second.partner ? other : first;
+		}
 	}
 
 	bool seesFirst = false;
