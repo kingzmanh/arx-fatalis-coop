@@ -5,6 +5,14 @@ new one breaks something for you, the previous download is still there.
 
 ## 0.11
 
+**Added**
+
+- An installer, for anyone who would rather not copy files into a game folder by
+  hand. It finds Arx Fatalis on its own - Steam, including libraries on other
+  drives, GOG, or a copy you built yourself - checks the folder really is the
+  game before touching anything, and leaves a proper uninstaller behind. The zip
+  is still there and is the same files; use whichever you prefer.
+
 **Fixed**
 
 - Creatures now fight whoever is actually hitting them. With both players
