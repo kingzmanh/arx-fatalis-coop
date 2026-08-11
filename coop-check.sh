@@ -69,6 +69,16 @@ check     "zone crossings run in the partner's name" ai/Paths.cpp         "Scope
 
 check     "a guest with no area still travels"       net/CoopNet.cpp      "Standing nowhere is a reason to travel"
 
+check     "story movers carry the partner along"     net/CoopNet.cpp      "bool partyFollowsMover"
+check     "same-level captures order a follow"       script/ScriptedIOControl.cpp "coop::reportPartyTeleport"
+check     "cross-level captures travel both players" script/ScriptedIOControl.cpp "fall through: this machine's player takes the same trip"
+check     "a follower in another area takes the join road" net/CoopNet.cpp "case MsgPartyFollow"
+check     "a scene's move goes to the scene's owner"  script/ScriptedIOControl.cpp "redirectPartnerTeleport"
+
+check     "gold payments run where the quest lives"   gui/Interface.cpp    "coop::requestCombineGold"
+check     "the wallet check reads the giver's purse"  script/Script.cpp    "coop::partnerPurse"
+check     "a payment in their name charges their purse" game/Player.cpp    "coop::chargePartner"
+
 check     "co-op memory travels with the savegame"  net/CoopNet.cpp      "void saveSideState"
 checkgone "the story ledger is not a loose file"     net/CoopNet.cpp      'fopen("coop-story.txt"'
 checkgone "the playthrough id is not a loose file"   net/CoopNet.cpp      'fopen("coop-guid.txt"'

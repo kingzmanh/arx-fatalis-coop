@@ -38,7 +38,7 @@ namespace coop {
  * misread a newer one. Both sides check this during the handshake and refuse
  * the connection rather than desyncing silently later.
  */
-constexpr u32 ProtocolVersion = 29;
+constexpr u32 ProtocolVersion = 30;
 
 //! Default listen port, used when the address the joining player typed has none.
 constexpr unsigned short DefaultPort = 27100;
@@ -148,7 +148,9 @@ enum MessageType : u8 {
 	MsgCutsceneCamera = 87, //!< either -> other: a scene that is yours is looking through this camera
 	MsgSceneHold    = 88, //!< either -> other: a scene of yours has begun / ended; be still for it
 	MsgSceneSkip    = 89, //!< watcher -> performer: I pressed skip; move it along
-	MsgTalkTo       = 90 //!< guest -> host: I am talking to this creature; answer me
+	MsgTalkTo       = 90, //!< guest -> host: I am talking to this creature; answer me
+	MsgPartyFollow  = 91, //!< host -> guest: the story force-moved a player; come stand at this spot
+	MsgCombineGold  = 92 //!< guest -> host: I am handing gold to that entity; here is my purse
 
 };
 

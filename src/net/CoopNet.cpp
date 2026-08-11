@@ -1175,6 +1175,16 @@ void handleMessage(const u8 * data, size_t size) {
 			break;
 		}
 
+		case MsgCombineGold: {
+			std::string targetId = reader.getString();
+			s32 giverGold = reader.getS32();
+			if(reader.ok()) {
+				ApplyScope scope;
+				applyCombineGold(targetId, long(giverGold));
+			}
+			break;
+		}
+
 		case MsgSceneSkip: {
 			ApplyScope scope;
 			// Their scene, their skip. Ours is the hand that has to obey it.
@@ -1495,6 +1505,14 @@ void handleMessage(const u8 * data, size_t size) {
 					player.hunger = std::min(100.f, std::max(player.hunger, value));
 					break;
 				}
+				case PartnerFxGold: {
+					// A payment made in our name on the other machine; the
+					// purse it read was ours, so the coins it takes are too.
+					ARX_PLAYER_AddGold(long(value));
+					player.gold = std::max(0l, player.gold);
+					ARX_SOUND_PlayInterface(g_snd.GOLD);
+					break;
+				}
 				default: break;
 			}
 			break;
@@ -1553,6 +1571,42 @@ void handleMessage(const u8 * data, size_t size) {
 				engageTravelHold(1500);
 			}
 			LogInfo << "[coop] a door offers travel to area " << area << " target " << target;
+			break;
+		}
+
+		case MsgPartyFollow: {
+			Vec3f pos = reader.getVec3f();
+			bool hasYaw = reader.getBool();
+			float yaw = reader.getFloat();
+			if(!reader.ok() || !isGuest() || !isPlaying() || ARXmenu.mode() != Mode_InGame) {
+				break;
+			}
+			/*
+			 * The story force-moved their player; ours stands with them. The
+			 * position is the script's own destination marker - a spot the
+			 * level designers placed a player on, never a computed one.
+			 *
+			 * If we are not even in their area (a same-level capture on a
+			 * level we are not standing in), those coordinates mean nothing
+			 * here - take the join road instead: travel to the host's area
+			 * and land beside them, who by now is standing at the marker.
+			 */
+			if(!sharingArea()) {
+				g_session.travelToHost = true;
+				g_session.joinNudge = true;
+				LogInfo << "[coop] the story moved the party to another area; travelling to them";
+				break;
+			}
+			Entity * me = entities.get(EntityHandle_Player);
+			if(!me) {
+				break;
+			}
+			ARX_INTERACTIVE_Teleport(me, pos);
+			if(hasYaw) {
+				player.desiredangle = player.angle = Anglef(0.f, MAKEANGLE(yaw), 0.f);
+			}
+			ARX_PLAYER_Reset_Fall();
+			LogInfo << "[coop] the story moved the party; standing at their marker now";
 			break;
 		}
 
@@ -3120,6 +3174,65 @@ bool requestCombine(const Entity & source, const Entity & target) {
 	return true;
 }
 
+bool requestCombineGold(const Entity & target) {
+
+	if(!isReplica() || !sharingArea() || isApplyingRemote()) {
+		return false;
+	}
+
+	Writer writer(MsgCombineGold);
+	writer.put(std::string_view(target.idString()));
+	writer.put(s32(player.gold));
+	send(writer, ChannelEvent);
+
+	LogInfo << "[coop] offering gold to " << target.idString()
+	        << " (purse " << player.gold << ")";
+
+	return true;
+}
+
+/*!
+ * The giver's purse while their payment script runs here; -1 means no such
+ * script is running and ^player_gold answers with the local wallet as ever.
+ */
+static long g_partnerPurse = -1;
+
+void setPartnerPurse(long gold) {
+	g_partnerPurse = gold;
+}
+
+void clearPartnerPurse() {
+	g_partnerPurse = -1;
+}
+
+bool partnerPurse(long & gold) {
+
+	if(g_partnerPurse < 0 || !isPartnerScriptContext()) {
+		return false;
+	}
+
+	gold = g_partnerPurse;
+	return true;
+}
+
+bool chargePartner(long delta) {
+
+	if(delta >= 0 || !isPlaying() || !isPartnerScriptContext()) {
+		return false;
+	}
+
+	reportPartnerEffect(PartnerFxGold, float(delta));
+
+	// Consecutive ADDGOLDs in one script must see the balance shrink.
+	if(g_partnerPurse >= 0) {
+		g_partnerPurse = std::max(0l, g_partnerPurse + delta);
+	}
+
+	LogInfo << "[coop] charged the partner " << -delta << " gold in their name";
+
+	return true;
+}
+
 void reportCombineTaken(std::string_view sourceId) {
 
 	if(!isPlaying()) {
@@ -3443,6 +3556,47 @@ void sendTravelOrder(u32 area, std::string_view target, long angle, bool confirm
 
 	LogInfo << "[coop] sent travel order: area " << area << " target " << target;
 
+}
+
+bool partyFollowsMover(const Entity * mover) {
+
+	if(!isPlaying() || !mover) {
+		return false;
+	}
+
+	return (mover->ioflags & IO_NPC) || mover->className() == "meteor_akbaa";
+}
+
+void reportPartyTeleport(const Entity * mover, const Vec3f & pos) {
+
+	if(!partyFollowsMover(mover)) {
+		return;
+	}
+
+	Writer writer(MsgPartyFollow);
+	writer.put(pos);
+	writer.put(true);                       // face the way the moved player faces
+	writer.put(player.angle.getYaw());
+	send(writer, ChannelControl);
+
+	LogInfo << "[coop] " << mover->idString()
+	        << " force-moved the player; ordered the partner to the same spot";
+}
+
+bool redirectPartnerTeleport(const Entity * mover, const Vec3f & pos, long angle) {
+
+	if(!isPlaying() || !isPartnerScriptContext() || partyFollowsMover(mover)) {
+		return false;
+	}
+
+	Writer writer(MsgPartyFollow);
+	writer.put(pos);
+	writer.put(angle != -1);                // only turn them if the command said -a
+	writer.put(float(angle));
+	send(writer, ChannelControl);
+
+	LogInfo << "[coop] a scene of theirs repositions its player; sent the move to their machine";
+	return true;
 }
 
 void sendTravelCancel() {

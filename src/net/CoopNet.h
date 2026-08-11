@@ -168,6 +168,7 @@ enum PartnerEffectKind : u8 {
 	PartnerFxHeal = 0,
 	PartnerFxMana = 1,
 	PartnerFxFillHunger = 2,
+	PartnerFxGold = 3,       //!< value is a gold delta; negative is a payment made in their name
 };
 void reportPartnerHeal(float amount);
 void reportPartnerEffect(u8 kind, float value);
@@ -417,6 +418,33 @@ bool requestTake(const Entity & item);
 bool requestCombine(const Entity & source, const Entity & target);
 
 /*!
+ * Guest: hand gold to an entity through the host, where the quest lives.
+ *
+ * The purse balance travels with the request: on the host the script's wallet
+ * check (^player_gold) must answer with the GIVER's gold, not the host's, and
+ * the amount in the giver's pack at the moment of the click is the truth.
+ * Returns false when not a guest sharing the area - the caller then runs the
+ * stock local path.
+ */
+bool requestCombineGold(const Entity & target);
+
+/*!
+ * A script running in the partner's name is taking gold. Charge their purse
+ * across the wire and leave ours alone. Returns false outside partner context
+ * (or for non-payments) - the caller then applies the change locally as ever.
+ */
+bool chargePartner(long delta);
+
+/*!
+ * The giver's purse, while their gold-payment script runs here. Set from the
+ * amount their machine sent with the request; ^player_gold answers with it so
+ * the script gates on the wallet that will actually pay.
+ */
+void setPartnerPurse(long gold);
+void clearPartnerPurse();
+[[nodiscard]] bool partnerPurse(long & gold);
+
+/*!
  * Ask the authority to let this creature talk to us.
  *
  * What an NPC says depends on where its script has got to, and that lives
@@ -561,6 +589,39 @@ void onAreaLeaving(AreaId from, AreaId to, std::string_view target = std::string
  * identical stock transition, confirmation icon and all.
  */
 void sendTravelOrder(u32 area, std::string_view target, long angle, bool confirm);
+
+/*!
+ * Does a forced move by this script owner carry the partner along?
+ *
+ * The story's forced teleports - captures, the snake-women sending you below,
+ * the endgame - assume one hero, and in co-op they would strand the other
+ * player wherever the story left them. So: a player-teleport run by an NPC's
+ * script (or by meteor_akbaa, the one non-NPC that moves the player for the
+ * story) moves BOTH players. Doors, levers, elevators and arrival markers are
+ * not NPCs and keep their per-player behaviour; the other player can always
+ * operate those for themselves.
+ */
+[[nodiscard]] bool partyFollowsMover(const Entity * mover);
+
+/*!
+ * A story script just teleported this machine's player within the level;
+ * order the partner to the same spot. The destination is the script's own
+ * marker - a position the level designers placed a player on - never a
+ * computed one.
+ */
+void reportPartyTeleport(const Entity * mover, const Vec3f & pos);
+
+/*!
+ * A scene's same-level `teleport -p`, when the scene belongs to the partner.
+ *
+ * The move (and the facing, when the command carries one) is part of THEIR
+ * scene - it must not touch this machine's player, who may be mid-fight and
+ * is not even watching. Returns true when the move was sent to their machine
+ * instead; the caller then leaves the local player alone. Story movers are
+ * not scenes and return false here - the party case teleports locally and
+ * reports through reportPartyTeleport().
+ */
+[[nodiscard]] bool redirectPartnerTeleport(const Entity * mover, const Vec3f & pos, long angle);
 
 /*!
  * Host: tell the guest a travel sequence has just begun for their player.

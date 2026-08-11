@@ -1791,7 +1791,15 @@ void ArxGame::manageEditorControls() {
 			
 			if(io) {
 				if(COMBINEGOLD) {
-					SendIOScriptEvent(nullptr, io, SM_COMBINE, "gold_coin");
+					/*
+					 * Same rule as the item hand-over below: the quest lives
+					 * on the world's machine, so the payment must run there.
+					 * Run here by a guest it pays a replica - the dragon takes
+					 * the toll on one screen and knows nothing on the other.
+					 */
+					if(!coop::requestCombineGold(*io)) {
+						SendIOScriptEvent(nullptr, io, SM_COMBINE, "gold_coin");
+					}
 				} else if(io != COMBINE) {
 					/*
 					 * Handing something over is how this game's quests move,

@@ -1239,6 +1239,33 @@ void applyCombineRequest(std::string_view sourceId, std::string_view sourceClass
 
 }
 
+void applyCombineGold(std::string_view targetId, long giverGold) {
+
+	Entity * target = entities.getById(targetId);
+	if(!target || !target->script.valid) {
+		LogWarning << "[coop] the other player offered gold to " << targetId
+		           << ", which we do not have";
+		return;
+	}
+
+	/*
+	 * In their name, with their purse. The script's ^player_gold check reads
+	 * the amount that was in their pack when they clicked, and its ADDGOLD
+	 * charges them across the wire - this machine's wallet is never part of
+	 * the transaction. The quest state it advances is the world's, which is
+	 * the whole point of running it here.
+	 */
+	Entity * cause = avatarEntity();
+	ScopedPlayerContext context(cause);
+	setPartnerPurse(giverGold);
+	SendIOScriptEvent(cause ? cause : entities.player(), target, SM_COMBINE,
+	                  ScriptParameters("gold_coin"));
+	clearPartnerPurse();
+
+	LogInfo << "[coop] " << targetId << " was offered gold in the other player's name";
+
+}
+
 void applyChatRequest(std::string_view npcId) {
 
 	Entity * npc = entities.getById(npcId);

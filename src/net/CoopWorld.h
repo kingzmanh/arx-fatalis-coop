@@ -130,6 +130,14 @@ void applyCombineRequest(std::string_view sourceId, std::string_view sourceClass
 //! The thing we offered was taken: drop our copy.
 void applyCombineTaken(std::string_view sourceId);
 
+/*!
+ * Host: the other player hands gold to one of ours. Run the entity's script in
+ * the giver's name with the giver's purse - the wallet it checks and the
+ * wallet it charges are both theirs, and the quest state it advances is the
+ * world's.
+ */
+void applyCombineGold(std::string_view targetId, long giverGold);
+
 //! Handle a guest talking to a creature: it answers in their name.
 void applyChatRequest(std::string_view npcId);
 

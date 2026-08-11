@@ -2426,6 +2426,11 @@ void ARX_PLAYER_PutPlayerInNormalStance() {
  * \brief Add gold to player purse
  */
 void ARX_PLAYER_AddGold(long _lValue) {
+	// A payment taken in the partner's name empties THEIR purse across the
+	// wire; ours was never part of the transaction.
+	if(_lValue < 0 && coop::chargePartner(_lValue)) {
+		return;
+	}
 	// Split the find rather than race for it: both purses grow by the same
 	// amount, so picking up a pile is never something to fall out over.
 	coop::reportReward(0, _lValue);

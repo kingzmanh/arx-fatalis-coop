@@ -1145,6 +1145,13 @@ ValueType getSystemVar(const script::Context & context, std::string_view name,
 			}
 			
 			if(boost::starts_with(name, "^player_gold")) {
+				// A payment script running in the partner's name gates on the
+				// purse that will actually pay - theirs, sent with the click.
+				long purse;
+				if(coop::partnerPurse(purse)) {
+					*fcontent = static_cast<float>(purse);
+					return TYPE_FLOAT;
+				}
 				*fcontent = static_cast<float>(player.gold);
 				return TYPE_FLOAT;
 			}

@@ -522,16 +522,23 @@ public:
 		bool confirm = true;
 		
 		bool teleport_player = false, initpos = false;
+		long angle = -1;
 		HandleFlags("alnpi") {
-			
-			long angle = -1;
-			
+
 			if(flg & flag('a')) {
 				float fangle = context.getFloat();
 				angle = static_cast<long>(fangle);
 				if(!(flg & flag('l'))) {
-					player.desiredangle.setYaw(fangle);
-					player.angle.setYaw(fangle);
+					/*
+					 * The facing is part of the move. A player-move that
+					 * belongs to the partner's scene must not turn this
+					 * machine's player either - it rides the redirect below.
+					 */
+					if(!((flg & flag('p')) && coop::isPartnerScriptContext()
+					     && !coop::partyFollowsMover(context.getEntity()))) {
+						player.desiredangle.setYaw(fangle);
+						player.angle.setYaw(fangle);
+					}
 				}
 			}
 			
@@ -554,12 +561,24 @@ public:
 				 * When the second player is the one standing in the door, the
 				 * order belongs on their machine, carrying the same area,
 				 * marker and angle - and this machine's player stays put.
+				 *
+				 * Unless a story mover is doing the moving - a capture, the
+				 * snake-women's send, the endgame. Those assume one hero and
+				 * would strand the other player mid-story, so the party
+				 * travels together: the same order goes to both machines.
 				 */
+				bool party = coop::partyFollowsMover(context.getEntity());
+
 				if(coop::isPartnerScriptContext()) {
 					LogWarning << "[coop-chain] teleport command (for the PARTNER): level "
 					           << level << " target '" << target << "'";
 					coop::sendTravelOrder(u32(level), target, angle, confirm);
-					return Success;
+					if(!party) {
+						return Success;
+					}
+					// fall through: this machine's player takes the same trip
+				} else if(party) {
+					coop::sendTravelOrder(u32(level), target, angle, confirm);
 				}
 
 				LogWarning << "[coop-chain] teleport command (local): level " << level
@@ -611,9 +630,14 @@ public:
 			}
 			
 			Vec3f pos = GetItemWorldPosition(t);
-			
+
 			if(teleport_player) {
+				if(coop::redirectPartnerTeleport(context.getEntity(), pos, angle)) {
+					// their scene's move; our player was never part of it
+					return Success;
+				}
 				ARX_INTERACTIVE_Teleport(entities.player(), pos);
+				coop::reportPartyTeleport(context.getEntity(), pos);
 				return Success;
 			}
 			
@@ -634,7 +658,12 @@ public:
 			
 			if(teleport_player) {
 				Vec3f pos = GetItemWorldPosition(io);
-				ARX_INTERACTIVE_Teleport(entities.player(), pos);
+				if(coop::redirectPartnerTeleport(io, pos, angle)) {
+					// their scene's move; our player was never part of it
+				} else {
+					ARX_INTERACTIVE_Teleport(entities.player(), pos);
+					coop::reportPartyTeleport(io, pos);
+				}
 			} else if(!(io->ioflags & IO_NPC) || io->_npcdata->lifePool.current > 0) {
 				io->setOwner(nullptr);
 				if(io->show != SHOW_FLAG_HIDDEN && io->show != SHOW_FLAG_MEGAHIDE) {
