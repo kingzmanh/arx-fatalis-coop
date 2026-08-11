@@ -66,8 +66,12 @@ last one is worth more than you would think.
 - **Either player can skip a scene** they are watching
 - **Magic is learned together** - when either of you learns a rune, so does the
   other, and joining up shares whatever each of you already knew
-- **Your own character** - stats, inventory and gear are yours, saved on your own
-  machine; rejoin the same game and your progress is still there
+- **Your own character** - made on the same creation screen the first player
+  gets: your face, your attributes, your skills. Stats, inventory and gear are
+  yours, saved on your own machine; rejoin the same game and your progress is
+  still there
+- **The world lives around both players** - anything near either of you is
+  simulated, whether or not the other is anywhere close
 - **Join anywhere in the game**, not just at the beginning
 - **Both health bars** on screen, so you can see when your friend is in trouble
 - **Friendly fire** - you can hurt each other, on purpose or otherwise
@@ -85,10 +89,8 @@ Being straight with you, because you will find these anyway:
 
 - **Never properly tested over the internet.** Almost all testing has been two
   windows on one computer. Real latency will find bugs that local testing cannot.
-- **Animals only appear once the host has been near them**, and only move while
-  the host is nearby.
 - **Loot can duplicate** in some cases - both players may find their own copy.
-- **Enemies sometimes pick the wrong target.**
+- **Enemies sometimes pick the wrong target** in crowded fights.
 
 ## Playing it
 
