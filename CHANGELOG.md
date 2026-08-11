@@ -23,11 +23,11 @@ one of those and it misbehaves, that report is exactly what we need.
   because scripts run on the host, the second player's scene used to move the
   FIRST player's body. The move (and the facing) now goes to whoever the scene
   belongs to; the other player feels nothing.
-- Handing gold to someone counts. Paying the barmaid, the goblin lord, or the
-  ice dragon's toll used to happen only on the giver's screen - the world
-  never heard about it. Payments now run where the quest lives, the wallet
-  that is checked and emptied is the giver's own, and what the payment buys
-  happens for both of you.
+- Quests that ask you to pay now work for both players. Paying the barmaid,
+  the goblin lord, or the ice dragon's toll used to happen only on the giver's
+  screen - the world never heard about it. Payments now run where the quest
+  lives, the wallet that is checked and emptied is the giver's own, and what
+  the payment buys happens for both of you.
 
 **Changed**
 

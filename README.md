@@ -92,8 +92,9 @@ you, that report is exactly what we need:
   to strand whoever did not trigger them
 - **Cutscenes that reposition their viewer move the right player**, not the
   host
-- **Gold payments count for the world** - the barmaid's beer, the goblin lord,
-  the ice dragon's toll - paid by either player, from their own purse
+- **Quests that ask you to pay now work for both players** - the barmaid's
+  beer, the goblin lord, the ice dragon's toll - paid by either player, from
+  their own purse
 
 ## What does not work yet
 
