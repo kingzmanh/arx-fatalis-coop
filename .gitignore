@@ -76,6 +76,9 @@ release/
 /Engine Map.html
 # A disposable local sandbox copy of the game - never ours to commit.
 /game-studio/
+# Locally exported level data - derived from the game's own files, so it
+# must never reach the public repository.
+/exports/
 
 # Python bytecode
 __pycache__/
