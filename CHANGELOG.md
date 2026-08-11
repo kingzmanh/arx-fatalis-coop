@@ -3,6 +3,48 @@
 Every release keeps its own build. Older versions are never replaced, so if a
 new one breaks something for you, the previous download is still there.
 
+From 0.13 on, changes come in three honest columns: **what works** has been
+seen working, **known issues** are broken and understood, and **needs testing**
+was built with care but has not yet been proven in a live game - if you try
+one of those and it misbehaves, that report is exactly what we need.
+
+## 0.13
+
+**Needs testing** (new in this release - built, reviewed, not yet played)
+
+- When the story force-moves one player, both go. Captures, the snake-women
+  sending you below, the endgame - the scripts that grab "the player" and put
+  them somewhere assumed one hero, and would have left the other player
+  stranded wherever the story was a moment ago. Now the partner arrives at the
+  same place, whichever of you triggered it. Doors, levers and elevators are
+  untouched - the other player can always use those for themselves.
+- A cutscene that repositions its viewer now moves the right player. Scenes
+  like reading Falan's note place "the player" before the camera rolls - and
+  because scripts run on the host, the second player's scene used to move the
+  FIRST player's body. The move (and the facing) now goes to whoever the scene
+  belongs to; the other player feels nothing.
+- Handing gold to someone counts. Paying the barmaid, the goblin lord, or the
+  ice dragon's toll used to happen only on the giver's screen - the world
+  never heard about it. Payments now run where the quest lives, the wallet
+  that is checked and emptied is the giver's own, and what the payment buys
+  happens for both of you.
+
+**Changed**
+
+- Network protocol 29 -> 30. Both players need this build; older ones are
+  refused at the handshake rather than left to desync.
+- The save inspector that ships with the engine's tools could not show a
+  level's saved state ("bad version: 0") - an inverted check, present
+  upstream. Fixed; the game itself never runs that code.
+
+**Known issues**
+
+- Never properly tested over the internet. Almost all testing has been two
+  windows on one computer. Real latency will find bugs that local testing
+  cannot.
+- Loot can duplicate - both players may find their own copy.
+- Enemies sometimes pick the wrong target in crowded fights.
+
 ## 0.12
 
 **Added**

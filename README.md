@@ -83,6 +83,18 @@ last one is worth more than you would think.
 - **Automatic port forwarding** - most routers will open the port by themselves,
   so hosting usually needs no setup
 
+## New and not yet tested
+
+Built with care, not yet proven in a live game. If one of these misbehaves for
+you, that report is exactly what we need:
+
+- **Forced story moves take both players** - captures and story teleports used
+  to strand whoever did not trigger them
+- **Cutscenes that reposition their viewer move the right player**, not the
+  host
+- **Gold payments count for the world** - the barmaid's beer, the goblin lord,
+  the ice dragon's toll - paid by either player, from their own purse
+
 ## What does not work yet
 
 Being straight with you, because you will find these anyway:
