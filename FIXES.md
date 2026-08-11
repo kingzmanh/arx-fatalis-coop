@@ -924,3 +924,22 @@ fixed on the way: the rebind is applied through entities.get() rather than
 entities.player(), which is entries[0] with no bounds check and crashed at
 startup when the routine ran before the hero entity existed. Confirmed by the
 user.
+
+## 37. The save inspector showed garbage for every level
+
+**The problem.** `arxsavetool view <save> lvl012` - the engine's own tool for
+looking inside saved games - printed "bad version: 0" for every level block,
+while the player and globals views worked fine.
+
+**Why did it happen?** The tool decides "is this name a level?" with a check
+that is written backwards: it rejects any six-character name whose first three
+letters ARE "lvl" - which is every level name it will ever be given. Every
+level block therefore fell through to the single-entity viewer, which read the
+level header as if it were an entity and refused it. Upstream bug, present in
+Arx Libertatis itself; nobody noticed because nobody's build ships the tool to
+players.
+
+**The fix.** The comparison flipped from `==` to `!=` so the check means what
+it was always meant to mean. One line, savetool only - the game itself never
+runs this code. Verified by viewing lvl012 of a real co-op save: 14,551
+characters of entity state where "bad version: 0" used to be.

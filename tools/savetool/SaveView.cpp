@@ -1932,7 +1932,7 @@ static bool is_level(std::string_view name) {
 		return false;
 	}
 	
-	if(name.substr(0, 3) == "lvl") {
+	if(name.substr(0, 3) != "lvl") {
 		return false;
 	}
 	
