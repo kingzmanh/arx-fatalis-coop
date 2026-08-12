@@ -20,6 +20,17 @@ the open source version of Arkane Studios' *Arx Fatalis*.
 repository. If you paid for it, you were charged for something I am giving away
 for free.
 
+## Community
+
+**[Join the Discord server](https://discord.gg/VrAyZ2VKrR)** - find a second
+player in #find-a-partner, follow new releases in #updates, and talk to other
+people playing Arx together.
+
+**Found a bug?** Open a
+[GitHub issue](https://github.com/kingzmanh/arx-fatalis-coop/issues) or post in
+#bug-report on Discord. Say what you were doing, who was host, and attach the
+log if you can - that last part is worth more than you would think.
+
 ## What this is
 
 Arx Fatalis is a single player game. This makes it a two player one.
