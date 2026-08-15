@@ -303,6 +303,8 @@ void ARX_PATH_UpdatePlayerZone() {
 		}
 		
 		if(current) {
+			// a travel hole the partner used first re-arms for our player here
+			coop::rearmOwedZone(*current);
 			if(!current->ambiance.empty()) {
 				ARX_SOUND_PlayZoneAmbiance(current->ambiance, ARX_SOUND_PLAY_LOOPED, current->amb_max_vol * 0.01f);
 			}

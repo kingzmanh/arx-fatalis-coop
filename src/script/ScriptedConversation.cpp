@@ -401,6 +401,18 @@ public:
 			LogInfo << "[coop] '" << data << "' completes instantly on this machine";
 			coop::reportCutsceneSeen(data);
 			if(size_t onspeechend = context.skipCommand(); onspeechend != size_t(-1)) {
+				/*
+				 * Whose scene this is travels with the SPOKEN line: a speech
+				 * remembers it, and hands it back when it ends and resumes the
+				 * script (see endSpeech). A line the ledger skips leaves no
+				 * speech behind to carry it - so the rest of the chain ran
+				 * ownerless, this machine took a scene belonging to the other
+				 * player back mid-way, and the camera flicked between the two
+				 * of them. Carried by hand here, exactly as a spoken line
+				 * would have carried it.
+				 */
+				coop::ScopedPlayerContext owner(coop::isPartnerScriptContext()
+				                                ? coop::avatarEntity() : nullptr);
 				ScriptEvent::resume(context.getScript(), context.getEntity(), onspeechend);
 			}
 			return Success;

@@ -315,11 +315,17 @@ class SetPlayerControlsCommand : public Command {
 public:
 	
 	SetPlayerControlsCommand() : Command("setplayercontrols") { }
-	
+
 	Result execute(Context & context) override {
-		
+
 		bool enable = context.getBool();
-		
+
+		if(!enable) {
+			// a scene is taking the controls: from a cause-less run, the
+			// player who walked up owns it (no-op otherwise)
+			coop::adoptProximitySceneOwner(context.getEntity());
+		}
+
 		DebugScript(' ' << enable);
 		
 		/*
@@ -354,6 +360,15 @@ public:
 				}
 			}
 			BLOCK_PLAYER_CONTROLS = false;
+			/*
+			 * A scene ends in whatever run happens to reach its last block -
+			 * often a camera's own script, hops away from the one that owned
+			 * the scene, and owning nothing itself. Taking that as "the scene
+			 * was ours" freed this screen and left the other player standing
+			 * still, waiting for a release that was never sent. Whoever the
+			 * last run belongs to, a scene that is over is over for both.
+			 */
+			coop::releasePartnerSceneIfHeld();
 		} else {
 			/*
 			 * A guest sharing the host's area must never lock itself.
@@ -581,9 +596,19 @@ public:
 			ScriptWarning << "unknown target: " << target;
 			return Failed;
 		}
-		
+
+		// Turning "the player's" head is a scene taking hold of them: from a
+		// cause-less run, it belongs to the player standing there (no-op
+		// otherwise).
+		coop::adoptProximitySceneOwner(context.getEntity());
+
+		if(coop::isPartnerScriptContext()) {
+			// their scene turns their head, not ours
+			return Success;
+		}
+
 		ForcePlayerLookAtIO(t);
-		
+
 		return Success;
 	}
 	

@@ -34,6 +34,7 @@
 #include "platform/Platform.h"
 
 class Entity;
+class Zone;
 
 /*!
  * Two player online co-op.
@@ -548,6 +549,14 @@ void reportReward(long xp, long gold);
 
 //! A quest entry or keyring key was gained, which is shared story progress.
 void reportQuest(std::string_view questKey);
+
+/*!
+ * A line of chat typed by this player.
+ *
+ * Travels as MsgChat and appears on both screens through the game's own
+ * notification text, prefixed with the name we introduced ourselves with.
+ */
+void sendChat(std::string_view text);
 //! Tell the other player every rune we know; they keep the union of both.
 void reportRunes();
 void reportKey(std::string_view key);
@@ -589,6 +598,36 @@ void onAreaLeaving(AreaId from, AreaId to, std::string_view target = std::string
  * identical stock transition, confirmation icon and all.
  */
 void sendTravelOrder(u32 area, std::string_view target, long angle, bool confirm);
+
+/*!
+ * One-shot travel holes, second player edition.
+ *
+ * The jail hole's script disarms its own trigger zone after the first jump
+ * (UNSET_CONTROLLED_ZONE) - correct for one hero, fatal for the second: when
+ * the partner jumps first, the host runs that script in their name and the
+ * disarm lands HERE, leaving our own player a hole that triggers nothing.
+ *
+ * So: a zone disarmed during a partner-context run is remembered
+ * (noteZoneDisarmed). If that same run then issues a travel order, the zone
+ * has proven itself a travel funnel (noteTravelFunnel) - story zones never
+ * send travel orders and stay dead, which is what the cutscene soft-lock
+ * taught us. When our own player later steps into a remembered funnel,
+ * rearmOwedZone restores the controller so the stock script runs once for
+ * them too.
+ */
+/*!
+ * Give the other player their screen back after a scene that never ended.
+ *
+ * A story chain whose lines are all skipped by the ledger never reaches the
+ * block that releases the camera and lifts the bars, so the player it was
+ * being performed for is stranded looking through it. Called once the run
+ * that built the scene is over; a no-op when nothing is held.
+ */
+void releasePartnerSceneIfHeld();
+
+void noteZoneDisarmed(std::string_view zoneName, std::string_view controller);
+void noteTravelFunnel(const Entity * mover);
+void rearmOwedZone(Zone & zone);
 
 /*!
  * Does a forced move by this script owner carry the partner along?

@@ -37,6 +37,7 @@
 #include "graphics/Math.h"
 #include "graphics/Renderer.h"
 #include "graphics/data/Mesh.h"
+#include "core/Config.h"
 #include "graphics/texture/TextureStage.h"
 #include "gui/Dragging.h"
 #include "gui/Hud.h"
@@ -729,12 +730,74 @@ Entity * chooseTargetPlayer(const Entity * io, const Entity * current) {
 	return (toOther < toFirst) ? other : first;
 }
 
+// cause-less scene adoption state (see CoopPlayer.h for the story)
+static bool g_adoptedSceneOwner = false;
+
 Entity * scriptContextPlayer() {
-	return (g_playerContextDepth > 0) ? avatarEntity() : nullptr;
+	return (g_playerContextDepth > 0 || g_adoptedSceneOwner) ? avatarEntity() : nullptr;
 }
 
 bool isPartnerScriptContext() {
-	return g_playerContextDepth > 0 && avatarEntity() != nullptr;
+	return (g_playerContextDepth > 0 || g_adoptedSceneOwner) && avatarEntity() != nullptr;
+}
+
+
+void adoptProximitySceneOwner(const Entity * grabber) {
+
+	if(!isPlaying() || isApplyingRemote() || g_adoptedSceneOwner) {
+		return;
+	}
+	if(g_playerContextDepth > 0) {
+		return; // the run has a real cause; ownership is already decided
+	}
+	if(config.misc.cutscenes != CutscenesForTrigger) {
+		return; // the slider says scenes belong to a fixed player
+	}
+	Entity * partner = avatarEntity();
+	if(!grabber || !partner || !sharingArea()) {
+		return;
+	}
+
+	/*
+	 * An arrival is nobody else's scene.
+	 *
+	 * Walking into a new area runs its arrival script, which places "the
+	 * player" on its marker - and for those few seconds the other player is
+	 * usually standing closer to that marker than we are, having arrived
+	 * first. Read as "the nearer player owns it", our own arrival placement
+	 * was posted to their machine and we were left standing wherever the fall
+	 * had dropped us, outside the world.
+	 */
+	if(localPlayerArrivalProtected()) {
+		return;
+	}
+
+	/*
+	 * Whose scene is a scene nobody caused?
+	 *
+	 * Some scenes are not walked into, talked into or handed anything: an NPC
+	 * simply finishes walking to a marker and starts speaking. There is no
+	 * event to read an owner from - so the honest answer is the one the
+	 * feature promised all along, the player who is actually standing there.
+	 * A scene grabbing "the player" means the one it can see.
+	 */
+	Vec3f partnerPos = partner->pos + ARXCHARACTER::baseOffset();
+	if(arx::distance2(grabber->pos, partnerPos) >= arx::distance2(grabber->pos, player.pos)) {
+		return; // our own player is the nearer one; the scene is ours as ever
+	}
+
+	g_adoptedSceneOwner = true;
+	LogWarning << "[coop-scene] scene adopted: '" << grabber->idString()
+	           << "' grabbed the player, and the nearer player is the partner"
+	           << " - the scene is theirs";
+}
+
+void clearAdoptedSceneOwner() {
+	g_adoptedSceneOwner = false;
+}
+
+bool isAdoptedSceneOwner() {
+	return g_adoptedSceneOwner;
 }
 
 void destroyAvatarEntity() {

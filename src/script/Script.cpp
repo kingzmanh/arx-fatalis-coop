@@ -146,7 +146,7 @@ static std::string_view scriptIdString(const Entity * entity) {
 	return idString(entity);
 }
 
-static Vec3f nearestPlayerPosTo(const Vec3f & from) {
+static Vec3f nearestPlayerPosTo(const Entity * asker) {
 
 	// In a script event the other player caused, "the player" is not a matter
 	// of distance - it is them, however far away the asking entity is.
@@ -154,6 +154,7 @@ static Vec3f nearestPlayerPosTo(const Vec3f & from) {
 		return partner->pos + ARXCHARACTER::baseOffset();
 	}
 
+	const Vec3f from = asker ? asker->pos : player.pos;
 	Vec3f best = player.pos;
 
 	if(Entity * other = coop::avatarEntity()) {
@@ -585,7 +586,7 @@ ValueType getSystemVar(const script::Context & context, std::string_view name,
 			
 			if(name == "^&playerdist") {
 				if(context.getEntity()) {
-					*fcontent = fdist(nearestPlayerPosTo(context.getEntity()->pos), context.getEntity()->pos);
+					*fcontent = fdist(nearestPlayerPosTo(context.getEntity()), context.getEntity()->pos);
 					return TYPE_FLOAT;
 				}
 			}
@@ -608,7 +609,7 @@ ValueType getSystemVar(const script::Context & context, std::string_view name,
 			
 			if(name == "^#playerdist") {
 				if(context.getEntity()) {
-					*lcontent = long(fdist(nearestPlayerPosTo(context.getEntity()->pos), context.getEntity()->pos));
+					*lcontent = long(fdist(nearestPlayerPosTo(context.getEntity()), context.getEntity()->pos));
 					return TYPE_LONG;
 				}
 			}
@@ -838,7 +839,7 @@ ValueType getSystemVar(const script::Context & context, std::string_view name,
 				if(context.getEntity()) {
 					Entity * target = entities.getById(name.substr(6));
 					if(target == entities.player()) {
-						*fcontent = fdist(nearestPlayerPosTo(context.getEntity()->pos), context.getEntity()->pos);
+						*fcontent = fdist(nearestPlayerPosTo(context.getEntity()), context.getEntity()->pos);
 					} else if(target
 					          && (context.getEntity()->show == SHOW_FLAG_IN_SCENE
 					              || context.getEntity()->show == SHOW_FLAG_IN_INVENTORY)
@@ -1299,7 +1300,7 @@ ValueType getSystemVar(const script::Context & context, std::string_view name,
 							UpdateIORoom(context.getEntity());
 						}
 						// Through-the-rooms distance, to whichever player is nearer.
-						Vec3f playerPos = nearestPlayerPosTo(context.getEntity()->pos);
+						Vec3f playerPos = nearestPlayerPosTo(context.getEntity());
 						RoomHandle playerRoom = ARX_PORTALS_GetRoomNumForPosition(playerPos, RoomPositionForCamera);
 						*fcontent = SP_GetRoomDist(context.getEntity()->pos, playerPos, context.getEntity()->room, playerRoom);
 					} else if(target

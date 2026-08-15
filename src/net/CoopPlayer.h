@@ -308,6 +308,28 @@ public:
 [[nodiscard]] bool isPartnerScriptContext();
 
 /*!
+ * Scenes nobody caused: the ownership our event machinery cannot see.
+ *
+ * Most scenes are walked into, talked into or handed something, and the event
+ * says who did it. Some are not: an NPC finishes walking to a marker, or a
+ * timer notices somebody standing nearby, and a cutscene simply begins. With
+ * no cause to read, those scenes all fell to the host - yanking player one
+ * into a scene player two was standing in.
+ *
+ * The answer is the feature's own promise, "whoever walks into it": when a
+ * cause-less run grabs the player (bars, controls, a teleport, a head turn)
+ * and the nearer player is the partner, the rest of the run belongs to them,
+ * and every existing redirect routes the scene there. Ownership then travels
+ * as it always has - carried by the spoken line, the queued event and the
+ * timer - and dies with the run that earned it (clearAdoptedSceneOwner). The
+ * cutscene slider still overrides everything.
+ */
+void adoptProximitySceneOwner(const Entity * grabber);
+void clearAdoptedSceneOwner();
+//! True while the current run's scene belongs to the partner by proximity.
+[[nodiscard]] bool isAdoptedSceneOwner();
+
+/*!
  * Draw the partner's name and health under the minimap.
  *
  * Knowing whether the person you are fighting alongside is about to die is the

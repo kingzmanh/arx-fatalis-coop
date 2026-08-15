@@ -943,3 +943,109 @@ players.
 it was always meant to mean. One line, savetool only - the game itself never
 runs this code. Verified by viewing lvl012 of a real co-op save: 14,551
 characters of entity state where "bad version: 0" used to be.
+
+## 38. The jail hole only worked for whoever jumped first
+
+**The problem.** If player two jumped down the jail hole first, player one's
+own jump did nothing afterwards - no fade, no travel, just standing at the
+bottom of a hole that had stopped being a hole.
+
+**Why did it happen?** The hole's script disarms its own trigger zone after
+the first jump (`UNSET_CONTROLLED_ZONE` - correct for one hero). When the
+partner jumps first, the host runs that script in their name, and the disarm
+lands on the host's world: the zone dies for the host's own player. An earlier
+attempt to skip the disarm in partner context was reverted for good reason -
+story zones must stay dead after one run - so the fix had to tell travel holes
+and story scenes apart. Proven live: with the zone dead, the player-enter log
+reads `controller ''` where an armed zone names its marker.
+
+**The fix.** A zone disarmed during a partner-context run is remembered; if
+that same run then issues a travel order, the zone has proven itself a travel
+funnel (story scenes never send travel orders) and it re-arms the moment our
+own player steps in - the stock script then runs once for them too. Three log
+breadcrumbs trace the chain: disarmed -> proved itself a travel funnel ->
+re-armed. Confirmed by the user, both jump orders.
+
+## 39. Jumping second-first reloaded the level at the bottom of the hole
+
+**The problem.** When player two jumped first, he would freeze at the bottom
+of the hole the instant the new area loaded, then drop. Player one first: no
+freeze.
+
+**Why did it happen?** The jump ran twice. Player two's machine fires the
+zone locally (level 1 -> 15, correct), but his zone report also reaches the
+host, which replays the jump in his name and sends a travel order back. The
+existing echo guard only covered orders arriving BEFORE the local travel; this
+echo arrived after, found clean state, and was obeyed: the log shows
+`level change: to area 15 ... from area 15` - a reload of the level he was
+already standing in.
+
+**The fix.** A guest refuses a travel order for the area he is already in when
+he is already standing at the offered destination marker (within 5m) - the
+exact fingerprint of the echo, and nothing else. Dropped orders are logged
+(`DROPPED travel echo`). Confirmed by the user: no more freeze; a leftover
+NPC voice line crossing the load remains as a separate, parked known issue.
+
+## 40. A new game skipped scenes it had never played
+
+**The problem.** Starting a New Quest and walking up to the first prisoner
+gave a broken conversation: no dialogue, bars down, a camera nobody released.
+
+**Why did it happen?** The story ledger - the list of scenes already lived,
+which stops a story moment playing twice - is wiped in memory by New Quest but
+written to disk by a function that refuses unless the game is hosting. At the
+main menu nobody is hosting, so the file survived, and the next session read
+the previous playthrough's scenes straight back in. Every "already lived" line
+is then skipped, and a chained scene whose lines are all skipped never reaches
+the block that gives the screen back.
+
+**The fix.** The ledger writer now refuses only what it was meant to refuse: a
+guest in an active session, whose throwaway world must not overwrite the
+host's playthrough. Confirmed by the user - a fresh game now logs "story
+ledger: 0 sequences already lived".
+
+## 41. Cutscenes played for player one, whoever walked into them
+
+**The problem.** The first jail conversation, and the one after the guard
+dies, seized player one - camera, black bars, controls - even when player two
+was the one standing there. Player one's head would also snap to the speaker
+in the middle of whatever they were doing.
+
+**Why did it happen?** Ownership of a scene is read from its cause: a zone
+someone entered, a chat they started, an item they handed over. These scenes
+have no cause. One is polled by a timer asking "is a player near?", the other
+begins when the NPC finishes walking to a marker. With nothing to read, both
+fell to the host by default. And even where ownership existed it did not
+survive: a line skipped by the ledger leaves no speech behind, and ownership
+travels with the spoken line.
+
+**The fix.** Four parts, each reusing machinery the engine already had:
+a scene with no cause belongs to the NEARER player, adopted the moment it
+grabs the player (controls, bars, a player teleport, a forced head turn);
+PLAYER_LOOKAT turns the head of whoever owns the scene; the ledger-skip path
+carries ownership by hand, exactly as a spoken line does; and a scene's
+ending - which happens in whatever run reaches the last block, often a
+camera's own script owning nothing - now releases BOTH players, so the watcher
+is not left standing until a timeout. An arrival is never someone else's
+scene: for the seconds after a level change, ownership cannot be given away,
+or the arrival script hands your own placement to the other player and leaves
+you outside the world. Confirmed by the user.
+
+## 42. The cutscene camera filmed the wrong player
+
+**The problem.** With the scene correctly belonging to player two, the camera
+still framed player one - and between lines it swung about wildly.
+
+**Why did it happen?** The camera was relayed by naming the body it was
+pointed at, and a body is the one thing the two machines do not agree on:
+each calls its own hero "player" and the visitor "coop_player_0001", so
+"aim at the second player" arrived meaning the first. Worse, the first jail
+camera binds its target once, in ON INIT at level load - long before any scene
+exists - so it was pointed at player one permanently, and no amount of
+ownership could redirect it.
+
+**The fix.** Scenes name roles, not bodies. Any player a scene points at
+travels as "player", and the watching machine fills in its own hero - the
+camera simply asks who the scene is for instead of remembering which body it
+was once bound to. One rule for every scene in the game. Confirmed by the
+user.

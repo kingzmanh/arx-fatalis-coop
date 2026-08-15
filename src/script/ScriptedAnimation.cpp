@@ -57,6 +57,7 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 #include "scene/Interactive.h"
 #include "net/CoopPlayer.h"
 
+#include "net/CoopNet.h"
 #include "script/ScriptUtils.h"
 
 
@@ -460,9 +461,12 @@ public:
 			ScriptWarning << "unknown zone: " << zone;
 			return Failed;
 		}
-		
+
+		// the disarm happens either way; but done in the partner's name it is
+		// remembered, so a travel funnel can re-arm for our own player
+		coop::noteZoneDisarmed(ap->name, ap->controled);
 		ap->controled.clear();
-		
+
 		return Success;
 	}
 	

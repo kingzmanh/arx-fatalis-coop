@@ -263,7 +263,20 @@ ScriptResult ScriptEvent::send(const EERIE_SCRIPT * es, Entity * sender, Entity 
 	if(entity->m_disabledEvents & event.toDisabledEventsMask()) {
 		return REFUSE;
 	}
-	
+
+	// An adopted proximity-scene ownership lives exactly as long as the
+	// top-level script run that earned it (see CoopPlayer.h).
+	static int s_runDepth = 0;
+	struct RunScope {
+		~RunScope() {
+			if(--s_runDepth == 0) {
+				coop::clearAdoptedSceneOwner();
+			}
+		}
+	};
+	s_runDepth++;
+	RunScope runScope;
+
 	// Finds script position to execute code...
 	size_t pos = position;
 	if(!event.getName().empty()) {

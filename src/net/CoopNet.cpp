@@ -858,6 +858,10 @@ static void applyCutscenePlay(Reader & reader) {
 	}
 
 	Entity * speaker = entities.getById(speakerId);
+	LogWarning << "[coop-speech] RECEIVED scene line: speaker '" << speakerId
+	           << "' (" << (speaker ? "found here" : "NOT here - falling back to the avatar")
+	           << ") data '" << data << "' cine " << s32(cine.type)
+	           << " (our area " << g_currentArea << ")";
 	if(!speaker) {
 		speaker = avatarEntity();
 	}
@@ -1559,6 +1563,20 @@ void handleMessage(const u8 * data, size_t size) {
 				// the same door must not restart or redirect it.
 				break;
 			}
+			if(AreaId(area) == g_currentArea) {
+				// The echo can also arrive AFTER our own door already carried
+				// us: we are standing in the offered area, at the offered
+				// marker. Reloading the level we just entered is the freeze at
+				// the bottom of the jail hole. Only the exact echo is refused -
+				// an honest order to somewhere else in this area still passes.
+				if(Entity * markerEntity = entities.getById(target)) {
+					if(closerThan(player.pos, GetItemWorldPosition(markerEntity), 500.f)) {
+						LogWarning << "[coop-chain] DROPPED travel echo: already standing at "
+						           << target << " in area " << area;
+						break;
+					}
+				}
+			}
 			g_teleportToArea = AreaId(area);
 			TELEPORT_TO_POSITION = target;
 			TELEPORT_TO_ANGLE = (angle == -1) ? long(player.angle.getYaw()) : long(angle);
@@ -2233,12 +2251,44 @@ void broadcastBlood2(const Vec3f & pos, float dmgs, u32 color, std::string_view 
 	
 }
 
+/*!
+ * The name to send for something a SCENE is pointed at.
+ *
+ * Never send a body when the thing meant is a role. These scripts were
+ * written for one hero, so every "the player" in them means the person the
+ * scene is happening to - and when the scene is handed over, that person is
+ * the one watching it. Which body the host's script happened to bind is an
+ * accident of when the line ran: the first jail camera aims itself at the
+ * player once, at level load, long before anybody triggers anything, and
+ * would otherwise film the wrong hero for the rest of the game.
+ *
+ * So: any player, ours or theirs, travels as "player" and the watching
+ * machine reads its own hero. Everything else in the world is named the same
+ * by both and travels unchanged.
+ */
+static std::string_view wireIdString(const Entity * entity) {
+
+	if(!entity) {
+		return std::string_view();
+	}
+
+	if(entity == entities.player() || isAvatarEntity(entity)) {
+		return "player";
+	}
+
+	return entity->idString();
+}
+
 void reportCutscenePlay(const std::string & speakerId, const std::string & data,
                         long mood, u32 flags, const CinematicSpeech & cine) {
 
 	if(!isPlaying() || isApplyingRemote()) {
 		return;
 	}
+
+	LogWarning << "[coop-speech] SENDING scene line: speaker '" << speakerId
+	           << "' data '" << data << "' cine " << s32(cine.type)
+	           << " (our area " << g_currentArea << ")";
 
 	Writer writer(MsgCutscenePlay);
 	writer.put(std::string_view(speakerId));
@@ -2254,7 +2304,7 @@ void reportCutscenePlay(const std::string & speakerId, const std::string & data,
 	writer.put(cine.m_enddist);
 	writer.put(cine.m_heightModifier);
 	Entity * other = entities.get(cine.ionum);
-	writer.put(std::string_view(other ? other->idString() : std::string()));
+	writer.put(wireIdString(other));
 	writer.put(cine.pos1);
 	writer.put(cine.pos2);
 	send(writer, ChannelEvent);
@@ -2301,7 +2351,7 @@ void reportCutsceneCamera(const Entity * camera) {
 	                  ? entities.get(camera->targetinfo) : nullptr;
 
 	writer.put(std::string_view(camera->idString()));
-	writer.put(target ? std::string_view(target->idString()) : std::string_view());
+	writer.put(wireIdString(target));
 	writer.put(camera->_camdata ? camera->_camdata->smoothing : 0.f);
 	writer.put(camera->_camdata ? camera->_camdata->translatetarget : Vec3f(0.f));
 	send(writer, ChannelEvent);
@@ -2526,7 +2576,15 @@ static fs::path playthroughIdFile() {
 }
 
 static void persistStoryLedger() {
-	if(!isHost()) {
+	/*
+	 * The ledger belongs to the host's playthrough, so a guest must never
+	 * write over it. But "not the host" was too broad a way to say that: at
+	 * the main menu nobody is hosting, so New Quest cleared the ledger in
+	 * memory and left the file untouched - and the next session read the old
+	 * playthrough's lived sequences straight back in, skipping scenes in a
+	 * brand new game.
+	 */
+	if(isGuest() && isActive()) {
 		return;
 	}
 	if(std::FILE * f = std::fopen(storyLedgerFile().string().c_str(), "wb")) {
@@ -3067,6 +3125,26 @@ bool requestTake(const Entity & item) {
 
 	LogInfo << "[coop] took " << item.idString() << " out of the shared world";
 
+	/*
+	 * The glow goes out with the hand that lit it.
+	 *
+	 * A script that makes an item shine to catch the eye - the jail bone, and
+	 * every tutorial hint like it - puts the glow out again a second later,
+	 * from a timer on its own script. That script lives on the other machine,
+	 * and taking the item destroys the copy it was running on, so the timer
+	 * that would have ended the glow never fires and our copy shines forever.
+	 * Only the scripted glow is cleared: a weapon someone enchanted keeps its
+	 * light, which lives elsewhere.
+	 */
+	if(Entity * taken = entities.getById(item.idString())) {
+		if(taken->halo_native.flags & HALO_ACTIVE) {
+			taken->halo_native.flags = 0;
+			ARX_HALO_SetToNative(taken);
+			LogInfo << "[coop] " << item.idString() << " came with a scripted glow;"
+			        << " the script that would end it stays behind, so it ends here";
+		}
+	}
+
 	// Ours now, not scenery: it leaves the shared-world registry with us, or
 	// the next audit would ask the authority about an item the authority has
 	// already handed over - and be told to destroy it.
@@ -3086,6 +3164,36 @@ bool g_partnerCutscene = false;
 
 void noteCutsceneForPartner(bool active) {
 	g_partnerCutscene = active;
+}
+
+void releasePartnerSceneIfHeld() {
+
+	if(!isPlaying() || !sharingArea()) {
+		return;
+	}
+	if(!g_partnerCutscene && !g_partnerCamera) {
+		return; // nothing of ours is holding their screen
+	}
+
+	/*
+	 * A scene set up for the other player, whose script then ended without
+	 * taking it down again.
+	 *
+	 * The ledger can skip every line of a chained scene, and a chain that
+	 * never speaks never reaches its own last block - the one that releases
+	 * the camera, lifts the bars and gives the controls back. The player it
+	 * was set up for is then left staring through a camera nobody will ever
+	 * release. Whatever the reason, the moment the run that built the scene is
+	 * over and no line of it is still being spoken, their screen goes back to
+	 * them.
+	 */
+	LogWarning << "[coop-scene] a scene ended without taking itself down;"
+	           << " giving the other player their screen back";
+
+	reportCutsceneCamera(nullptr);
+	noteCutsceneForPartner(false);
+	reportSceneHold(false);
+
 }
 
 bool isPartnerCutscene() {
@@ -3454,6 +3562,22 @@ void reportQuest(std::string_view questKey) {
 
 }
 
+void sendChat(std::string_view text) {
+
+	if(!isPlaying() || text.empty()) {
+		return;
+	}
+
+	Writer writer(MsgChat);
+	writer.put(text);
+	send(writer, ChannelEvent);
+
+	// the local echo wears the same name the partner's screen shows for us,
+	// so both machines read the same conversation
+	notification_add(g_session.localName + ": " + std::string(text));
+
+}
+
 /*!
  * Share what we can cast.
  *
@@ -3541,6 +3665,58 @@ bool partnerArrivalProtected() {
 	       && platform::getTime() - g_session.partnerPresentSince < 2500ms;
 }
 
+// zone name -> its controller entity, disarmed out from under our player by a
+// script run in the partner's name; travelConfirmed once that run sent a
+// travel order, which is what makes the zone safe to re-arm
+struct OwedZone {
+	std::string controller;
+	bool travelConfirmed = false;
+};
+static std::map<std::string, OwedZone, std::less<>> g_owedZones;
+
+void noteZoneDisarmed(std::string_view zoneName, std::string_view controller) {
+
+	if(!isPlaying() || !isPartnerScriptContext() || controller.empty()) {
+		return;
+	}
+
+	g_owedZones[std::string(zoneName)] = { std::string(controller), false };
+	LogWarning << "[coop-chain] zone '" << zoneName << "' disarmed by the partner's run"
+	           << " (controller '" << controller << "') - remembering it for our player";
+}
+
+void noteTravelFunnel(const Entity * mover) {
+
+	if(!isPlaying() || !mover) {
+		return;
+	}
+
+	for(auto & entry : g_owedZones) {
+		if(entry.second.controller == mover->idString() && !entry.second.travelConfirmed) {
+			entry.second.travelConfirmed = true;
+			LogWarning << "[coop-chain] zone '" << entry.first
+			           << "' proved itself a travel funnel - it will re-arm for our player";
+		}
+	}
+}
+
+void rearmOwedZone(Zone & zone) {
+
+	if(!isPlaying() || !zone.controled.empty()) {
+		return;
+	}
+
+	auto it = g_owedZones.find(zone.name);
+	if(it == g_owedZones.end() || !it->second.travelConfirmed) {
+		return;
+	}
+
+	zone.controled = it->second.controller;
+	g_owedZones.erase(it);
+	LogWarning << "[coop-chain] re-armed zone '" << zone.name
+	           << "' - the partner used it first, our player still gets their turn";
+}
+
 void sendTravelOrder(u32 area, std::string_view target, long angle, bool confirm) {
 
 	if(!isPlaying()) {
@@ -3564,7 +3740,18 @@ bool partyFollowsMover(const Entity * mover) {
 		return false;
 	}
 
-	return (mover->ioflags & IO_NPC) || mover->className() == "meteor_akbaa";
+	if(mover->className() == "meteor_akbaa") {
+		return true;
+	}
+
+	// An adopted proximity scene belongs to the player who walked up; the
+	// NPC-mover party rule (captures move both) stands aside for its
+	// positioning teleports - Kultar placing his listener is not a capture.
+	if(isAdoptedSceneOwner()) {
+		return false;
+	}
+
+	return (mover->ioflags & IO_NPC) != 0;
 }
 
 void reportPartyTeleport(const Entity * mover, const Vec3f & pos) {

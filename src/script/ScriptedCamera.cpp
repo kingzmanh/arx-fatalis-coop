@@ -167,6 +167,12 @@ public:
 		
 		bool enable = context.getBool();
 
+		if(enable) {
+			// bars going up on a scene from a cause-less run: the player who
+			// walked up owns it (no-op otherwise)
+			coop::adoptProximitySceneOwner(context.getEntity());
+		}
+
 		DebugScript(' ' << options << ' ' << enable);
 
 		// The bars come down as part of the same locked story moment the guest

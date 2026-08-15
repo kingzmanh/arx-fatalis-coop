@@ -525,6 +525,12 @@ public:
 		long angle = -1;
 		HandleFlags("alnpi") {
 
+			if(flg & flag('p')) {
+				// grabbing "the player" from a cause-less run: the player who
+				// walked up owns whatever scene this is (no-op otherwise)
+				coop::adoptProximitySceneOwner(context.getEntity());
+			}
+
 			if(flg & flag('a')) {
 				float fangle = context.getFloat();
 				angle = static_cast<long>(fangle);
@@ -573,6 +579,7 @@ public:
 					LogWarning << "[coop-chain] teleport command (for the PARTNER): level "
 					           << level << " target '" << target << "'";
 					coop::sendTravelOrder(u32(level), target, angle, confirm);
+					coop::noteTravelFunnel(context.getEntity());
 					if(!party) {
 						return Success;
 					}
