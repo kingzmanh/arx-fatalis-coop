@@ -10,16 +10,10 @@ one of those and it misbehaves, that report is exactly what we need.
 
 ## 0.14
 
-Cutscenes and the jail hole, fixed by playing them until they behaved.
+Cutscenes, fixed by playing them until they behaved.
 
 **What works** (played and confirmed)
 
-- The hole in the jail floor works for both of you. It used to be a one-way
-  trip for whoever jumped first: the script disarms the hole behind itself,
-  and in co-op that disarming landed on the other player's world too, leaving
-  them standing in a hole that had stopped being a hole. Now each of you gets
-  your own jump - and jumping second no longer freezes you at the bottom for a
-  moment while the level reloads underneath you.
 - Cutscenes play for whoever walks into them, including the ones nobody
   triggers on purpose. Some scenes have no cause to read - a prisoner notices
   you standing there, or starts talking when he finishes walking to a spot -
@@ -43,12 +37,6 @@ Cutscenes and the jail hole, fixed by playing them until they behaved.
   jail are fixed and proven; the rest of the game's scenes have not been
   played through by two people yet, and this is exactly the kind of report
   that helps.
-- Selling to a shop pays both players, and gold dropped by one of you and
-  picked up by the other is counted twice. Money can be made out of nothing
-  this way; nothing else breaks.
-- Repeating lines - a sleeping guard's snoring, idle muttering - are
-  remembered as if they were story moments, so they may fall silent after
-  their first play.
 
 **Needs testing** (built with care, not yet proven in a live game)
 
