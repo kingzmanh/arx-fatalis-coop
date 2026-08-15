@@ -595,7 +595,18 @@ void readEntitySnapshot(Reader & reader, u32 serverTimeMs) {
 		auto inserted = g_replicaTracks.emplace(id, ReplicaState());
 		ReplicaState & state = inserted.first->second;
 		MotionTrack & track = state.track;
-		if(track.count != 0
+		/*
+		 * A camera we are watching a scene through flies; bodies walk.
+		 *
+		 * The rule below reads a long step between reports as a teleport and
+		 * snaps rather than blends - right for a door slamming across a room,
+		 * wrong for a cutscene camera sweeping a corridor, which covers that
+		 * much ground honestly and then jerks its way through the scene. Its
+		 * motion is always motion.
+		 */
+		bool watchedCamera = (entity == g_cameraEntity && (entity->ioflags & IO_CAMERA));
+
+		if(track.count != 0 && !watchedCamera
 		   && glm::distance(track.newest().pos, pos) > 300.f) {
 			// Moved further than anything walks in a snapshot's time - a
 			// teleport or a door slamming across the room. That is not motion

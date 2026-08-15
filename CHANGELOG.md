@@ -8,6 +8,60 @@ seen working, **known issues** are broken and understood, and **needs testing**
 was built with care but has not yet been proven in a live game - if you try
 one of those and it misbehaves, that report is exactly what we need.
 
+## 0.14
+
+Cutscenes and the jail hole, fixed by playing them until they behaved.
+
+**What works** (played and confirmed)
+
+- The hole in the jail floor works for both of you. It used to be a one-way
+  trip for whoever jumped first: the script disarms the hole behind itself,
+  and in co-op that disarming landed on the other player's world too, leaving
+  them standing in a hole that had stopped being a hole. Now each of you gets
+  your own jump - and jumping second no longer freezes you at the bottom for a
+  moment while the level reloads underneath you.
+- Cutscenes play for whoever walks into them, including the ones nobody
+  triggers on purpose. Some scenes have no cause to read - a prisoner notices
+  you standing there, or starts talking when he finishes walking to a spot -
+  and those always seized player one, camera, black bars and all. They now
+  belong to whichever of you the scene is happening to, and so does the head
+  turn that goes with them.
+- The camera films the right player. Scenes name the ROLE now, not the body:
+  "the player" means the one watching the scene, so the camera stops framing
+  your partner across the room. It also glides through its sweeps instead of
+  jerking, and a scene that ends gives BOTH of you your controls back at the
+  same moment.
+- Starting a New Quest really starts one. The list of story moments already
+  lived was cleared in memory but never on disk, so a brand new game skipped
+  scenes it had never played - and a skipped scene left the screen locked
+  behind a camera nobody released.
+- Picking up a glowing item no longer leaves it glowing forever in your pack.
+
+**Known issues**
+
+- Some cutscenes may still not play properly for player two. The ones in the
+  jail are fixed and proven; the rest of the game's scenes have not been
+  played through by two people yet, and this is exactly the kind of report
+  that helps.
+- Selling to a shop pays both players, and gold dropped by one of you and
+  picked up by the other is counted twice. Money can be made out of nothing
+  this way; nothing else breaks.
+- Repeating lines - a sleeping guard's snoring, idle muttering - are
+  remembered as if they were story moments, so they may fall silent after
+  their first play.
+
+**Needs testing** (built with care, not yet proven in a live game)
+
+- In-game chat. **Y** opens a gold line at the bottom of the screen in the
+  game's own font, **Enter** sends it, **Escape** throws it away. What you
+  send appears on both screens with your name in front. The world does not
+  pause while you type, and while the line is open the game ignores your
+  controls, so spelling "sword" does not draw one.
+
+**Changed**
+
+- Same network protocol (30) as 0.13; the two versions still connect.
+
 ## 0.13
 
 **Needs testing** (new in this release - built, reviewed, not yet played)
