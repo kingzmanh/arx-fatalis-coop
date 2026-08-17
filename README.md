@@ -170,6 +170,12 @@ git fetch upstream
 git diff upstream/master...master
 ```
 
+**About `coop-source/`:** that folder is a standalone snapshot of the co-op
+code as it stood at version 0.4 - `engine-changes.patch` plus copies of the
+engine files it touches. It is kept as a record of that release, not as a
+second copy of the current code. The code that builds and ships lives in
+`src/`; if the two disagree, `src/` is right.
+
 ## Credits
 
 This is built on other people's work, and a lot of it. See
