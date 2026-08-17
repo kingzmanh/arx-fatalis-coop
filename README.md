@@ -152,6 +152,24 @@ your microphone before you rely on it. If nothing moves, click **MIC:** to try
 a different microphone - modern machines are full of ones that look real and
 are not.
 
+## What I actually changed
+
+This repository is Arx Libertatis with co-op added, so most of what you see
+here is their work, not mine. If you want to read only my part, the branch
+`upstream-base` marks the Arx Libertatis commit this started from:
+
+**[See every co-op change as one diff](https://github.com/kingzmanh/arx-fatalis-coop/compare/upstream-base...master)**
+
+Base is upstream commit
+[5b95e4c](https://github.com/arx/ArxLibertatis/commit/5b95e4c5ca9d583f1b11c085326979772645e0f3)
+(28 October 2023). Or from a clone:
+
+```sh
+git remote add upstream https://github.com/arx/ArxLibertatis.git
+git fetch upstream
+git diff upstream/master...master
+```
+
 ## Credits
 
 This is built on other people's work, and a lot of it. See
