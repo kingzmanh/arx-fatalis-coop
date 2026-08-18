@@ -94,6 +94,11 @@ last one is worth more than you would think.
 - **Automatic port forwarding** - most routers will open the port by themselves,
   so hosting usually needs no setup
 
+![The console switch, at the bottom of Options -> Control](docs/screenshots/console-setting.png)
+
+*The console is a switch like any other: **Options -> Control**, last line,
+``Console (` key)``. Turn it on and the key wakes it up in game.*
+
 ## New and not yet tested
 
 Built with care, not yet proven in a live game. If one of these misbehaves for
