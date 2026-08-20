@@ -99,6 +99,50 @@ last one is worth more than you would think.
 *The console is a switch like any other: **Options -> Control**, last line,
 ``Console (` key)``. Turn it on and the key wakes it up in game.*
 
+## Spells
+
+Two spells come with the mod. Both are cast the ordinary way - draw the runes -
+and both do things single player Arx never had to do, because it never had a
+second player to do them to.
+
+| Spell | Runes | What it does | Mana |
+|---|---|---|---|
+| **Summon Co-op** | `yok` `aam` | Opens a rift where you are looking and your partner steps out of it, halfway through it opening. It reaches across the map, and across levels: if they are somewhere else entirely they travel and arrive at that spot, not at the level's front door. | half your mana pool |
+| **Revive** | `mega` `yok` `aam` | Puts your dead partner back on their feet from wherever you are standing. | half your mana pool |
+
+Standing over your dead partner no longer raises them - earlier versions did
+that after two seconds, because co-op needed some way back. Revive is the way
+back now.
+
+A share of the pool means a share of your **full** pool, not what is left in
+it: a share of what is left could always be paid, and a spell nobody can run
+out of is not really a spell.
+
+### Changing them, or writing your own
+
+The spells are not in the program. They are in a text file that ships with the
+mod:
+
+    data\game\studio-spells.txt
+
+Open it in Notepad. Every spell is a small block of lines - its runes, its
+level, what it costs, the look and sound it wears - and the file lists every
+rune name at the top. Change a line, start the game, cast it.
+
+    spell revive
+    name   Revive
+    runes  MEGA YOK AAM
+    level  2
+    mana   50%              a number instead - "mana 12" - is a flat cost
+    kind   revive_partner
+    visual Heal
+    sound  magic_spell_healing.wav
+
+If you pick runes another spell already uses, that spell is left out rather
+than fighting over them, and `arx.log` says which spell has them. Updating the
+mod keeps your version of the file; the one the new version ships is left
+beside it as `studio-spells-default.txt`.
+
 ## New and not yet tested
 
 Built with care, not yet proven in a live game. If one of these misbehaves for
