@@ -527,6 +527,27 @@ void reportPlayerDamage(float damage, u32 damageType);
 void reportDeath();
 void reportRevive();
 
+//! A spell asks the other machine to raise its player.
+void askPartnerRevive();
+
+//! A spell asks the other player to be moved to where we stand.
+void askPartnerHere(const Vec3f & where);
+
+//! Stand the local player at a spot, if a player can stand there.
+bool placePlayerAt(const Vec3f & where);
+
+//! Where a summon asked us to stand in this area, asked once.
+bool takeSummonSpot(Vec3f & out);
+
+/*!
+ * True once, when the player's next zone crossing should not count.
+ *
+ * A summoned player appears inside whatever the spell was aimed at, and
+ * some of those places are zones that teleport whoever walks in. They did
+ * not walk in.
+ */
+bool takePlayerZoneSwallow();
+
 //! A spell this player cast, so the other machine can show and apply it.
 /*!
  * \param casterId empty means "the sender's own player" (resolved to the

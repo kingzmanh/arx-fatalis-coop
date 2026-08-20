@@ -825,8 +825,14 @@ int Input::getMouseButtonClicked() const {
 	return 0;
 }
 
+bool g_gameActionsSuppressed = false;
+
 bool Input::actionNowPressed(ControlAction actionId) const {
-	
+
+	if(g_gameActionsSuppressed) {
+		return false;
+	}
+
 	for(size_t j = 0; j < std::size(config.actions[actionId].key); j++) {
 		
 		InputKeyId key = config.actions[actionId].key[j];
@@ -868,7 +874,11 @@ static unsigned int uiOneHandedMagicMode = 0;
 static unsigned int uiOneHandedStealth = 0;
 
 bool Input::actionPressed(ControlAction actionId) const {
-	
+
+	if(g_gameActionsSuppressed) {
+		return false;
+	}
+
 	if(actionId == CONTROLS_CUST_USE || actionId == CONTROLS_CUST_ACTION) {
 		return false;
 	}
@@ -967,7 +977,11 @@ bool Input::actionPressed(ControlAction actionId) const {
 }
 
 bool Input::actionNowReleased(ControlAction actionId) const {
-	
+
+	if(g_gameActionsSuppressed) {
+		return false;
+	}
+
 	for(size_t j = 0; j < std::size(config.actions[actionId].key); j++) {
 		
 		InputKeyId key = config.actions[actionId].key[j];

@@ -56,24 +56,32 @@ DisableDirPage=no
 UsePreviousAppDir=no
 
 [Messages]
-WelcomeLabel2=This adds two player co-op to a copy of Arx Fatalis you already own.%n%nIt contains no game content - no art, no sound, no levels. It installs alongside the game's own files and does not replace them: the original arx.exe is left exactly as it is.%n%nBoth players need this same version to play together.%n%nThis mod is free. The only official download is github.com/kingzmanh/arx-fatalis-coop - if you paid for this, you were charged for something given away for free there.
+WelcomeLabel2=This adds two player co-op to a copy of Arx Fatalis you already own.%n%nIt contains no game content - no art, no sound, no levels.%n%nIt replaces arx.exe with the co-op version and keeps your original as arx-vanilla.exe, which still runs - removing this mod puts it back where it was.%n%nBoth players need this same version to play together.%n%nThis mod is free. The only official download is github.com/kingzmanh/arx-fatalis-coop - if you paid for this, you were charged for something given away for free there.
 SelectDirLabel3=Setup will add Arx Fatalis Co-op to the game folder below. This must be a folder that already contains Arx Fatalis.
 SelectDirBrowseLabel=To continue, click Next. To choose a different folder, click Browse.
 
 [Files]
-Source: "..\release\arx-coop-{#Version}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Everything except the spells, which are handled below.
+Source: "..\release\arx-coop-{#Version}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "data\game\studio-spells.txt"
+
+; The spells are a text file the player is invited to edit - the runes a
+; spell is drawn with are one line in it. Writing over that on every update
+; would quietly undo their changes, so a file already there is left exactly
+; as it is, and the version this release ships is put beside it to read.
+Source: "..\release\arx-coop-{#Version}\data\game\studio-spells.txt"; DestDir: "{app}\data\game"; Flags: onlyifdoesntexist
+Source: "..\release\arx-coop-{#Version}\data\game\studio-spells.txt"; DestDir: "{app}\data\game"; DestName: "studio-spells-default.txt"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\Arx Fatalis Co-op"; Filename: "{app}\arx-coop.exe"; WorkingDir: "{app}"
+Name: "{group}\Arx Fatalis Co-op"; Filename: "{app}\arx.exe"; WorkingDir: "{app}"
 Name: "{group}\Read me first"; Filename: "{app}\READ ME FIRST.txt"
 Name: "{group}\Uninstall Arx Fatalis Co-op"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\Arx Fatalis Co-op"; Filename: "{app}\arx-coop.exe"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{autodesktop}\Arx Fatalis Co-op"; Filename: "{app}\arx.exe"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a shortcut on the desktop"; GroupDescription: "Shortcuts:"
 
 [Run]
-Filename: "{app}\arx-coop.exe"; Description: "Play now"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\arx.exe"; Description: "Play now"; Flags: nowait postinstall skipifsilent
 Filename: "{app}\READ ME FIRST.txt"; Description: "Read how to host and join"; Flags: shellexec nowait postinstall skipifsilent unchecked
 
 [Code]
@@ -260,5 +268,50 @@ begin
   if CurPageID = wpSelectDir then begin
     if IsArxFolder(WizardDirValue) then
       WizardForm.DirEdit.Hint := 'Arx Fatalis found here.';
+  end;
+end;
+
+//
+// The mod ships one exe and it is called arx.exe, so it stands exactly where
+// the player's own arx.exe stood. Theirs is copied aside before that happens
+// and moved back when the mod is removed - a mod that cannot be undone is not
+// a mod, it is damage.
+//
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  Ours, Theirs: String;
+begin
+  if CurStep = ssInstall then begin
+    Ours := ExpandConstant('{app}\arx.exe');
+    Theirs := ExpandConstant('{app}\arx-vanilla.exe');
+    // Only the first time: on a reinstall the file standing here is ours,
+    // and moving that over the backup would lose the real game for good.
+    if FileExists(Ours) and not FileExists(Theirs) then begin
+      RenameFile(Ours, Theirs);
+    end;
+  end;
+end;
+
+//
+// After, not during.
+//
+// usUninstall runs BEFORE the uninstaller deletes what it installed, and
+// arx.exe is one of the things it installed - so restoring there handed the
+// player's own game back under a name that was about to be deleted, and left
+// them with no arx.exe at all. usPostUninstall runs once ours is gone.
+//
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  Ours, Theirs: String;
+begin
+  if CurUninstallStep = usPostUninstall then begin
+    Ours := ExpandConstant('{app}\arx.exe');
+    Theirs := ExpandConstant('{app}\arx-vanilla.exe');
+    if FileExists(Theirs) then begin
+      // Ours should already be gone; if something kept it, it is still ours
+      // to remove - the file being restored is the one the player started with.
+      DeleteFile(Ours);
+      RenameFile(Theirs, Ours);
+    end;
   end;
 end;

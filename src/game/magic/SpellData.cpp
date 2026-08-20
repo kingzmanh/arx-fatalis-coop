@@ -18,6 +18,7 @@
  */
 
 #include "game/magic/SpellData.h"
+#include "game/magic/StudioSpells.h"
 
 #include "core/Localisation.h"
 
@@ -26,6 +27,32 @@ std::array<SPELL_ICON, SPELL_TYPES_COUNT> spellicons;
 void spellDataInit() {
 	
 	spellicons.fill({ });
+	
+	/*
+	 * The written-down spells first. Unlike everything below them, these
+	 * can be different from one run of the game to the next: they are
+	 * read from a loose file that anybody can edit.
+	 */
+	for(size_t i = 0; i < g_studioSpells.size(); i++) {
+		const StudioSpellDef & made = g_studioSpells[i];
+		if(!made.defined) {
+			continue;
+		}
+		SpellType type = SpellType(size_t(SPELL_STUDIO_FIRST) + i);
+		SPELL_ICON & s = spellicons[type];
+		s.name = made.name;
+		s.description = made.name;
+		s.level = made.level;
+		s.spellid = type;
+		s.m_hasDuration = false;
+		s.bAudibleAtStart = true;
+		s.tc = TextureContainer::LoadUI(made.icon.empty()
+		       ? res::path("graph/interface/icons/spell_magic_missile")
+		       : res::path(made.icon));
+		for(size_t k = 0; k < 4 && k < made.symbols.size(); k++) {
+			s.symbols[k] = made.symbols[k];
+		}
+	}
 	
 	{ // Magic_Sight Level 1
 		SPELL_ICON & s = spellicons[SPELL_MAGIC_SIGHT];

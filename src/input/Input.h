@@ -207,6 +207,13 @@ private:
 
 extern Input * GInput;
 
+/*!
+ * While a typing UI (the co-op chat) owns the keyboard, every game ACTION
+ * reads as released - spelling "sword" must not draw one. Raw key queries
+ * still work, which is how the typing UI itself keeps running.
+ */
+extern bool g_gameActionsSuppressed;
+
 bool ARX_INPUT_Init(Window * window);
 void ARX_INPUT_Release();
  

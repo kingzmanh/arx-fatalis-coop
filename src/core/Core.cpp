@@ -46,6 +46,7 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 // Copyright (c) 1999-2001 ARKANE Studios SA. All rights reserved
 
 #include "core/Core.h"
+#include "platform/Time.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -191,6 +192,21 @@ Vec3f LastValidPlayerPos;
 // START - Information for Player Teleport between/in Levels-------------------------------------
 AreaId g_teleportToArea;
 RememberedSpot g_rememberedSpot;
+DeliberateArrival g_deliberateArrival;
+
+bool deliberateArrivalHolds() {
+	
+	if(!g_deliberateArrival.armed) {
+		return false;
+	}
+	
+	if(platform::getTime() > g_deliberateArrival.until) {
+		g_deliberateArrival.armed = false;
+		return false;
+	}
+	
+	return true;
+}
 std::string TELEPORT_TO_POSITION;
 long TELEPORT_TO_ANGLE;
 // END -   Information for Player Teleport between/in Levels---------------------------------------

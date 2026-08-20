@@ -294,6 +294,25 @@ void ARX_PATH_UpdatePlayerZone() {
 	Zone * current = ARX_PATH_CheckPlayerInZone();
 	Zone * last = entities.player()->inzone;
 
+	/*
+	 * A summoned player appeared here; they did not walk in.
+	 *
+	 * Zones fire on the edge between two frames, and some of them
+	 * answer an entrance by teleporting whoever crossed - level 15's
+	 * marker_0219 does exactly that, which took the summoned player
+	 * straight back out of the spell that brought them. Count them as
+	 * already inside this one: no edge now, every later crossing
+	 * normal.
+	 */
+	if(coop::takePlayerZoneSwallow()) {
+		if(current) {
+			LogWarning << "[coop-chain] summoned into zone '" << current->name
+			           << "' - not counting it as walking in";
+		}
+		entities.player()->inzone = current;
+		return;
+	}
+
 	if(current != last) {
 		
 		if(last) {

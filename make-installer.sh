@@ -30,8 +30,8 @@ if [ ! -d "$PAYLOAD" ]; then
 	exit 1
 fi
 
-if [ ! -f "$PAYLOAD/arx-coop.exe" ]; then
-	echo "$PAYLOAD has no arx-coop.exe in it" >&2
+if [ ! -f "$PAYLOAD/arx.exe" ]; then
+	echo "$PAYLOAD has no arx.exe in it" >&2
 	exit 1
 fi
 

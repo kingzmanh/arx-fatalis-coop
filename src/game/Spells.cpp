@@ -44,6 +44,7 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 // Copyright (c) 1999-2000 ARKANE Studios SA. All rights reserved
 
 #include "game/Spells.h"
+#include "game/magic/StudioSpells.h"
 
 #include <algorithm>
 #include <cmath>
@@ -699,6 +700,12 @@ float ARX_SPELLS_GetManaCost(SpellType spell, float casterLevel) {
 	
 	// TODO this data should not be hardcoded
 	
+	// The written-down spells are not in this switch and never will be:
+	// what they cost is in the file they come from.
+	if(isStudioSpell(spell)) {
+		return studioSpellManaCost(spell);
+	}
+	
 	switch(spell)  {
 		
 		default:                          return   0.f;
@@ -760,6 +767,12 @@ float ARX_SPELLS_GetManaCost(SpellType spell, float casterLevel) {
 }
 
 static std::unique_ptr<Spell> createSpellInstance(SpellType type) {
+	
+	// The hundred written-down spells share one class: what each of them
+	// is comes from the file, not from the type.
+	if(isStudioSpell(type)) {
+		return std::make_unique<StudioSpell>();
+	}
 	
 	switch(type) {
 		case SPELL_NONE: return { };

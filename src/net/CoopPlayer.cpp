@@ -1122,6 +1122,9 @@ void updateAvatar() {
 		 */
 		Vec3f feet = hostFeet;
 
+		// A summon does not come through here at all any more: it lands at
+		// its own spot during the level change, so there is nothing to nudge.
+
 		LogWarning << "[coop-place] nudge: avatar=" << g_avatar.pos.x << ',' << g_avatar.pos.y
 		           << ',' << g_avatar.pos.z << " feet=" << feet.x << ',' << feet.y << ',' << feet.z
 		           << " was=" << player.pos.x << ',' << player.pos.y << ',' << player.pos.z;
@@ -1190,8 +1193,18 @@ void saveGuestProfileIfDue(bool force) {
 		return;
 	}
 
-	u32 magic = 0x31504341u; // "ACP1"
+	// "ACP2" - the same profile as ACP1 with the chosen face on the end
+	u32 magic = 0x32504341u;
 	std::fwrite(&magic, sizeof(magic), 1, f);
+	/*
+	 * What they look like.
+	 *
+	 * Everything else about this character was kept and this was not, so a
+	 * player who made a face at their first join met a default one at the
+	 * next - which reads as the game forgetting them.
+	 */
+	u8 skin = player.skin;
+	std::fwrite(&skin, sizeof(skin), 1, f);
 	s32 level = player.level;
 	std::fwrite(&level, sizeof(level), 1, f);
 	s64 xp = player.xp;
@@ -1370,11 +1383,18 @@ void applyGuestIdentity() {
 
 	u32 magic = 0;
 	std::fread(&magic, sizeof(magic), 1, f);
-	if(magic != 0x31504341u) {
+	if(magic != 0x31504341u && magic != 0x32504341u) {
 		std::fclose(f);
 		ARX_PLAYER_MakeFreshHero();
 		LogWarning << "[coop] unreadable character profile; starting fresh";
 		return;
+	}
+
+	// ACP2 carries the face they chose; ACP1 predates it and keeps this one
+	bool hasFace = (magic == 0x32504341u);
+	u8 skin = player.skin;
+	if(hasFace) {
+		std::fread(&skin, sizeof(skin), 1, f);
 	}
 
 	s32 level = 0;
@@ -1393,6 +1413,16 @@ void applyGuestIdentity() {
 	player.level = short(level);
 	player.xp = long(xp);
 	player.gold = long(gold);
+
+	/*
+	 * And the face. Setting the number is not enough - the head textures are
+	 * chosen from it when a body is built, so the body has to be told to look
+	 * again or the player keeps whichever face they were handed.
+	 */
+	if(hasFace) {
+		player.skin = skin;
+		ARX_PLAYER_Restore_Skin();
+	}
 
 	u16 count = 0;
 	std::fread(&count, sizeof(count), 1, f);
@@ -1450,39 +1480,50 @@ void logOwnBelongings(const char * when) {
 }
 
 //! How long the other player has stood over the body, building up a rescue.
-static float g_reviveHoldMs = 0.f;
 
-bool updateReviveOpportunity() {
-
-	if(!isPlaying() || !g_avatar.valid || g_avatar.dead) {
-		g_reviveHoldMs = 0.f;
-		return false; // no one left standing, so death is allowed to be the end
+/*!
+ * Back on our feet with half our health - alive, hurt, still in the fight.
+ *
+ * This undoes exactly what ARX_PLAYER_BecomesDead() and the death camera
+ * set. Two things ask for it now, standing over the body and a spell cast
+ * from across the room, and they must agree about what being revived
+ * means - so they share this rather than each doing their own version.
+ */
+void reviveLocalPlayer(const std::string & why) {
+	
+	if(player.lifePool.current > 0.f) {
+		return;                       // not dead; nothing to undo
 	}
-
-	Entity * body = avatarEntity();
-	if(!body || !g_avatar.present
-	   || glm::distance(body->pos, player.pos) > 300.f) {
-		g_reviveHoldMs = 0.f; // rescue still possible, they are just not here yet
-		return true;
-	}
-
-	g_reviveHoldMs += g_framedelay;
-	if(g_reviveHoldMs < 2000.f) {
-		return true;
-	}
-	g_reviveHoldMs = 0.f;
-
-	// They stood by the body long enough. Back up with half our health -
-	// alive, hurt, and still in the fight. This undoes exactly what
-	// ARX_PLAYER_BecomesDead() and the death camera set.
+	
 	player.lifePool.current = 0.5f * player.lifePool.max;
-	player.manaPool.current = std::max(player.manaPool.current, 0.25f * player.manaPool.max);
+	player.manaPool.current = std::max(player.manaPool.current,
+	                                   0.25f * player.manaPool.max);
 	player.DeadTime = 0;
 	BLOCK_PLAYER_CONTROLS = false;
 	EXTERNALVIEW = false;
 	player.Interface = INTER_LIFE_MANA | INTER_MINIBACK | INTER_MINIBOOK;
 	reportRevive();
-	notification_add("revived by " + g_avatar.name);
+	notification_add(std::string(why));
+	
+}
+
+/*!
+ * Whether being dead might still be temporary.
+ *
+ * It used to raise you as well: two seconds of the other player standing over
+ * the body and you were up. That was the only way back co-op had, and it is
+ * not any more - a spell does it now, from wherever they are standing - so the
+ * standing-over-you part is gone and only the waiting is left.
+ *
+ * The waiting matters. While the other player is alive the death fade is held
+ * short of the menu; without it a dead player is dropped back to the main menu
+ * long before anyone can finish drawing three runes.
+ */
+bool updateReviveOpportunity() {
+
+	if(!isPlaying() || !g_avatar.valid || g_avatar.dead) {
+		return false; // no one left standing, so death is allowed to be the end
+	}
 
 	return true;
 }

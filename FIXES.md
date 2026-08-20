@@ -1049,3 +1049,128 @@ travels as "player", and the watching machine fills in its own hero - the
 camera simply asks who the scene is for instead of remembering which body it
 was once bound to. One rule for every scene in the game. Confirmed by the
 user.
+
+## 43. Arriving somewhere exact landed at the level entrance instead
+
+**The problem.** Warping to a position in another level - the console's `warp`
+and `back`, and the spell that summons the other player to where you point -
+put you at that level's entrance. Doing it a second time landed correctly,
+which made it look like the first attempt had simply not taken.
+
+**Why did it happen?** It had taken. The log shows the arrival placing the
+player at the exact spot, and then, a frame or two later, a plain script
+teleport moving them 884 units to the entrance: `teleport -p by 'marker_0391'
+to 'marker_0391'`. A level places whoever turns up in it with a marker that
+teleports the player onto itself, and that script only runs the first time a
+level is loaded - a level restored from a save does not run its scripts again,
+which is exactly why the second attempt appeared to work. Two earlier guesses
+were wrong and are worth naming: the second player's arrival was blamed first,
+though the same thing happens to a single player alone; and the level's start
+point was taken to be `pos_edit` from the level file, which is the editor's
+camera - level 1's sits three thousand units up in the air - so a check
+against it never matched anything.
+
+**The fix.** An arrival that names its own position says so, for ten seconds.
+While that stands, the one thing that looks like a level placing its own
+arrivals - a marker teleporting the player onto itself, or `teleport -pi` -
+is let go of, and logged. Everything else that moves a player names somewhere
+other than the entity doing the sending, so traps, story moves and the snake
+women's send are untouched, and outside those ten seconds nothing changes at
+all. Confirmed by the user.
+
+## 44. Uninstalling the mod deleted the player's own game
+
+**The problem.** Removing the mod left the game folder with no arx.exe at all.
+The player's own executable, kept aside as arx-vanilla.exe during install, was
+gone too - so the mod could be installed but not undone, on a game people paid
+for.
+
+**Why did it happen?** The restore ran at usUninstall, which happens BEFORE the
+uninstaller deletes what it installed. It renamed arx-vanilla.exe back to
+arx.exe, and then the uninstaller deleted arx.exe - because arx.exe is one of
+the files it had installed. Doing the right thing at the wrong moment.
+
+**The fix.** The restore moved to usPostUninstall, which runs once ours is
+already gone, so the file it renames is the only copy left. Confirmed by
+installing, updating and uninstalling into a stand-in game folder and reading
+what was left behind each time: the player's marked exe comes back under its
+own name, and arx-vanilla.exe is gone.
+
+## 45. A release could be packaged with no libraries in it
+
+**The problem.** The zip built for 0.15 said "0 libraries" and was called ready.
+An executable with none of its DLLs beside it does not start, and the failure
+Windows shows says nothing about what is missing.
+
+**Why did it happen?** The library list is read out of the binary with ldd, and
+ldd names the same folder two ways: /mingw64/bin when run inside MSYS2,
+/c/msys64/mingw64/bin outside it. The pattern matched only the second, so in
+any other shell it matched nothing - and finding nothing is not an error to
+grep, to cp, or to the zip that followed. The script's own opening paragraph
+warns about exactly this failure, in the script that had it.
+
+**The fix.** Both spellings are matched, and a package with no libraries in it
+is refused rather than announced as ready. Confirmed: the same command that
+collected nothing now collects nineteen.
+
+## 46. Every torch in the level lit itself for one player
+
+**The problem.** Walking into level 15 while the other player was still in
+level 1 lit everything: all nine fires, every lamp, the whole level. Only for
+the player who walked in - their partner's screen was correct, which made it
+look like a drawing fault rather than a disagreement.
+
+**Why did it happen?** A light is numbered by where it sits in its own level's
+list, and the message saying "this one is burning" carried the number alone.
+That is safe while both players are in the same level, and the guest is a
+replica then, so it does not send anything anyway. But `isReplica()` means
+guest AND in the host's area - the moment the two are apart, both machines are
+running a world, both are entitled to describe it, and both start sending. Level
+1 burns 519 of its 524 lights. Level 15 has 239. Every number that arrived lit
+whatever held that number here, so all 239 came on. Measured, not guessed: a
+probe counting lit lights read 239/239 on one screen and 232/239 on the other.
+
+**The fix.** The message names its area, and a machine standing somewhere else
+ignores it. The record of what has already been sent is tied to an area too:
+two levels can hold the same number of lights, and a stale list of the same
+length would have compared clean and sent nothing. Confirmed by the user.
+
+## 47. The Spells tab called runes free that one of your own spells was using
+
+**The problem.** Picking YOK AAM said "yok aam is free" while Summon Co-op -
+drawn with yok aam - sat in the list on the left of the same screen. Spotted by
+the user, on screen, before it could write anything.
+
+**Why did it happen?** The check asked one question: does a spell in the game
+use these runes? It read that list out of the engine's source, which is exactly
+right for the game's own spells and knows nothing about the ones written in
+studio-spells.txt. Two spells on one sequence is not a small mistake either -
+the game keeps the first and refuses the second when it starts, so the spell
+would simply not have been there, with the only word about it in a log nobody
+has open.
+
+**The fix.** Your own spells count too, in all three places it can be got
+wrong: the words under the runes while they are being picked, making a spell,
+and changing one. A spell being edited is not a clash with itself. Confirmed by
+making a spell on YOK AAM and on MEGA VITAE and having both refused by name.
+
+## 48. Saving an edited spell looked for one that was never there
+
+**The problem.** Pressing Save on Summon Co-op answered "could not make it:
+there is no spell called summon_co-op". Revive saved perfectly well, which made
+it look like something about that one spell.
+
+**Why did it happen?** A spell's key is its identity in the file; the name is
+only what the book shows. Save sent both - and the key it sent was built fresh
+from the name box, then written OVER the key of the spell being edited, because
+the two were merged with the derived one last. "Summon Co-op" becomes
+summon_co-op that way; the file holds summon_coop, because the file drops
+everything that is not a letter, a digit or an underscore and the browser did
+not. Revive worked by luck: its name spells its own key.
+
+**The fix.** The key being edited wins over anything derived from a name, so
+renaming a spell renames it instead of losing it. And the browser derives keys
+by the same rule the file uses, so the two cannot disagree about what a new
+spell is called either. Confirmed by saving Summon Co-op and by renaming it and
+finding the same spell under the new name.
+

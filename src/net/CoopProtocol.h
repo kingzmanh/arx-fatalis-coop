@@ -38,7 +38,7 @@ namespace coop {
  * misread a newer one. Both sides check this during the handshake and refuse
  * the connection rather than desyncing silently later.
  */
-constexpr u32 ProtocolVersion = 30;
+constexpr u32 ProtocolVersion = 31;
 
 //! Default listen port, used when the address the joining player typed has none.
 constexpr unsigned short DefaultPort = 27100;
@@ -101,6 +101,8 @@ enum MessageType : u8 {
 	MsgHitEntity    = 41, //!< client -> host: I hit this world entity
 	MsgPlayerDied   = 42,
 	MsgPlayerRevive = 43,
+	MsgReviveAsk    = 44, //!< a spell asks the other machine to raise its player
+	MsgComeHere     = 45, //!< a spell asks the other player to be moved here
 
 	// -- magic -----------------------------------------------------------------
 	MsgSpellCast    = 50,

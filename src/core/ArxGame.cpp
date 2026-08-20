@@ -110,6 +110,7 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 #include "graphics/texture/TextureStage.h"
 
 #include "gui/Console.h"
+#include "gui/CoopChat.h"
 #include "gui/Cursor.h"
 #include "gui/Hud.h"
 #include "gui/Interface.h"
@@ -1730,6 +1731,7 @@ void ArxGame::updateInput() {
 	}
 
 	g_console.update();
+	g_coopChat.update();
 	
 #ifdef ARX_DEBUG
 	debug_keysUpdate();
@@ -2186,7 +2188,8 @@ void ArxGame::render() {
 #endif
 	
 	g_console.draw();
-	
+	g_coopChat.draw();
+
 	if(ARXmenu.mode() == Mode_InGame) {
 		ARX_SCRIPT_AllowInterScriptExec();
 		/*

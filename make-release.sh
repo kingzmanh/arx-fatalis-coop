@@ -55,13 +55,13 @@ echo "packaging arx-coop-$VERSION"
 rm -rf "$OUT"
 mkdir -p "$OUT"
 
-# Named apart from the game's own arx.exe on purpose.
+# arx.exe, the same name the game uses.
 #
-# This gets copied into the Arx Fatalis folder, and Steam and GOG both ship an
-# arx.exe of their own there. Overwriting it would replace their game with this
-# one - which works, but takes away playing vanilla and needs a file
-# verification to undo. Nothing of theirs is touched this way.
-cp "$HERE/build/arx.exe" "$OUT/arx-coop.exe"
+# One executable, so nobody has to be told which one to run - the mod IS the
+# game once it is installed. The player's own arx.exe is kept as
+# arx-vanilla.exe and still runs: the installer renames it before copying, and
+# a zip cannot, so the read me asks for that one step by hand.
+cp "$HERE/build/arx.exe" "$OUT/arx.exe"
 
 # What changed, what was fixed, and what is still broken - in the folder, so a
 # player who never opens the repository still knows which build they have.
@@ -72,18 +72,34 @@ cp "$HERE/CHANGELOG.md" "$OUT/WHAT CHANGED.txt"
 echo "  collecting libraries..."
 collect() {
 	local target="$1"
-	ldd "$target" 2>/dev/null | grep -io "$MINGW/[^ ]*\.dll" | while read -r dll; do
+	# Both spellings of the same folder: ldd writes /mingw64/bin inside MSYS2
+	# and /c/msys64/mingw64/bin outside it. Matching only one of them finds
+	# nothing in the other shell - and finding nothing is not an error to any
+	# of the commands here, so it packages an executable that cannot start.
+	ldd "$target" 2>/dev/null \
+		| grep -ioE "(/[a-z]/msys64)?/mingw64/bin/[^ ]*\.dll" | while read -r dll; do
+		case "$dll" in
+			/mingw64/*) dll="/c/msys64$dll" ;;
+		esac
 		local name
 		name="$(basename "$dll")"
-		if [ ! -f "$OUT/$name" ]; then
+		if [ ! -f "$OUT/$name" ] && [ -f "$dll" ]; then
 			cp "$dll" "$OUT/"
 			collect "$OUT/$name"
 		fi
 	done
 }
-collect "$OUT/arx-coop.exe"
+collect "$OUT/arx.exe"
 
 COUNT=$(ls "$OUT"/*.dll 2>/dev/null | wc -l)
+if [ "$COUNT" -eq 0 ]; then
+	echo
+	echo "no libraries were collected."
+	echo "ldd found none beside $MINGW - the executable in this package would"
+	echo "not start on anybody's machine, so it is not a package. Run this from"
+	echo "the MSYS2 shell the game was built in."
+	exit 1
+fi
 echo "  $COUNT libraries"
 
 # Arx Libertatis' own data, which is not part of the game and not optional.
@@ -94,6 +110,16 @@ echo "  $COUNT libraries"
 echo "  copying engine data..."
 mkdir -p "$OUT/data"
 cp -r "$HERE/data/core/"* "$OUT/data/"
+# The spells, which are ordinary game content: they ship with the mod, they
+# work for everyone who installs it, and they stay a text file anyone can open
+# and change. The installer keeps a copy the player has edited rather than
+# writing over it, and leaves the version we shipped beside it to compare.
+if [ -f "$HERE/game/data/game/studio-spells.txt" ]; then
+	mkdir -p "$OUT/data/game"
+	cp "$HERE/game/data/game/studio-spells.txt" "$OUT/data/game/"
+	echo "  spells: $(grep -c '^spell ' "$OUT/data/game/studio-spells.txt")"
+fi
+
 echo "  $(find "$OUT/data" -type f | wc -l) files"
 
 # What a player needs to know, in the folder rather than on a web page they
@@ -116,16 +142,40 @@ will not run without your copy.
    Steam:  right click the game, Manage, Browse local files
    GOG:    usually C:\GOG Games\Arx Fatalis
 
-2. Copy everything from this zip INTO that folder.
+2. Rename the arx.exe already in that folder to arx-vanilla.exe.
 
-3. Double click arx-coop.exe.
+   That is your own game, and it still works under the new name - this
+   is only so you can go back whenever you like. The installer does
+   this step for you; a zip cannot, so it is yours to do.
+
+3. Copy everything from this zip INTO that folder.
+
+4. Double click arx.exe.
 
 Putting it in the game's own folder is the point - that is how it finds your
 copy of the game. Dropping it somewhere else and running it will usually fail
 to find anything.
 
-Nothing is overwritten that matters and the game is not modified: to go back,
-delete the files this zip added.
+Only arx.exe is replaced, and step 2 kept yours under another name.
+Everything else is added beside the game's own files.
+
+
+Spells
+------
+
+The co-op spells are in a text file, not in the program:
+
+    data\game\studio-spells.txt
+
+Open it in Notepad. Every spell is a block of lines, and the "runes"
+line is the sequence you draw to cast it - change it to whatever you
+like from the list at the top of that file, save, and start the game.
+
+If you pick runes another spell already uses, that spell is left out
+rather than fighting over them, and arx.log says which one has them.
+
+Updating the mod keeps your version of this file. The one that came
+with the new version is left beside it as studio-spells-default.txt.
 
 
 To play together
@@ -160,12 +210,10 @@ try another microphone - most machines have several and only one is real.
 To remove it
 ------------
 
-Delete the files this zip added to your game folder - arx-coop.exe, the
-.dll files, the data folder, and these text files. Do NOT delete the
-folder itself, it is your game.
-
-Your game's own arx.exe was never touched, so vanilla Arx Fatalis keeps
-working the whole time - including the Play button in Steam.
+Delete the files this zip added to your game folder - the .dll files,
+the data folder, and these text files - then delete arx.exe and rename
+arx-vanilla.exe back to arx.exe. Do NOT delete the folder itself, it is
+your game.
 
 On Steam you can also just verify the files and it will tidy up.
 

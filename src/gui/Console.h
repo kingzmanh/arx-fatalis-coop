@@ -153,9 +153,12 @@ public:
 	
 	//! Show the console and unlock the hotkey
 	void open();
-	
+
 	//! Hide the console
 	void close();
+
+	//! Whether the console is currently shown (the co-op chat stands aside for it)
+	bool isOpen() const { return m_enabled; }
 	
 	//! ID of the current context entity or an empty string
 	std::string_view context() { return std::string_view(text()).substr(m_contextBegin, m_contextEnd - m_contextBegin); }

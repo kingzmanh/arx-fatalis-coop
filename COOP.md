@@ -33,17 +33,17 @@ on the shared world.
 2. Unzip it **into your Arx Fatalis folder** - the one holding `data.pak`.
    On Steam that is usually
    `...\steamapps\common\Arx Fatalis`.
-3. Run `arx-coop.exe`.
+3. Run `arx.exe`.
 
 Nothing is overwritten. Your original game keeps working exactly as before;
 this is an extra executable that reads the same data files.
 
 If you keep the mod somewhere else instead, start it with
-`arx-coop.exe --data-dir "C:\path\to\Arx Fatalis"`.
+`arx.exe --data-dir "C:\path\to\Arx Fatalis"`.
 
 ## Playing together
 
-1. Both players start `arx-coop.exe`.
+1. Both players start `arx.exe`.
 2. **Host**: Options → CO-OPERATIVE PLAY → HOST GAME, then start or load a game.
 3. **Guest**: type the host's IP address, then JOIN GAME.
 

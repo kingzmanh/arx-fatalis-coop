@@ -643,6 +643,20 @@ public:
 					// their scene's move; our player was never part of it
 					return Success;
 				}
+				/*
+				 * A marker sending the player to itself is how a level places
+				 * whoever turns up in it - level 15's marker_0391 does exactly
+				 * this the first time the level runs its scripts, which is why
+				 * a warp into a level never visited lands at the entrance and
+				 * a second warp, with no scripts left to run, lands properly.
+				 * An arrival that named its own spot has already been placed.
+				 */
+				if(t == io && deliberateArrivalHolds()) {
+					LogWarning << "[coop-chain] '" << io->idString()
+					           << "' would place us at the level entrance - "
+					              "staying where we arrived";
+					return Success;
+				}
 				ARX_INTERACTIVE_Teleport(entities.player(), pos);
 				coop::reportPartyTeleport(context.getEntity(), pos);
 				return Success;
@@ -665,6 +679,14 @@ public:
 			
 			if(teleport_player) {
 				Vec3f pos = GetItemWorldPosition(io);
+				// the same placement, written the other way round: an entity
+				// sending the player to where the entity itself started
+				if(deliberateArrivalHolds()) {
+					LogWarning << "[coop-chain] '" << io->idString()
+					           << "' would place us at the level entrance - "
+					              "staying where we arrived";
+					return Success;
+				}
 				if(coop::redirectPartnerTeleport(io, pos, angle)) {
 					// their scene's move; our player was never part of it
 				} else {

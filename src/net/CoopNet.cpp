@@ -109,6 +109,16 @@ struct Session {
 
 	//! Consumed by the level code to move a freshly joined guest off the host.
 	bool joinNudge = false;
+	//! Where a summoning spell wants us, once its area is actually loaded.
+	Vec3f summonSpot = Vec3f(0.f);
+	AreaId summonArea = AreaId();
+	bool haveSummonSpot = false;
+	//! This arrival was a summons: it lands at its own spot, not beside anyone.
+	bool summonArrival = false;
+	//! One zone crossing to ignore: a summons is an arrival, not a walk in.
+	bool swallowZoneEdge = false;
+	//! When to look again, because the level change places people too.
+	PlatformInstant summonSettleAt = 0;
 
 	/*!
 	 * Set once when a guest joins, cleared as soon as they have travelled.
@@ -401,8 +411,16 @@ void send(const Writer & writer, Channel channel) {
  * Sent as changes rather than a full list: a level holds hundreds of these and
  * almost none of them ever change, but the handful that do - a fireplace, a
  * brazier, a torch on a wall - are exactly what a player notices.
+ *
+ * Every one of them names its area. A light is numbered by where it sits in
+ * its own level's list, and when the two players are apart both machines are
+ * running a world and both describe it - so a number arriving from the other
+ * level would light whatever happens to hold that number here. It did: level 1
+ * burns 519 lights, and a player standing in level 15 while their partner was
+ * down there had all 239 of its lights lit, torches included.
  */
 std::vector<bool> g_sentLightState;
+AreaId g_sentLightArea;
 
 void pollStaticLights() {
 
@@ -410,7 +428,12 @@ void pollStaticLights() {
 		return;
 	}
 
-	if(g_sentLightState.size() != g_staticLights.size()) {
+	// The area matters as much as the count: two levels can hold the same
+	// number of lights, and a list of the same length from the last one would
+	// quietly agree with everything.
+	if(g_sentLightArea != g_currentArea
+	   || g_sentLightState.size() != g_staticLights.size()) {
+		g_sentLightArea = g_currentArea;
 		g_sentLightState.assign(g_staticLights.size(), false);
 		// A fresh level: describe every light that is lit, so the guest starts
 		// from the same picture rather than from whatever its own copy decided.
@@ -420,6 +443,7 @@ void pollStaticLights() {
 				Writer writer(MsgLightIgnite);
 				writer.put(u16(i));
 				writer.put(true);
+				writer.put(s32(g_currentArea));
 				send(writer, ChannelEvent);
 			}
 		}
@@ -433,6 +457,7 @@ void pollStaticLights() {
 			Writer writer(MsgLightIgnite);
 			writer.put(u16(i));
 			writer.put(lit);
+			writer.put(s32(g_currentArea));
 			send(writer, ChannelEvent);
 		}
 	}
@@ -1143,7 +1168,9 @@ void handleMessage(const u8 * data, size_t size) {
 		case MsgLightIgnite: {
 			u16 index = reader.getU16();
 			bool lit = reader.getBool();
-			if(reader.ok()) {
+			s32 area = reader.getS32();
+			if(reader.ok() && AreaId(area) == g_currentArea) {
+				// Their level's numbering means nothing in ours.
 				ApplyScope scope;
 				applyLightIgnite(index, lit);
 			}
@@ -1344,6 +1371,65 @@ void handleMessage(const u8 * data, size_t size) {
 		case MsgPlayerDied: {
 			mutableAvatar().dead = true;
 			notification_add(avatar().name + " has fallen");
+			break;
+		}
+
+		case MsgReviveAsk: {
+			// their spell, our body: we are the only ones who may raise it
+			reviveLocalPlayer("raised by " + avatar().name);
+			break;
+		}
+
+		case MsgComeHere: {
+			Vec3f where = reader.getVec3f();
+			s32 area = reader.getS32();
+			if(!reader.ok() || player.lifePool.current <= 0.f) {
+				break;                      // the dead are not summoned
+			}
+			if(AreaId(area) != g_currentArea) {
+				/*
+				 * Their level, not ours, so those numbers describe a place
+				 * that does not exist here. Take the road the story teleports
+				 * take - travel to them and arrive beside them - and if this
+				 * side cannot travel, stay put and say so.
+				 */
+				if(isGuest()) {
+					/*
+					 * Land at the spot itself, not at the doorway.
+					 *
+					 * g_rememberedSpot is what the console's "back" uses to
+					 * return across a level change: while it is pending the
+					 * arrival takes that position instead of a marker, inside
+					 * the load and before anything is drawn. Placing the
+					 * player afterwards instead - which is what this did -
+					 * shows them the entrance for a moment and then moves
+					 * them, which is the blink you see.
+					 */
+					g_rememberedSpot.area = AreaId(area);
+					g_rememberedSpot.pos = where + ARXCHARACTER::baseOffset();
+					g_rememberedSpot.yaw = player.angle.getYaw();
+					g_rememberedSpot.valid = true;
+					g_rememberedSpot.pending = true;
+
+					g_session.travelToHost = true;
+					g_session.joinNudge = false;   // the spot decides, not the host
+					g_session.summonArrival = true;
+					g_session.swallowZoneEdge = true;
+					g_session.haveSummonSpot = false;
+					notification_add("summoned by " + avatar().name);
+					LogInfo << "[coop] summoned from another area; arriving at the spot";
+				} else {
+					notification_add(avatar().name + " called from another area");
+				}
+				break;
+			}
+			if(placePlayerAt(where)) {
+				g_session.swallowZoneEdge = true;
+				notification_add("summoned by " + avatar().name);
+			} else {
+				notification_add(avatar().name + " called, but there is no "
+				                 "floor there");
+			}
 			break;
 		}
 
@@ -3083,7 +3169,28 @@ bool isReplica() {
 	return isGuest() && sharingArea();
 }
 
+bool takePlayerZoneSwallow() {
+	bool swallow = g_session.swallowZoneEdge;
+	g_session.swallowZoneEdge = false;
+	return swallow;
+}
+
 bool takeJoinNudge() {
+
+	/*
+	 * A summoned player has already been put where the spell asked, during
+	 * the level change. The nudge exists to stop a JOINING player landing
+	 * wherever their own save left them - it is set by the arrival path as
+	 * well as by joining, so clearing it at the far end was not enough, and
+	 * it walked the summoned player back to the host's feet.
+	 */
+	if(g_session.summonArrival) {
+		g_session.summonArrival = false;
+		g_session.joinNudge = false;
+		LogInfo << "[coop] arrived by summons; leaving them where the spell put them";
+		return false;
+	}
+
 	bool nudge = g_session.joinNudge;
 	g_session.joinNudge = false;
 	return nudge;
@@ -3499,6 +3606,78 @@ void reportDeath() {
 	if(isPlaying()) {
 		sendBare(MsgPlayerDied, ChannelEvent);
 	}
+}
+
+/*!
+ * Stand the local player at a spot, if a player can stand there.
+ *
+ * The test is the game's own, copied from the summoning spell: a cylinder at
+ * the spot, and a floor within thirty units of it. That spell simply does not
+ * summon when the answer is no, and neither does this - a player put through
+ * a wall dies, which is how the first version of this ended.
+ */
+bool placePlayerAt(const Vec3f & where) {
+
+	Cylinder phys = Cylinder(where, player.baseRadius(), player.baseHeight());
+	if(glm::abs(CheckAnythingInCylinder(phys, entities.player(),
+	                                    CFLAG_JUST_TEST)) >= 30.f) {
+		return false;
+	}
+
+	player.pos = g_moveto = where + ARXCHARACTER::baseOffset();
+	entities.player()->pos = player.basePosition();
+	ARX_PLAYER_Reset_Fall();
+	return true;
+}
+
+/*!
+ * Where a summoning spell asked us to stand, if we have just arrived in the
+ * area it was cast in. Answered once.
+ */
+bool takeSummonSpot(Vec3f & out) {
+
+	if(!g_session.haveSummonSpot || g_session.summonArea != g_currentArea) {
+		return false;
+	}
+	out = g_session.summonSpot;
+	/*
+	 * Kept, not cleared. The level change has its own idea of where an
+	 * arriving player belongs and it acts after this, so the spot is looked
+	 * at once more when everything has settled.
+	 */
+	g_session.summonSettleAt = platform::getTime() + 1200ms;
+	return true;
+}
+
+/*!
+ * Ask the other machine to raise its player, because a spell said so.
+ *
+ * It cannot be done from here: a player's body belongs to the machine sitting
+ * in front of it, and reaching across to set someone else's health is how two
+ * machines end up disagreeing about who is alive.
+ */
+void askPartnerRevive() {
+	if(isPlaying() && avatar().valid && avatar().dead) {
+		sendBare(MsgReviveAsk, ChannelEvent);
+	}
+}
+
+/*!
+ * Ask the other player to come to a place, and say which area it is in.
+ *
+ * The area matters more than the place. Three numbers mean nothing on their
+ * own: applied in the level that player happens to be standing in, they
+ * describe some spot inside the rock, and the first version of this spell
+ * killed the player it was meant to summon.
+ */
+void askPartnerHere(const Vec3f & where) {
+	if(!isPlaying() || !avatar().valid) {
+		return;
+	}
+	Writer writer(MsgComeHere);
+	writer.put(where);
+	writer.put(s32(g_currentArea));
+	send(writer, ChannelEvent);
 }
 
 void reportRevive() {

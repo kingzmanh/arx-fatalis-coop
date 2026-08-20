@@ -8,6 +8,80 @@ seen working, **known issues** are broken and understood, and **needs testing**
 was built with care but has not yet been proven in a live game - if you try
 one of those and it misbehaves, that report is exactly what we need.
 
+## 0.15
+
+Spells kept in a text file, and arrivals that land where they were aimed.
+
+**What works** (played and confirmed)
+
+- Two spells you can cast, and they come with the mod:
+
+      Summon Co-op    yok aam         brings your partner to you
+      Revive          mega yok aam    puts them back on their feet
+
+  Summon Co-op opens a rift where you are looking and your partner steps out
+  of it halfway through it opening - the same beat the game's own summoning
+  uses - and only your partner moves. It reaches across the map, and across
+  levels: if they are somewhere else entirely they travel and arrive at the
+  spot, not at that level's front door.
+
+  Both cost mana. Written-down spells used to cost nothing at all, because the
+  game's mana table is a list of its own spells and anything it has not heard
+  of is free. Summon Co-op costs 2; Revive costs half your mana pool.
+- Arriving at an exact place after a level change. The console's `warp` and
+  `back` used to put you at the level entrance the first time and only work
+  when you tried again. A level places whoever turns up in it by teleporting
+  them onto its entrance marker, and it does that a moment AFTER you have
+  arrived - on a first visit, when its scripts run for the only time. An
+  arrival that named its own spot is now left standing there.
+- Spells are a file you can edit, and it ships with the mod:
+
+      data\game\studio-spells.txt
+
+  Open it in Notepad. Every spell is a small block of lines, and the "runes"
+  line is what you draw to cast it - change it to any sequence you like from
+  the list at the top of the file and start the game. Runes that another
+  spell already uses are refused with a line in arx.log naming that spell,
+  instead of leaving you with a game that will not start.
+- Torches stopped lighting themselves. Standing in one level while the other
+  player was in another lit every light around you - all of them, torches
+  included. Which light is burning was sent as a number, and a number means a
+  different light in a different level; it now says which level it means, and
+  a machine somewhere else ignores it.
+- Updating keeps your version of that file. The spells the new version ships
+  are left beside it as studio-spells-default.txt, so nothing you wrote is
+  quietly overwritten and nothing new is hidden from you.
+
+**Changed**
+
+- Standing over your dead partner no longer raises them. That existed because
+  co-op needed some way back and single player Arx has none; there is a spell
+  for it now, so being dead means waiting for someone to cast it. The screen
+  still holds short of the main menu for as long as the other player is alive,
+  because being sent back to the menu while they are drawing runes would be
+  the same thing as dying.
+- One executable. The mod installs as arx.exe, the name the game already uses,
+  and your own copy is kept as arx-vanilla.exe - which still runs, so vanilla
+  Arx Fatalis is always one double click away. Uninstalling puts it back. The
+  installer does the rename for you; the zip cannot, so its read me asks for
+  that one step by hand.
+- Network protocol 30 -> 31. Two new messages exist in this build (a spell
+  asking the other machine to raise its player, and one asking it to come
+  here) and the second player's saved appearance is written differently. Both
+  players need this build; an older one is refused at the handshake rather
+  than left to misbehave.
+
+**Known issues**
+
+- Never properly tested over the internet. Almost all testing has been two
+  windows on one computer. Real latency will find bugs that local testing
+  cannot.
+- Some cutscenes may still not play properly for player two. The ones in the
+  jail are fixed and proven; the rest of the game's scenes have not been
+  played through by two people yet.
+- Loot can duplicate - both players may find their own copy.
+- Enemies sometimes pick the wrong target in crowded fights.
+
 ## 0.14
 
 Cutscenes, fixed by playing them until they behaved.
@@ -30,6 +104,11 @@ Cutscenes, fixed by playing them until they behaved.
   scenes it had never played - and a skipped scene left the screen locked
   behind a camera nobody released.
 - Picking up a glowing item no longer leaves it glowing forever in your pack.
+- In-game chat. **Y** opens a gold line at the bottom of the screen in the
+  game's own font, **Enter** sends it, **Escape** throws it away. What you
+  send appears on both screens with your name in front. The world does not
+  pause while you type, and while the line is open the game ignores your
+  controls, so spelling "sword" does not draw one.
 
 **Known issues**
 
@@ -37,14 +116,6 @@ Cutscenes, fixed by playing them until they behaved.
   jail are fixed and proven; the rest of the game's scenes have not been
   played through by two people yet, and this is exactly the kind of report
   that helps.
-
-**Needs testing** (built with care, not yet proven in a live game)
-
-- In-game chat. **Y** opens a gold line at the bottom of the screen in the
-  game's own font, **Enter** sends it, **Escape** throws it away. What you
-  send appears on both screens with your name in front. The world does not
-  pause while you type, and while the line is open the game ignores your
-  controls, so spelling "sword" does not draw one.
 
 **Changed**
 

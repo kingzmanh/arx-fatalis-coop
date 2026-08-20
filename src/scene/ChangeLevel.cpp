@@ -61,6 +61,7 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 #include "core/Config.h"
 #include "core/Core.h"
+#include "platform/Time.h"
 #include "core/GameTime.h"
 #include "core/Version.h"
 
@@ -1457,6 +1458,8 @@ static bool ARX_CHANGELEVEL_Pop_Player(std::string_view target, float angle) {
 	const ARX_CHANGELEVEL_PLAYER * asp = reinterpret_cast<const ARX_CHANGELEVEL_PLAYER *>(dat + pos);
 	pos += sizeof(ARX_CHANGELEVEL_PLAYER);
 	
+	bool placedAtSpot = g_rememberedSpot.pending;
+
 	if(g_rememberedSpot.pending) {
 		// Coming back to a spot rather than to a doorway: the level has loaded,
 		// so put the player exactly where they were standing.
@@ -1466,6 +1469,14 @@ static bool ARX_CHANGELEVEL_Pop_Player(std::string_view target, float angle) {
 		player.angle.setYaw(g_rememberedSpot.yaw);
 		LogWarning << "[here] returned to " << player.pos.x << ',' << player.pos.y
 		           << ',' << player.pos.z;
+		/*
+		 * And hold that against the level's own placement, which has not run
+		 * yet: the entrance marker's script fires a moment from now on a first
+		 * visit and would put us at the door.
+		 */
+		g_deliberateArrival.spot = player.basePosition();
+		g_deliberateArrival.until = platform::getTime() + 10s;
+		g_deliberateArrival.armed = true;
 	} else if(target.empty()) {
 		player.angle = asp->angle;
 		player.pos = asp->pos.toVec3();
@@ -1497,7 +1508,23 @@ static bool ARX_CHANGELEVEL_Pop_Player(std::string_view target, float angle) {
 	player.doingmagic = asp->doingmagic;
 	player.playerflags = PlayerFlags::load(asp->playerflags); // TODO save/load flags
 	
-	if(asp->TELEPORT_TO_LEVEL[0]) {
+	if(placedAtSpot) {
+		/*
+		 * We have just put this player somewhere on purpose - a summoning
+		 * spell's spot, or the console's "back". The save was written while a
+		 * travel was still in flight and carries it, so restoring it here
+		 * starts that journey again the moment this one ends: the player
+		 * appears where they were sent, then the second change lands them at
+		 * the doorway. That is the entrance nobody asked for.
+		 */
+		if(asp->TELEPORT_TO_LEVEL[0]) {
+			LogWarning << "[coop-chain] dropped the save's pending travel to area "
+			           << util::loadString(asp->TELEPORT_TO_LEVEL)
+			           << ": this arrival had a destination of its own";
+		}
+		g_teleportToArea = { };
+		TELEPORT_TO_POSITION.clear();
+	} else if(asp->TELEPORT_TO_LEVEL[0]) {
 		s32 teleportToArea = util::toInt(util::loadString(asp->TELEPORT_TO_LEVEL)).value_or(-1);
 		g_teleportToArea = teleportToArea >= 0 ? AreaId(teleportToArea) : AreaId();
 		LogWarning << "[coop-chain] SAVE SMUGGLED A PENDING TRAVEL: area "

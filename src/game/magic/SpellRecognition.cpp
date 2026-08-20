@@ -18,6 +18,7 @@
  */
 
 #include "game/magic/SpellRecognition.h"
+#include "game/magic/StudioSpells.h"
 
 #include <array>
 #include <map>
@@ -561,10 +562,79 @@ static void addSpell(const Rune symbols[MAX_SPELL_SYMBOLS], SpellType spell, std
 	def->spell = spell;
 }
 
+/*!
+ * What a rune sequence already casts, if anything.
+ *
+ * Runes are handed out on trust everywhere else in this file, because they are
+ * written in it - a duplicate would be a mistake in the source and the assert
+ * in addSpell() is there to catch it during development. Spells read out of a
+ * text file are different: the file is meant to be edited by whoever installed
+ * the mod, and typing the runes of a spell the game already has must not be
+ * able to take the game down.
+ */
+static SpellType spellForSymbols(const Rune symbols[MAX_SPELL_SYMBOLS]) {
+	
+	if(symbols[0] == RUNE_NONE) {
+		return SPELL_NONE;
+	}
+	
+	const SpellDefinition * def = &definedSpells;
+	for(size_t i = 0; i < MAX_SPELL_SYMBOLS; i++) {
+		if(symbols[i] == RUNE_NONE) {
+			break;
+		}
+		def = def->next[symbols[i]].get();
+		if(!def) {
+			return SPELL_NONE;
+		}
+	}
+	
+	return def->spell;
+}
+
+//! What that spell is called, for saying so out loud.
+static std::string_view spellNameOf(SpellType spell) {
+	
+	for(const auto & known : spellNames) {
+		if(known.second == spell) {
+			return known.first;
+		}
+	}
+	
+	return "another spell";
+}
+
 void spellRecognitionInit() {
 	
 	for(const auto & spell : allSpells) {
 		addSpell(spell.symbols, spell.spell, spell.name);
+	}
+	
+	/*
+	 * And the spells somebody wrote down. Their runes are not in this
+	 * file at all - they come from game/studio-spells.txt, which is what
+	 * lets a player add a spell without building the game.
+	 */
+	studioSpellsLoad();
+	for(size_t i = 0; i < g_studioSpells.size(); i++) {
+		const StudioSpellDef & made = g_studioSpells[i];
+		if(!made.defined || made.symbols[0] == RUNE_NONE) {
+			continue;
+		}
+		if(SpellType taken = spellForSymbols(made.symbols.data()); taken != SPELL_NONE) {
+			LogWarning << "studio spells: " << made.key << " draws the runes of "
+			           << spellNameOf(taken) << " - give it a different sequence "
+			              "in game/studio-spells.txt and it will work";
+			continue;
+		}
+		if(spellNames.find(made.key) != spellNames.end()) {
+			LogWarning << "studio spells: " << made.key
+			           << " is already the name of a spell in the game - "
+			              "rename it in game/studio-spells.txt";
+			continue;
+		}
+		addSpell(made.symbols.data(),
+		         SpellType(size_t(SPELL_STUDIO_FIRST) + i), made.key);
 	}
 	
 	plist.reserve(MAX_POINTS);

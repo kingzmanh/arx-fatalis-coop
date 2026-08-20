@@ -1057,6 +1057,7 @@ set(GAME_SOURCES
 	src/game/magic/Spell.cpp
 	src/game/magic/SpellData.cpp
 	src/game/magic/SpellRecognition.cpp
+	src/game/magic/StudioSpells.cpp
 	src/game/magic/spells/SpellsLvl01.cpp
 	src/game/magic/spells/SpellsLvl02.cpp
 	src/game/magic/spells/SpellsLvl03.cpp
@@ -1132,6 +1133,7 @@ set(GUI_SOURCES
 	src/gui/CharacterCreation.cpp
 	src/gui/CinematicBorder.cpp
 	src/gui/Console.cpp
+	src/gui/CoopChat.cpp
 	src/gui/Credits.cpp
 	src/gui/Cursor.cpp
 	src/gui/Dragging.cpp

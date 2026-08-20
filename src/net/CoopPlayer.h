@@ -167,6 +167,9 @@ void logOwnBelongings(const char * when);
  */
 bool updateReviveOpportunity();
 
+//! Raise the player sitting at THIS machine, whoever asked for it.
+void reviveLocalPlayer(const std::string & why);
+
 /*!
  * The entity that carries the other player's body in this world, or nullptr.
  *
