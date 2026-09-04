@@ -242,6 +242,9 @@ bool debugTrace();
 //! Order the other machine to destroy an entity by id (audit repair path).
 void sendEntityGone(std::string_view id);
 
+//! Tell the other machine what one of the level's own lights is doing.
+void sendLightState(u16 index, bool lit);
+
 /*!
  * Authority only: mirror a combat sound or particle burst to the guest.
  *

@@ -224,6 +224,8 @@ void driveReplicatedAnim(Entity & entity, size_t layerIndex, ReplicaLayer & stat
 struct SentState {
 	Vec3f pos = Vec3f(0.f);
 	float yaw = 0.f;
+	float pitch = 0.f;
+	float roll = 0.f;
 	u8 show = 0;
 	float life = 0.f;
 	u8 anim[MAX_ANIM_LAYERS] = {};
@@ -250,6 +252,49 @@ struct SentState {
 };
 
 std::map<std::string, SentState, std::less<>> g_sentStates;
+
+/*
+ * A number for every entity, so its name is spelled out once instead of forty
+ * times a second. Handed out by the authority and remembered by both sides
+ * until the area changes.
+ */
+/*
+ * What the other machine has confirmed, and what is still in the air.
+ *
+ * Differences are measured against the confirmed picture, so a snapshot that
+ * never arrives cannot leave a field wrong: the next one still sees that field
+ * as unconfirmed and sends it again.
+ */
+std::map<std::string, SentState, std::less<>> g_ackedStates;
+std::map<u32, std::vector<std::pair<std::string, SentState>>> g_inFlight;
+
+u64 g_snapEntities = 0;      //!< entity records written since the last report
+u64 g_snapWouldHave = 0;     //!< what those records used to cost
+
+std::map<std::string, u16, std::less<>> g_handles;
+std::map<u16, std::string> g_handleNames;
+u16 g_nextHandle = 1;
+
+u16 handleFor(const std::string & id, bool & isNew) {
+	auto known = g_handles.find(id);
+	if(known != g_handles.end()) {
+		isNew = false;
+		return known->second;
+	}
+	isNew = true;
+	u16 handle = g_nextHandle++;
+	g_handles[id] = handle;
+	g_handleNames[handle] = id;
+	return handle;
+}
+
+void forgetHandles() {
+	g_handles.clear();
+	g_handleNames.clear();
+	g_nextHandle = 1;
+	g_ackedStates.clear();
+	g_inFlight.clear();
+}
 
 bool sentStateDiffers(const SentState & a, const SentState & b) {
 	for(size_t l = 0; l < MAX_ANIM_LAYERS; l++) {
@@ -379,6 +424,48 @@ u8 animIndexOf(const Entity & entity, const ANIM_HANDLE * anim) {
 
 } // anonymous namespace
 
+size_t inFlightCount() {
+	return g_inFlight.size();
+}
+
+size_t ackedCount() {
+	return g_ackedStates.size();
+}
+
+void unconfirm(u16 handle) {
+
+	// Look up what that number stands for and forget we ever got it across.
+	auto named = g_handleNames.find(handle);
+	if(named != g_handleNames.end()) {
+		g_ackedStates.erase(named->second);
+	}
+
+}
+
+void ackSnapshot(u32 beat) {
+
+	// Everything sent at or before that beat has landed, so it becomes the
+	// picture the next differences are measured against.
+	for(auto it = g_inFlight.begin(); it != g_inFlight.end(); ) {
+		if(it->first > beat) {
+			break;
+		}
+		for(const auto & entry : it->second) {
+			g_ackedStates[entry.first] = entry.second;
+		}
+		it = g_inFlight.erase(it);
+	}
+
+}
+
+void takeSnapshotCost(u64 & records, u64 & wouldHave) {
+	records = g_snapEntities;
+	wouldHave = g_snapWouldHave;
+	g_snapEntities = 0;
+	g_snapWouldHave = 0;
+}
+
+
 // ---------------------------------------------------------------------------
 
 bool isApplyingRemote() {
@@ -395,18 +482,25 @@ ApplyScope::~ApplyScope() {
 
 // -- entity snapshots ----------------------------------------------------------
 
-void writeEntitySnapshot(Writer & writer, bool full) {
+void writeEntitySnapshot(Writer & writer, bool full, u32 beat) {
 
 	if(full) {
 		// Rebuilt from scratch, so entries for entities that no longer exist
-		// do not linger.
+		// do not linger - and the other side is about to be told every name
+		// again anyway.
 		g_sentStates.clear();
+		forgetHandles();
 	}
 
-	// Two passes: the count has to lead the list so the reader knows when to
-	// stop, and the list is bounded, so it cannot simply be the entity count.
-	std::vector<Entity *> selected;
-	selected.reserve(64);
+	struct Entry {
+		Entity * entity;
+		u16 handle;
+		u16 mask;
+		SentState state;
+	};
+
+	std::vector<Entry> entries;
+	entries.reserve(64);
 
 	for(Entity & entity : entities) {
 
@@ -414,9 +508,34 @@ void writeEntitySnapshot(Writer & writer, bool full) {
 			continue;
 		}
 
+		/*
+		 * Only what somebody could plausibly notice.
+		 *
+		 * A rat on the far side of the level was being described forty-five
+		 * times a second to a player who cannot see it, will not hear it, and
+		 * whose screen it never touches. Anything beyond both players gets its
+		 * news when they come near - and because differences are measured
+		 * against what was acknowledged, the first update they get on
+		 * approach is the whole truth, not a stale fragment.
+		 *
+		 * Generous on purpose: twice the view distance, so nothing pops.
+		 */
+		{
+			const float reach = 6000.f;
+			Entity * mine = entities.player();
+			Entity * theirs = avatarEntity();
+			bool near = (mine && glm::distance(entity.pos, mine->pos) < reach)
+			            || (theirs && glm::distance(entity.pos, theirs->pos) < reach);
+			if(!near) {
+				continue;
+			}
+		}
+
 		SentState state;
 		state.pos = entity.pos;
 		state.yaw = entity.angle.getYaw();
+		state.pitch = entity.angle.getPitch();
+		state.roll = entity.angle.getRoll();
 		state.show = u8(entity.show);
 		state.life = (entity.ioflags & IO_NPC) ? entity._npcdata->lifePool.current : 0.f;
 		for(size_t l = 0; l < MAX_ANIM_LAYERS; l++) {
@@ -433,109 +552,333 @@ void writeEntitySnapshot(Writer & writer, bool full) {
 		state.haloColor = entity.halo_native.color;
 		state.haloRadius = entity.halo_native.radius;
 
-		if(!full) {
-			auto known = g_sentStates.find(entity.idString());
-			if(known != g_sentStates.end() && !sentStateDiffers(known->second, state)) {
-				continue; // nothing the other machine does not already know
+		std::string id(entity.idString());
+		bool isNew = false;
+		u16 handle = handleFor(id, isNew);
+
+		auto known = g_ackedStates.find(id);
+		const bool first = isNew || known == g_ackedStates.end();
+		u16 mask = 0;
+
+		if(first) {
+			// everything, and the name with it
+			mask = SnapName | SnapPos | SnapYaw | SnapShow | SnapLife | SnapAnim
+			       | SnapGlow | SnapFlags | SnapHalo;
+			if(entity.ioflags & IO_NPC) {
+				mask |= SnapNpc;
+			}
+		} else {
+			const SentState & was = known->second;
+			if(was.pos != state.pos) {
+				mask |= SnapPos;
+			}
+			if(was.yaw != state.yaw || was.pitch != state.pitch
+			   || was.roll != state.roll) {
+				mask |= SnapYaw;
+			}
+			if(was.show != state.show) {
+				mask |= SnapShow;
+			}
+			if(was.life != state.life) {
+				mask |= SnapLife;
+			}
+			for(size_t l = 0; l < MAX_ANIM_LAYERS; l++) {
+				/*
+				 * The playhead is not news. It advances every frame by itself,
+				 * and the other machine advances its own copy the same way -
+				 * so sending it says nothing they could not work out, and it
+				 * was setting this bit on every entity that was moving at all,
+				 * every tick, at thirty two bytes a time.
+				 *
+				 * What IS news: a different clip, different flags, or a
+				 * playhead that went backwards, which means the clip started
+				 * again and they need to know when.
+				 */
+				if(was.anim[l] != state.anim[l] || was.alt[l] != state.alt[l]
+				   || was.animFlags[l] != state.animFlags[l]
+				   || state.animTime[l] < was.animTime[l]) {
+					mask |= SnapAnim;
+					break;
+				}
+			}
+			if(was.invisibility != state.invisibility || was.ignition != state.ignition) {
+				mask |= SnapGlow;
+			}
+			if(was.gameFlags != state.gameFlags || was.ioFlags != state.ioFlags) {
+				mask |= SnapFlags;
+			}
+			if(was.haloFlags != state.haloFlags || was.haloColor != state.haloColor
+			   || was.haloRadius != state.haloRadius) {
+				mask |= SnapHalo;
 			}
 		}
 
-		g_sentStates[entity.idString()] = state;
+		if(!mask) {
+			continue;                  // nothing they do not already know
+		}
 
-		selected.push_back(&entity);
-		if(selected.size() >= MaxSnapshotEntities) {
+		// TEMPORARY: what the authority says about things that are not people
+		if((mask & SnapPos) && !(entity.ioflags & IO_NPC)) {
+			LogWarning << "[item-trace] host sends " << id << " at "
+			           << entity.pos.x << "," << entity.pos.y << "," << entity.pos.z
+			           << (first ? " (first time)" : "");
+		}
+
+		entries.push_back({ &entity, handle, mask, state });
+		if(entries.size() >= MaxSnapshotEntities) {
 			break;
 		}
 
 	}
 
-	writer.put(u16(selected.size()));
+	// what this cost, against what the old format would have: a name of about
+	// sixteen bytes plus a hundred and eighteen of record, every entity, every
+	// time
+	g_snapEntities += entries.size();
+	g_snapWouldHave += entries.size() * 134;
 
-	for(Entity * entity : selected) {
+	if(!entries.empty()) {
+		auto & flight = g_inFlight[beat];
+		flight.reserve(entries.size());
+		for(const Entry & entry : entries) {
+			flight.emplace_back(std::string(entry.entity->idString()), entry.state);
+		}
+		// A partner that never acknowledges must not grow this forever.
+		while(g_inFlight.size() > 400) {
+			g_inFlight.erase(g_inFlight.begin());
+		}
+	}
 
-		writer.put(std::string_view(entity->idString()));
-		writer.put(entity->pos);
-		writer.put(entity->angle);
-		writer.put(u8(entity->show));
+	writer.put(u16(entries.size()));
 
-		bool isNpc = (entity->ioflags & IO_NPC) != 0;
-		writer.put(isNpc);
+	for(const Entry & entry : entries) {
 
-		if(isNpc) {
-			writer.put(entity->_npcdata->lifePool.current);
+		Entity * entity = entry.entity;
+		writer.put(entry.handle);
+		writer.put(entry.mask);
+
+		if(entry.mask & SnapName) {
+			writer.put(std::string_view(entity->idString()));
+		}
+		if(entry.mask & SnapPos) {
+			// quarter-unit precision, which is a twentieth of a footstep
+			writer.put(u16(glm::clamp(entity->pos.x, 0.f, 16383.f) * SnapPosScale));
+			writer.put(s16(glm::clamp(entity->pos.y, -8000.f, 8000.f) * SnapPosScale));
+			writer.put(u16(glm::clamp(entity->pos.z, 0.f, 16383.f) * SnapPosScale));
+		}
+		if(entry.mask & SnapYaw) {
+			// all three: a thrown object or a tilted prop uses the other two,
+			// and the old full record carried them
+			writer.put(u16(MAKEANGLE(entity->angle.getYaw()) * 182.f));
+			writer.put(u16(MAKEANGLE(entity->angle.getPitch()) * 182.f));
+			writer.put(u16(MAKEANGLE(entity->angle.getRoll()) * 182.f));
+		}
+		if(entry.mask & SnapShow) {
+			writer.put(u8(entity->show));
+		}
+		if(entry.mask & SnapLife) {
+			writer.put(entry.state.life);
+		}
+		if(entry.mask & SnapAnim) {
+			for(size_t l = 0; l < MAX_ANIM_LAYERS; l++) {
+				const AnimLayer & layer = entity->animlayer[l];
+				writer.put(animIndexOf(*entity, layer.cur_anim));
+				writer.put(u8(layer.altidx_cur));
+				writer.put(u16(layer.flags));
+				writer.put(s32(toMsi(layer.ctime)));
+			}
+		}
+		if(entry.mask & SnapGlow) {
+			writer.put(entity->invisibility);
+			writer.put(entity->ignition);
+		}
+		if(entry.mask & SnapFlags) {
+			writer.put(u16(entity->gameFlags & ReplicatedGameFlags));
+			writer.put(u32(entity->ioflags & ReplicatedEntityFlags));
+		}
+		if(entry.mask & SnapHalo) {
+			writer.put(u16(entity->halo_native.flags));
+			writer.put(u8(glm::clamp(entity->halo_native.color.r, 0.f, 1.f) * 255.f));
+			writer.put(u8(glm::clamp(entity->halo_native.color.g, 0.f, 1.f) * 255.f));
+			writer.put(u8(glm::clamp(entity->halo_native.color.b, 0.f, 1.f) * 255.f));
+			writer.put(u16(glm::clamp(entity->halo_native.radius, 0.f, 6000.f)));
+		}
+		if(entry.mask & SnapNpc) {
 			writer.put(entity->_npcdata->lifePool.max);
 			writer.put(entity->_npcdata->vvpos);
 		}
-
-		for(size_t l = 0; l < MAX_ANIM_LAYERS; l++) {
-			const AnimLayer & layer = entity->animlayer[l];
-			writer.put(animIndexOf(*entity, layer.cur_anim));
-			writer.put(u8(layer.altidx_cur));
-			writer.put(u16(layer.flags));
-			writer.put(s32(toMsi(layer.ctime)));
-		}
-
-		writer.put(entity->invisibility);
-		writer.put(entity->ignition);
-		writer.put(u16(entity->gameFlags & ReplicatedGameFlags));
-		writer.put(u32(entity->ioflags & ReplicatedEntityFlags));
-		writer.put(u16(entity->halo_native.flags));
-		writer.put(entity->halo_native.color.r);
-		writer.put(entity->halo_native.color.g);
-		writer.put(entity->halo_native.color.b);
-		writer.put(entity->halo_native.radius);
 
 	}
 
 }
 
+/*
+ * The last complete picture we have of each entity the authority described.
+ *
+ * A snapshot only carries what changed, so this is what the changes are laid
+ * on top of. Cleared when the area changes, because the handles are handed
+ * out fresh each time.
+ */
+struct KnownState {
+	std::string id;
+	Vec3f pos = Vec3f(0.f);
+	Anglef angle = Anglef();
+	u8 show = 0;
+	bool isNpc = false;
+	float life = 0.f;
+	float maxLife = 0.f;
+	float vvpos = 0.f;
+	u8 anim[MAX_ANIM_LAYERS] = { };
+	u8 alt[MAX_ANIM_LAYERS] = { };
+	u16 animFlags[MAX_ANIM_LAYERS] = { };
+	s32 animTime[MAX_ANIM_LAYERS] = { };
+	/*
+	 * When each clip began on their clock.
+	 *
+	 * Worked out once, when an animation update actually arrives, and kept.
+	 * Recomputing it every snapshot from a playhead that is no longer being
+	 * sent walks the start forward with the clock and pins the animation to
+	 * one frame - which is a creature standing still and shivering.
+	 */
+	s64 animStart[MAX_ANIM_LAYERS] = { };
+	bool animKnown = false;
+	float invisibility = 0.f;
+	float ignition = 0.f;
+	u16 gameFlags = 0;
+	u32 ioFlags = 0;
+	u16 haloFlags = 0;
+	Color3f haloColor = Color3f::black;
+	float haloRadius = 0.f;
+};
+static std::map<u16, KnownState> g_known;
+
+/*
+ * Handles whose updates we declined since the last acknowledgement.
+ *
+ * Reported back so the authority stops counting them as delivered - otherwise
+ * a position we refused is remembered as one we have.
+ */
+static std::vector<u16> g_declined;
+
+void takeDeclined(std::vector<u16> & out) {
+	out.swap(g_declined);
+	g_declined.clear();
+}
+
+void forgetSnapshotHandles() {
+	g_known.clear();
+}
+
+/*
+ * The newest beat we have applied, for the authority to build its next
+ * differences against.
+ */
+static u32 g_appliedBeat = 0;
+
+u32 lastAppliedBeat() {
+	return g_appliedBeat;
+}
+
 void readEntitySnapshot(Reader & reader, u32 serverTimeMs) {
+
+	g_appliedBeat = serverTimeMs;
 
 	size_t count = reader.getU16();
 
 	for(size_t i = 0; i < count && reader.ok(); i++) {
 
-		std::string id = reader.getString();
-		Vec3f pos = reader.getVec3f();
-		Anglef angle = reader.getAnglef();
-		u8 show = reader.getU8();
-		bool isNpc = reader.getBool();
-
-		float life = 0.f;
-		float maxLife = 0.f;
-		float vvpos = 0.f;
-		if(isNpc) {
-			life = reader.getFloat();
-			maxLife = reader.getFloat();
-			vvpos = reader.getFloat();
+		u16 handle = reader.getU16();
+		u16 mask = reader.getU16();
+		if(!reader.ok()) {
+			return;
 		}
 
-		ReplicaLayer layers[MAX_ANIM_LAYERS];
-		for(size_t l = 0; l < MAX_ANIM_LAYERS; l++) {
-			layers[l].index = reader.getU8();
-			layers[l].alt = reader.getU8();
-			layers[l].flags = reader.getU16();
-			s32 playhead = reader.getS32();
-			// When did this clip BEGIN on their clock? That is the fact worth
-			// keeping; the playhead itself is derived from it ever after.
-			layers[l].startMs = s64(serverTimeMs) - s64(playhead);
-			layers[l].playhead = s64(playhead);
-			layers[l].valid = true;
-		}
+		KnownState & known = g_known[handle];
 
-		float invisibility = reader.getFloat();
-		float ignition = reader.getFloat();
-		u16 gameFlags = reader.getU16();
-		u32 ioFlags = reader.getU32();
-		u16 haloFlags = reader.getU16();
-		Color3f haloColor;
-		haloColor.r = reader.getFloat();
-		haloColor.g = reader.getFloat();
-		haloColor.b = reader.getFloat();
-		float haloRadius = reader.getFloat();
+		if(mask & SnapName) {
+			known.id = reader.getString();
+		}
+		if(mask & SnapPos) {
+			known.pos.x = float(reader.getU16()) / SnapPosScale;
+			known.pos.y = float(reader.getS16()) / SnapPosScale;
+			known.pos.z = float(reader.getU16()) / SnapPosScale;
+		}
+		if(mask & SnapYaw) {
+			known.angle.setYaw(float(reader.getU16()) / 182.f);
+			known.angle.setPitch(float(reader.getU16()) / 182.f);
+			known.angle.setRoll(float(reader.getU16()) / 182.f);
+		}
+		if(mask & SnapShow) {
+			known.show = reader.getU8();
+		}
+		if(mask & SnapLife) {
+			known.life = reader.getFloat();
+		}
+		if(mask & SnapAnim) {
+			for(size_t l = 0; l < MAX_ANIM_LAYERS; l++) {
+				known.anim[l] = reader.getU8();
+				known.alt[l] = reader.getU8();
+				known.animFlags[l] = reader.getU16();
+				known.animTime[l] = reader.getS32();
+				known.animStart[l] = s64(serverTimeMs) - s64(known.animTime[l]);
+			}
+			known.animKnown = true;
+		}
+		if(mask & SnapGlow) {
+			known.invisibility = reader.getFloat();
+			known.ignition = reader.getFloat();
+		}
+		if(mask & SnapFlags) {
+			known.gameFlags = reader.getU16();
+			known.ioFlags = reader.getU32();
+		}
+		if(mask & SnapHalo) {
+			known.haloFlags = reader.getU16();
+			known.haloColor.r = float(reader.getU8()) / 255.f;
+			known.haloColor.g = float(reader.getU8()) / 255.f;
+			known.haloColor.b = float(reader.getU8()) / 255.f;
+			known.haloRadius = float(reader.getU16());
+		}
+		if(mask & SnapNpc) {
+			known.isNpc = true;
+			known.maxLife = reader.getFloat();
+			known.vvpos = reader.getFloat();
+		}
 
 		if(!reader.ok()) {
 			return;
+		}
+		if(known.id.empty()) {
+			continue;      // a handle we were never introduced to
+		}
+
+		// from here on, exactly the values the old full record carried
+		const std::string & id = known.id;
+		const Vec3f & pos = known.pos;
+		const Anglef & angle = known.angle;
+		const u8 show = known.show;
+		const bool isNpc = known.isNpc;
+		const float life = known.life;
+		const float maxLife = known.maxLife;
+		const float vvpos = known.vvpos;
+		const float invisibility = known.invisibility;
+		const float ignition = known.ignition;
+		const u16 gameFlags = known.gameFlags;
+		const u32 ioFlags = known.ioFlags;
+		const u16 haloFlags = known.haloFlags;
+		const Color3f haloColor = known.haloColor;
+		const float haloRadius = known.haloRadius;
+
+		ReplicaLayer layers[MAX_ANIM_LAYERS];
+		for(size_t l = 0; l < MAX_ANIM_LAYERS; l++) {
+			layers[l].index = known.anim[l];
+			layers[l].alt = known.alt[l];
+			layers[l].flags = known.animFlags[l];
+			// When this clip began on their clock, kept from the update that
+			// said so - not recomputed here, or the clip never advances.
+			layers[l].startMs = known.animStart[l];
+			layers[l].playhead = s64(serverTimeMs) - known.animStart[l];
+			layers[l].valid = known.animKnown;
 		}
 
 		Entity * entity = entities.getById(id);
@@ -573,6 +916,10 @@ void readEntitySnapshot(Reader & reader, u32 serverTimeMs) {
 		 * back to the shared world.
 		 */
 		if(ownsLocally(entity)) {
+			if(!(entity->ioflags & IO_NPC)) {
+				LogWarning << "[item-trace] guest ignores " << id << ": we are holding it";
+			}
+			g_declined.push_back(handle);
 			g_localEdits[std::string(id)] = platform::getTime();
 			g_replicaTracks.erase(id);
 			continue;
@@ -583,18 +930,61 @@ void readEntitySnapshot(Reader & reader, u32 serverTimeMs) {
 		auto edit = g_localEdits.find(id);
 		if(edit != g_localEdits.end()) {
 			if(platform::getTime() - edit->second < LocalEditGrace) {
+				if(!(entity->ioflags & IO_NPC)) {
+					LogWarning << "[item-trace] guest ignores " << id
+					           << ": we moved it a moment ago";
+				}
+				g_declined.push_back(handle);
 				g_replicaTracks.erase(id);
 				continue;
 			}
 			g_localEdits.erase(edit);
 		}
 
+		/*
+		 * Only what this message actually said.
+		 *
+		 * The reader keeps a full picture per entity and lays each update on
+		 * top, which is how a message can carry three bytes instead of a
+		 * hundred - but it means every message can offer a position, whether
+		 * or not one was sent. That matters for exactly one case and it is a
+		 * case players notice: an item this machine picked up is deliberately
+		 * NOT moved by the authority's snapshots, and the position it declined
+		 * would otherwise sit in the picture waiting to be applied the next
+		 * time anything else about that item changed. Which is loot leaping
+		 * out of your bag and back onto the floor a second after you took it.
+		 */
 		// Record where they are as one more point on their timeline;
 		// smoothReplicatedEntities() draws a moment slightly in the past,
 		// blending between recorded points.
 		auto inserted = g_replicaTracks.emplace(id, ReplicaState());
 		ReplicaState & state = inserted.first->second;
 		MotionTrack & track = state.track;
+
+		/*
+		 * Move it only if this message actually carried a position.
+		 *
+		 * The reader keeps a full picture per entity and lays each update on
+		 * top of it, which is how a message costs three bytes instead of a
+		 * hundred - but it means every message can offer a position whether or
+		 * not one was sent. That matters for one case players notice at once:
+		 * an item this machine picked up is deliberately not moved by the
+		 * authority's snapshots, and the position declined then would sit in
+		 * the picture waiting to be applied the next time anything else about
+		 * that item changed. Which is loot jumping out of the bag you just put
+		 * it in.
+		 *
+		 * Everything below - health, visibility, animation, flags - still
+		 * applies, because those are the authority's to state at any time.
+		 */
+		const bool moved = (mask & SnapPos) != 0;
+		if(!(entity->ioflags & IO_NPC)) {
+			LogWarning << "[item-trace] guest gets " << id << (moved ? " with" : " without")
+			           << " a position; it is at " << entity->pos.x << "," << entity->pos.z
+			           << ", told " << pos.x << "," << pos.z
+			           << ", track has " << track.count;
+		}
+		if(moved) {
 		/*
 		 * A camera we are watching a scene through flies; bodies walk.
 		 *
@@ -605,6 +995,26 @@ void readEntitySnapshot(Reader & reader, u32 serverTimeMs) {
 		 * motion is always motion.
 		 */
 		bool watchedCamera = (entity == g_cameraEntity && (entity->ioflags & IO_CAMERA));
+
+		/*
+		 * A history nobody has added to in a while is not history, it is a
+		 * fossil.
+		 *
+		 * Positions are only sent when they change, so a barrel that has sat
+		 * still for a minute has one point in its track, timestamped a minute
+		 * ago. Blending from that towards a fresh one means the render time -
+		 * which deliberately lags the newest report - lands nowhere near the
+		 * new point, and the barrel does not visibly move until a SECOND
+		 * update arrives to bracket it. Which is exactly what "I have to move
+		 * everything twice" looks like.
+		 *
+		 * So a track that has gone quiet is thrown away and started again from
+		 * where the thing actually is.
+		 */
+		const s64 quiet = 400;
+		if(track.count != 0 && s64(serverTimeMs) - track.newest().timeMs > quiet) {
+			track.clear();
+		}
 
 		if(track.count != 0 && !watchedCamera
 		   && glm::distance(track.newest().pos, pos) > 300.f) {
@@ -643,6 +1053,7 @@ void readEntitySnapshot(Reader & reader, u32 serverTimeMs) {
 
 		}
 		track.push(s64(serverTimeMs), pos, angle);
+		}
 
 		// The animation layers ride the same clock; smoothReplicatedEntities()
 		// performs them at the matching moment of the drawn timeline.
@@ -843,9 +1254,23 @@ static bool isOwnBelonging(const Entity * entity) {
 
 void writeWorldAudit(Writer & writer) {
 
+	/*
+	 * Where the last audit stopped. A busy area holds more than one audit can
+	 * carry, and always starting at the beginning means the entities at the
+	 * end are never checked at all - so each round picks up where the last
+	 * one left off and the whole cast gets its turn.
+	 */
+	static size_t cursor = 0;
+
 	std::vector<Entity *> reported;
 	reported.reserve(g_replicaTracks.size());
+
+	size_t seen = 0;
+	size_t skip = g_replicaTracks.empty() ? 0 : (cursor % g_replicaTracks.size());
 	for(const auto & entry : g_replicaTracks) {
+		if(seen++ < skip) {
+			continue;
+		}
 		if(Entity * entity = entities.getById(entry.first)) {
 			/*
 			 * Never audit our own belongings. The audit asks the authority
@@ -863,6 +1288,7 @@ void writeWorldAudit(Writer & writer) {
 			}
 		}
 	}
+	cursor = skip + reported.size();
 
 	writer.put(u16(reported.size()));
 
@@ -873,6 +1299,27 @@ void writeWorldAudit(Writer & writer) {
 		writer.put(u8(entity->show));
 		writer.put(u16(entity->gameFlags & ReplicatedGameFlags));
 		writer.put(u32(entity->ioflags & ReplicatedEntityFlags));
+	}
+
+	/*
+	 * And which of the level's own lights we believe are burning.
+	 *
+	 * One bit each, so two hundred lights cost twenty-five bytes. Nobody was
+	 * comparing these at all, and a light nobody compares can be wrong for as
+	 * long as the level lasts - which is how one player walked through a level
+	 * where every torch was lit and the other saw them dark.
+	 */
+	u16 lights = u16(std::min<size_t>(g_staticLights.size(), 4096));
+	writer.put(lights);
+	u8 bits = 0;
+	for(u16 i = 0; i < lights; i++) {
+		if(g_staticLights[i].m_ignitionStatus) {
+			bits |= u8(1 << (i % 8));
+		}
+		if(i % 8 == 7 || i + 1 == lights) {
+			writer.put(bits);
+			bits = 0;
+		}
 	}
 
 }
@@ -929,6 +1376,28 @@ void applyWorldAudit(Reader & reader) {
 			repaired++;
 		}
 
+	}
+
+	// the lights, one bit each
+	u16 lights = reader.getU16();
+	size_t litFixed = 0;
+	u8 bits = 0;
+	for(u16 i = 0; i < lights && reader.ok(); i++) {
+		if(i % 8 == 0) {
+			bits = reader.getU8();
+		}
+		if(i >= g_staticLights.size()) {
+			continue;
+		}
+		bool theirs = (bits & (1 << (i % 8))) != 0;
+		if(theirs != g_staticLights[i].m_ignitionStatus) {
+			sendLightState(i, g_staticLights[i].m_ignitionStatus);
+			litFixed++;
+		}
+	}
+	if(litFixed) {
+		LogWarning << "[coop-sync] " << litFixed
+		           << " lights disagreed; the authority's word resent";
 	}
 
 	if(repaired) {
@@ -1008,6 +1477,11 @@ void applyWorldFx(Reader & reader) {
 void resetReplication() {
 	g_replicaTracks.clear();
 	g_sentStates.clear();
+	// The numbers standing in for names belong to one area's cast. Carrying
+	// them across a level change would have the next area's rat answering to
+	// the last area's handle.
+	forgetHandles();
+	forgetSnapshotHandles();
 }
 
 void forgetReplicatedEntity(std::string_view entityId) {

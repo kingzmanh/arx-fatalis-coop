@@ -38,7 +38,33 @@ namespace coop {
  * misread a newer one. Both sides check this during the handshake and refuse
  * the connection rather than desyncing silently later.
  */
-constexpr u32 ProtocolVersion = 31;
+constexpr u32 ProtocolVersion = 32;
+
+/*
+ * What a snapshot entry carries.
+ *
+ * One bit per thing that can change, so an entity that merely walked costs a
+ * handle, a mask and a position rather than its whole description. The first
+ * bit is the exception: it means "you have not met this one yet, its name
+ * follows", which is said once per entity per area instead of forty times a
+ * second.
+ */
+enum SnapshotField {
+	SnapName      = 1 << 0,
+	SnapPos       = 1 << 1,
+	SnapYaw       = 1 << 2,
+	SnapShow      = 1 << 3,
+	SnapLife      = 1 << 4,
+	SnapAnim      = 1 << 5,
+	SnapGlow      = 1 << 6,   //!< invisibility and ignition
+	SnapFlags     = 1 << 7,
+	SnapHalo      = 1 << 8,
+	SnapNpc       = 1 << 9,   //!< max life and the vertical smoothing
+};
+
+//! A position, to a quarter of a unit. The world is 16000 units across and a
+//! person is 180 tall, so this is far finer than anything anybody can see.
+constexpr float SnapPosScale = 4.f;
 
 //! Default listen port, used when the address the joining player typed has none.
 constexpr unsigned short DefaultPort = 27100;
@@ -131,6 +157,7 @@ enum MessageType : u8 {
 	MsgPlayerPush   = 74, //!< RETIRED - the push turned chasing creatures into thrusters; number stays reserved
 	MsgWorldAudit   = 75, //!< guest -> host: here is what my world looks like; fix what diverged
 	MsgWorldFx      = 76, //!< host -> guest: a sound or particle burst the simulation produced
+	MsgSnapAck      = 7, //!< guest -> host: the newest snapshot beat I have applied
 	MsgTravelHold   = 77, //!< host -> guest: a travel has begun for you; freeze and fade NOW
 	MsgCutsceneSeen = 78, //!< either -> other: this story sequence is consumed for BOTH of us
 	MsgPartnerEffect = 79, //!< either -> other: your player receives this effect (heal, hunger, ...)

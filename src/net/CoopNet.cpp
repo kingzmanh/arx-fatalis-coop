@@ -153,6 +153,10 @@ struct Session {
 	PlatformInstant connectStart = 0;
 	PlatformInstant lastAvatar = 0;
 	PlatformInstant lastSnapshot = 0;
+	//! When the other machine last confirmed a snapshot.
+	PlatformInstant lastAckAt = 0;
+	//! When we last told them what we had applied.
+	PlatformInstant lastAckSent = 0;
 	
 	//! Remote clock minus local clock, in ms; meaningful once clockValid.
 	s64 clockOffsetMs = 0;
@@ -330,6 +334,62 @@ void startRecorder(const char * roleName) {
 	
 }
 
+/*
+ * What the session costs, in bytes.
+ *
+ * Kept per channel and per message type, both directions, and reported with
+ * the ping every five seconds. Without it, "the network is fine" and "the
+ * network is drowning" produce the same log.
+ */
+struct Meter {
+	u64 bytes[ChannelCount] = { };
+	u32 packets[ChannelCount] = { };
+	u64 byType[256] = { };
+};
+static Meter g_sent;
+static u64 g_snapshotBytes = 0;   //!< bytes of MsgEntities since the last report
+static u64 g_acksSeen = 0;        //!< TEMPORARY: acknowledgements received
+static Meter g_received;
+static PlatformInstant g_meterSince = 0;
+
+static void weigh(Meter & meter, u8 channel, const u8 * data, size_t size) {
+	if(channel < ChannelCount) {
+		meter.bytes[channel] += size;
+		meter.packets[channel]++;
+	}
+	if(size > 0) {
+		meter.byType[data[0]] += size;
+		if(&meter == &g_sent && data[0] == MsgEntities) {
+			g_snapshotBytes += size;
+		}
+	}
+}
+
+static std::string busiestTypes(const Meter & meter) {
+	std::string out;
+	for(int shown = 0; shown < 3; shown++) {
+		size_t best = 0;
+		u64 most = 0;
+		for(size_t i = 0; i < 256; i++) {
+			if(meter.byType[i] > most) {
+				most = meter.byType[i];
+				best = i;
+			}
+		}
+		if(!most) {
+			break;
+		}
+		// no names for these anywhere in the code, so the number it is
+		if(!out.empty()) {
+			out += ", ";
+		}
+		out += "msg" + std::to_string(best) + " "
+		       + std::to_string(most / 1024) + "k";
+		const_cast<Meter &>(meter).byType[best] = 0;
+	}
+	return out.empty() ? "nothing" : out;
+}
+
 void recordPacket(u8 channel, const u8 * data, size_t size) {
 	
 	if(!g_recordFile || size > 0xffff) {
@@ -354,6 +414,8 @@ void rawSend(const u8 * data, size_t size, Channel channel) {
 
 	enet_uint32 flags = (channel == ChannelSnapshot) ? ENET_PACKET_FLAG_UNSEQUENCED
 	                                                 : ENET_PACKET_FLAG_RELIABLE;
+
+	weigh(g_sent, u8(channel), data, size);
 
 	ENetPacket * packet = enet_packet_create(data, size, flags);
 	if(!packet) {
@@ -595,34 +657,126 @@ void sendAvatar() {
 	Avatar local;
 	captureLocalAvatar(local);
 
+	/*
+	 * What actually changed since the last one they were sent.
+	 *
+	 * Position changes constantly and equipment almost never, but both were
+	 * being spelled out forty-five times a second - and the five equipment
+	 * paths are text, which made them the largest part of a message about a
+	 * body that had merely walked forward.
+	 */
+	static Avatar sent;
+	static bool everSent = false;
+
+	enum {
+		AvPos = 1 << 0, AvAngle = 1 << 1, AvLife = 1 << 2, AvMana = 1 << 3,
+		AvLevel = 1 << 4, AvAnim = 1 << 5, AvState = 1 << 6, AvGear = 1 << 7,
+	};
+
+	u16 mask = 0;
+	if(!everSent) {
+		mask = 0xff;
+	} else {
+		if(sent.pos != local.pos) {
+			mask |= AvPos;
+		}
+		if(sent.angle.getYaw() != local.angle.getYaw()
+		   || sent.angle.getPitch() != local.angle.getPitch()
+		   || sent.angle.getRoll() != local.angle.getRoll()) {
+			mask |= AvAngle;
+		}
+		if(sent.life != local.life || sent.maxLife != local.maxLife) {
+			mask |= AvLife;
+		}
+		if(sent.mana != local.mana || sent.maxMana != local.maxMana) {
+			mask |= AvMana;
+		}
+		if(sent.level != local.level) {
+			mask |= AvLevel;
+		}
+		/*
+		 * The body's animation goes every time, playhead and all.
+		 *
+		 * A creature's clip is rebuilt on the other side from when it began,
+		 * so it can play on untold. A player's body is not: the code that
+		 * drives it compares the playhead it was given against the one it is
+		 * running and snaps back when they drift a second apart - so a
+		 * playhead that stops arriving becomes a body that jerks, or stands
+		 * with its arms out. Fifteen bytes a tick is the price of it moving
+		 * properly.
+		 */
+		mask |= AvAnim;
+		if(sent.dead != local.dead || sent.combat != local.combat
+		   || sent.invisibility != local.invisibility || sent.skin != local.skin) {
+			mask |= AvState;
+		}
+		if(sent.weapon != local.weapon || sent.helmet != local.helmet
+		   || sent.armour != local.armour || sent.leggings != local.leggings
+		   || sent.shield != local.shield) {
+			mask |= AvGear;
+		}
+	}
+
+	sent = local;
+	everSent = true;
+
 	Writer writer(MsgAvatar);
 	writer.put(u32(toMsi(platform::getTime())));
 	writer.put(u32(local.area.handleData()));
-	writer.put(local.pos);
-	writer.put(local.angle);
-	writer.put(local.life);
-	writer.put(local.maxLife);
-	writer.put(local.mana);
-	writer.put(local.maxMana);
-	writer.put(s16(local.level));
-	writer.put(local.anim0);
-	writer.put(local.anim1);
-	writer.put(local.anim3);
-	writer.put(local.anim3Flags);
-	writer.put(local.anim3Time);
-	writer.put(local.anim0Flags);
-	writer.put(local.anim1Flags);
-	writer.put(local.anim0Time);
-	writer.put(local.anim1Time);
-	writer.put(local.dead);
-	writer.put(local.combat);
-	writer.put(local.invisibility);
-	writer.put(local.skin);
-	writer.put(std::string_view(local.weapon));
-	writer.put(std::string_view(local.helmet));
-	writer.put(std::string_view(local.armour));
-	writer.put(std::string_view(local.leggings));
-	writer.put(std::string_view(local.shield));
+	writer.put(mask);
+
+	if(mask & AvPos) {
+		writer.put(u16(glm::clamp(local.pos.x, 0.f, 16383.f) * SnapPosScale));
+		writer.put(s16(glm::clamp(local.pos.y, -8000.f, 8000.f) * SnapPosScale));
+		writer.put(u16(glm::clamp(local.pos.z, 0.f, 16383.f) * SnapPosScale));
+	}
+	if(mask & AvAngle) {
+		/*
+		 * All three, and all of them wrapped rather than clamped.
+		 *
+		 * These angles run 0 to 360 and wrap: looking up puts the pitch near
+		 * 350, and clamping that to 180 bends the body to a place nobody was
+		 * looking. Wrapping is what the game itself does with them.
+		 */
+		writer.put(u16(MAKEANGLE(local.angle.getYaw()) * 182.f));
+		writer.put(u16(MAKEANGLE(local.angle.getPitch()) * 182.f));
+		writer.put(u16(MAKEANGLE(local.angle.getRoll()) * 182.f));
+	}
+	if(mask & AvLife) {
+		writer.put(local.life);
+		writer.put(local.maxLife);
+	}
+	if(mask & AvMana) {
+		writer.put(local.mana);
+		writer.put(local.maxMana);
+	}
+	if(mask & AvLevel) {
+		writer.put(s16(local.level));
+	}
+	if(mask & AvAnim) {
+		writer.put(local.anim0);
+		writer.put(local.anim1);
+		writer.put(local.anim3);
+		writer.put(local.anim3Flags);
+		writer.put(local.anim3Time);
+		writer.put(local.anim0Flags);
+		writer.put(local.anim1Flags);
+		writer.put(local.anim0Time);
+		writer.put(local.anim1Time);
+	}
+	if(mask & AvState) {
+		writer.put(local.dead);
+		writer.put(local.combat);
+		writer.put(local.invisibility);
+		writer.put(local.skin);
+	}
+	if(mask & AvGear) {
+		writer.put(std::string_view(local.weapon));
+		writer.put(std::string_view(local.helmet));
+		writer.put(std::string_view(local.armour));
+		writer.put(std::string_view(local.leggings));
+		writer.put(std::string_view(local.shield));
+	}
 
 	send(writer, ChannelSnapshot);
 
@@ -688,32 +842,82 @@ void receiveAvatar(Reader & reader) {
 
 	Avatar & remote = mutableAvatar();
 
+	enum {
+		AvPos = 1 << 0, AvAngle = 1 << 1, AvLife = 1 << 2, AvMana = 1 << 3,
+		AvLevel = 1 << 4, AvAnim = 1 << 5, AvState = 1 << 6, AvGear = 1 << 7,
+	};
+
 	AreaId area = AreaId(reader.getU32());
-	Vec3f pos = reader.getVec3f();
-	Anglef angle = reader.getAnglef();
-	float life = reader.getFloat();
-	float maxLife = reader.getFloat();
-	float mana = reader.getFloat();
-	float maxMana = reader.getFloat();
-	s16 level = reader.getS16();
-	u8 anim0 = reader.getU8();
-	u8 anim1 = reader.getU8();
-	u8 anim3 = reader.getU8();
-	u16 anim3Flags = reader.getU16();
-	s32 anim3Time = reader.getS32();
-	u16 anim0Flags = reader.getU16();
-	u16 anim1Flags = reader.getU16();
-	s32 anim0Time = reader.getS32();
-	s32 anim1Time = reader.getS32();
-	bool dead = reader.getBool();
-	bool combat = reader.getBool();
-	float invisibility = reader.getFloat();
-	u8 skin = reader.getU8();
-	std::string weapon = reader.getString();
-	std::string helmet = reader.getString();
-	std::string armour = reader.getString();
-	std::string leggings = reader.getString();
-	std::string shield = reader.getString();
+	u16 mask = reader.getU16();
+
+	/*
+	 * Anything not in this message has not changed, so it keeps the value it
+	 * already had. Reading into locals first and assigning at the end keeps
+	 * that honest: a truncated packet leaves the body untouched rather than
+	 * half updated.
+	 */
+	Vec3f pos = remote.pos;
+	Anglef angle = remote.angle;
+	float life = remote.life, maxLife = remote.maxLife;
+	float mana = remote.mana, maxMana = remote.maxMana;
+	s16 level = remote.level;
+	u8 anim0 = remote.anim0, anim1 = remote.anim1, anim3 = remote.anim3;
+	u16 anim3Flags = remote.anim3Flags, anim0Flags = remote.anim0Flags;
+	u16 anim1Flags = remote.anim1Flags;
+	s32 anim3Time = remote.anim3Time, anim0Time = remote.anim0Time;
+	s32 anim1Time = remote.anim1Time;
+	bool dead = remote.dead, combat = remote.combat;
+	float invisibility = remote.invisibility;
+	u8 skin = remote.skin;
+	std::string weapon = remote.weapon, helmet = remote.helmet;
+	std::string armour = remote.armour, leggings = remote.leggings;
+	std::string shield = remote.shield;
+
+	if(mask & AvPos) {
+		pos.x = float(reader.getU16()) / SnapPosScale;
+		pos.y = float(reader.getS16()) / SnapPosScale;
+		pos.z = float(reader.getU16()) / SnapPosScale;
+	}
+	if(mask & AvAngle) {
+		angle.setYaw(float(reader.getU16()) / 182.f);
+		angle.setPitch(float(reader.getU16()) / 182.f);
+		angle.setRoll(float(reader.getU16()) / 182.f);
+	}
+	if(mask & AvLife) {
+		life = reader.getFloat();
+		maxLife = reader.getFloat();
+	}
+	if(mask & AvMana) {
+		mana = reader.getFloat();
+		maxMana = reader.getFloat();
+	}
+	if(mask & AvLevel) {
+		level = reader.getS16();
+	}
+	if(mask & AvAnim) {
+		anim0 = reader.getU8();
+		anim1 = reader.getU8();
+		anim3 = reader.getU8();
+		anim3Flags = reader.getU16();
+		anim3Time = reader.getS32();
+		anim0Flags = reader.getU16();
+		anim1Flags = reader.getU16();
+		anim0Time = reader.getS32();
+		anim1Time = reader.getS32();
+	}
+	if(mask & AvState) {
+		dead = reader.getBool();
+		combat = reader.getBool();
+		invisibility = reader.getFloat();
+		skin = reader.getU8();
+	}
+	if(mask & AvGear) {
+		weapon = reader.getString();
+		helmet = reader.getString();
+		armour = reader.getString();
+		leggings = reader.getString();
+		shield = reader.getString();
+	}
 
 	if(!reader.ok()) {
 		return;
@@ -1326,6 +1530,21 @@ void handleMessage(const u8 * data, size_t size) {
 			break;
 		}
 
+		case MsgSnapAck: {
+			u32 beat = reader.getU32();
+			u16 declined = reader.getU16();
+			if(reader.ok() && hasWorldAuthority()) {
+				g_session.lastAckAt = platform::getTime();
+				g_acksSeen++;              // TEMPORARY
+				ackSnapshot(beat);
+				// ...except these, which they threw away: they are owed again
+				for(u16 i = 0; i < declined && reader.ok(); i++) {
+					unconfirm(reader.getU16());
+				}
+			}
+			break;
+		}
+
 		case MsgWorldAudit: {
 			if(hasWorldAuthority()) {
 				applyWorldAudit(reader);
@@ -1789,6 +2008,21 @@ void optionName(const std::string & name) {
 
 } // anonymous namespace
 
+void sendLightState(u16 index, bool lit) {
+
+	if(!isPlaying()) {
+		return;
+	}
+
+	Writer writer(MsgLightIgnite);
+	writer.put(index);
+	writer.put(lit);
+	writer.put(s32(g_currentArea));
+	send(writer, ChannelEvent);
+
+}
+
+
 ARX_PROGRAM_OPTION_ARG("host", "", "Host a co-op game on the given port", &optionHost, "PORT")
 ARX_PROGRAM_OPTION_ARG("join", "", "Join a co-op game at the given address", &optionJoin, "ADDRESS")
 ARX_PROGRAM_OPTION_ARG("coop-name", "", "Name shown to the other player", &optionName, "NAME")
@@ -2208,6 +2442,8 @@ void poll() {
 			}
 
 			case ENET_EVENT_TYPE_RECEIVE: {
+				weigh(g_received, u8(event.channelID), event.packet->data,
+				      event.packet->dataLength);
 				recordPacket(u8(event.channelID), event.packet->data, event.packet->dataLength);
 				handleMessage(event.packet->data, event.packet->dataLength);
 				enet_packet_destroy(event.packet);
@@ -3108,18 +3344,60 @@ void flush() {
 		PlatformDuration interval = combat ? 16ms : SnapshotInterval;
 		if(now - g_session.lastSnapshot >= interval) {
 			g_session.lastSnapshot = now;
-			bool full = !g_session.wasSharing || now - g_session.lastKeyframe >= 750ms;
+			/*
+			 * A keyframe only when we have heard nothing back for two
+			 * seconds. Losing a snapshot no longer costs anything - the
+			 * next one still sees the difference against what they
+			 * confirmed - so the old every-750ms retelling of the whole
+			 * area was pure repetition.
+			 */
+			/*
+			 * The whole world again, four times a second.
+			 *
+			 * Acknowledgements were supposed to replace this, and for
+			 * everything the other machine ACCEPTS they do. But it declines
+			 * updates for anything it is holding or has just moved, and the
+			 * rules around when that ownership ends are older and subtler than
+			 * this code - the practical result was items that would not move
+			 * until you moved them twice. The repetition is what covered that,
+			 * so the repetition stays until ownership is something both sides
+			 * agree about explicitly.
+			 *
+			 * It costs far less than it used to: an entity is 22 bytes now,
+			 * not 134.
+			 */
+			bool silent = g_session.lastAckAt == PlatformInstant(0)
+			              || now - g_session.lastAckAt >= 2000ms;
+			bool full = !g_session.wasSharing || silent
+			            || now - g_session.lastKeyframe >= 750ms;
 			if(full) {
 				g_session.lastKeyframe = now;
+				g_session.lastAckAt = now;   // do not repeat it every tick
 			}
+			u32 beat = u32(toMsi(now));
 			Writer writer(MsgEntities);
-			writer.put(u32(toMsi(now)));
+			writer.put(beat);
 			writer.put(u8(toMsi(interval)));
-			writeEntitySnapshot(writer, full);
+			writeEntitySnapshot(writer, full, beat);
 			send(writer, ChannelSnapshot);
 		}
 	}
 	g_session.wasSharing = sharing;
+
+	if(isReplica() && now - g_session.lastAckSent >= 100ms) {
+		g_session.lastAckSent = now;
+		if(u32 beat = lastAppliedBeat()) {
+			std::vector<u16> declined;
+			takeDeclined(declined);
+			Writer ack(MsgSnapAck);
+			ack.put(beat);
+			ack.put(u16(std::min<size_t>(declined.size(), 256)));
+			for(size_t i = 0; i < declined.size() && i < 256; i++) {
+				ack.put(declined[i]);
+			}
+			send(ack, ChannelSnapshot);
+		}
+	}
 
 	if(isReplica() && now - g_session.lastAudit >= 5000ms) {
 		g_session.lastAudit = now;
@@ -3134,6 +3412,42 @@ void flush() {
 		        << "ms, world delay " << entityInterpDelayMs() << "ms (jitter "
 		        << s64(g_session.entityLatenessMs) << "ms), body delay "
 		        << bodyInterpDelayMs() << "ms (jitter " << s64(g_session.bodyLatenessMs) << "ms)";
+
+		float seconds = float(toMsi(now - g_meterSince)) / 1000.f;
+		if(seconds > 0.1f) {
+			auto rate = [&](const Meter & m, Channel c) {
+				return u32(float(m.bytes[c]) / seconds);
+			};
+			LogInfo << "[coop-bytes] out " << rate(g_sent, ChannelSnapshot) << "/"
+			        << rate(g_sent, ChannelEvent) << "/" << rate(g_sent, ChannelControl)
+			        << " B/s (snapshot/event/control), in "
+			        << rate(g_received, ChannelSnapshot) << "/"
+			        << rate(g_received, ChannelEvent) << "/"
+			        << rate(g_received, ChannelControl) << " B/s; "
+			        << u32(float(g_sent.packets[ChannelSnapshot]) / seconds)
+			        << " snapshots/s";
+			LogInfo << "[coop-bytes] biggest out: " << busiestTypes(g_sent)
+			        << " | in: " << busiestTypes(g_received);
+
+			LogWarning << "[ack-trace] " << g_acksSeen << " acknowledgements, "
+			           << inFlightCount() << " snapshots waiting, "
+			           << ackedCount() << " entities confirmed";
+			g_acksSeen = 0;
+
+			u64 records = 0, wouldHave = 0;
+			takeSnapshotCost(records, wouldHave);
+			if(records) {
+				u64 spent = g_snapshotBytes;
+				LogInfo << "[coop-bytes] " << records << " entity updates in "
+				        << spent << " bytes (" << (spent / records)
+				        << " each); the old format would have been " << wouldHave
+				        << " (" << (wouldHave / std::max<u64>(spent, 1)) << "x)";
+			}
+			g_snapshotBytes = 0;
+		}
+		g_sent = Meter();
+		g_received = Meter();
+		g_meterSince = now;
 	}
 
 	enet_host_flush(g_session.host);

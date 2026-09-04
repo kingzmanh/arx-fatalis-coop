@@ -48,7 +48,26 @@ namespace coop {
  * \param full when set, ignore the sent-state cache and carry every entity;
  *             otherwise carry only what changed since the last snapshot.
  */
-void writeEntitySnapshot(Writer & writer, bool full);
+void writeEntitySnapshot(Writer & writer, bool full, u32 beat);
+
+//! TEMPORARY: how much is waiting to be confirmed, and how much is.
+size_t inFlightCount();
+size_t ackedCount();
+
+//! They refused this one; it is not confirmed after all.
+void unconfirm(u16 handle);
+
+//! The other machine confirmed everything up to this beat; fold it in.
+void ackSnapshot(u32 beat);
+
+//! What we refused since the last acknowledgement, so it can be resent.
+void takeDeclined(std::vector<u16> & out);
+
+//! The newest snapshot this machine has applied, to acknowledge back.
+u32 lastAppliedBeat();
+
+//! How many entity records went out, and what the old format would have cost.
+void takeSnapshotCost(u64 & records, u64 & wouldHave);
 
 //! Apply a snapshot from the authority. Silently ignores entities we do not have.
 void readEntitySnapshot(Reader & reader, u32 serverTimeMs);
