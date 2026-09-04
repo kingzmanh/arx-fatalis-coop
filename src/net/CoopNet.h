@@ -142,6 +142,25 @@ s64 bodyInterpDelayMs();
 //! Smoothed round-trip time to the other machine, in ms; 0 when offline.
 u32 pingMs();
 
+//! What the net graph shows, so that a player's report comes with numbers
+struct NetStats {
+	u32 pingMs = 0;
+	float lossPercent = 0.f;
+	s64 worldDelayMs = 0;
+	s64 bodyDelayMs = 0;
+	float worldJitterMs = 0.f;
+	float bodyJitterMs = 0.f;
+	u32 outBytesPerSec = 0;
+	u32 inBytesPerSec = 0;
+	u32 snapshotsPerSec = 0;
+	u32 inFlight = 0;
+	u32 held = 0;
+};
+[[nodiscard]] NetStats netStats();
+
+//! Whether the player asked for the net graph (chat command /net)
+[[nodiscard]] bool netGraphEnabled();
+
 /*!
  * The shared story ledger.
  *

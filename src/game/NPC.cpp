@@ -194,6 +194,12 @@ static void CheckHit(Entity * source, float ratioaim) {
 	}
 	
 	float dist_limit = source->_npcdata->reach + source->physics.cyl.radius;
+
+	if(coop::isAvatarEntity(target)) {
+		// The other player is drawn a step behind where they really are:
+		// aim at where they are, or the wire would undo every dodge.
+		pos -= coop::avatarHitLead();
+	}
 	long count = 0;
 	float mindist = std::numeric_limits<float>::max();
 	

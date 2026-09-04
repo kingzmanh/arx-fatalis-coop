@@ -226,6 +226,10 @@ struct Session {
 
 Session g_session;
 
+//! The rates the net graph shows, refreshed with the five-second log
+NetStats g_hudRates;
+bool g_netGraph = false;
+
 //! ENet is global and must be torn down exactly once.
 bool g_enetReady = false;
 
@@ -412,8 +416,11 @@ void rawSend(const u8 * data, size_t size, Channel channel) {
 		return;
 	}
 
-	enet_uint32 flags = (channel == ChannelSnapshot) ? ENET_PACKET_FLAG_UNSEQUENCED
-	                                                 : ENET_PACKET_FLAG_RELIABLE;
+	// Snapshots are never retransmitted, and never silently turned into
+	// reliable fragments should one ever outgrow the MTU
+	enet_uint32 flags = (channel == ChannelSnapshot)
+	                    ? (ENET_PACKET_FLAG_UNSEQUENCED | ENET_PACKET_FLAG_UNRELIABLE_FRAGMENT)
+	                    : ENET_PACKET_FLAG_RELIABLE;
 
 	weigh(g_sent, u8(channel), data, size);
 
@@ -459,6 +466,71 @@ void send(const Writer & writer, Channel channel) {
 
 	rawSend(writer.data(), writer.size(), channel);
 
+}
+
+/*
+ * Effects and damage held back until the drawn world reaches them.
+ *
+ * A replica draws the shared world a step in the past. A blow that arrived
+ * on the reliable channel and landed the instant it was read would hurt
+ * before the swing that caused it is on screen. So anything stamped with
+ * the authority's clock waits until the drawn moment catches up with it.
+ */
+struct HeldRemote {
+	s64 dueMs;
+	MessageType type;
+	std::vector<u8> payload;
+};
+std::deque<HeldRemote> g_heldRemote;
+
+void applyHeld(MessageType type, Reader & reader) {
+	if(type == MsgWorldFx) {
+		ApplyScope scope;
+		applyWorldFx(reader);
+	} else if(type == MsgDamagePlayer) {
+		float damage = reader.getFloat();
+		u32 damageType = reader.getU32();
+		if(reader.ok()) {
+			applyRemoteDamage(damage, damageType);
+		}
+	}
+}
+
+void holdOrApply(MessageType type, u32 stamp, Reader & reader) {
+	s64 renderTime = estimatedRemoteNowMs() - entityInterpDelayMs();
+	bool hold = isReplica() && g_session.clockValid && s64(stamp) > renderTime
+	            && g_heldRemote.size() < 1024;
+	if(!hold) {
+		applyHeld(type, reader);
+		return;
+	}
+	size_t size = reader.remaining();
+	const u8 * data = reader.getRaw(size);
+	if(!data) {
+		return;
+	}
+	g_heldRemote.push_back({ s64(stamp), type, std::vector<u8>(data, data + size) });
+}
+
+//! An effect message, stamped with this machine's clock so the replica can time it
+Writer fxWriter() {
+	Writer writer(MsgWorldFx); // the one place this is built by hand
+	writer.put(u32(toMsi(platform::getTime())));
+	return writer;
+}
+
+void pumpHeldRemote() {
+	if(g_heldRemote.empty()) {
+		return;
+	}
+	s64 renderTime = estimatedRemoteNowMs() - entityInterpDelayMs();
+	bool release = !isReplica() || !g_session.clockValid;
+	while(!g_heldRemote.empty() && (release || g_heldRemote.front().dueMs <= renderTime)) {
+		HeldRemote & held = g_heldRemote.front();
+		Reader reader(held.payload.data(), held.payload.size());
+		applyHeld(held.type, reader);
+		g_heldRemote.pop_front();
+	}
 }
 
 /*!
@@ -1332,11 +1404,12 @@ void handleMessage(const u8 * data, size_t size) {
 		case MsgEntities: {
 			u32 stamp = reader.getU32();
 			u8 beatMs = reader.getU8();
+			u32 serial = reader.getU32();
 			noteRemoteClock(stamp);
 			if(beatMs) {
 				g_session.remoteSnapshotIntervalMs = beatMs;
 			}
-			if(g_session.newestEntitiesStamp && s32(stamp - g_session.newestEntitiesStamp) <= 0) {
+			if(g_session.newestEntitiesStamp && s32(stamp - g_session.newestEntitiesStamp) < 0) {
 				break; // took the long way round the network; the world has moved on
 			}
 			g_session.newestEntitiesStamp = stamp;
@@ -1346,6 +1419,7 @@ void handleMessage(const u8 * data, size_t size) {
 			}
 			// Only trust entity state from the authority for the area we are in.
 			if(isReplica()) {
+				noteSnapshotSerial(serial);
 				ApplyScope scope;
 				readEntitySnapshot(reader, stamp);
 			}
@@ -1531,12 +1605,14 @@ void handleMessage(const u8 * data, size_t size) {
 		}
 
 		case MsgSnapAck: {
-			u32 beat = reader.getU32();
+			u32 latest = reader.getU32();
+			u32 maskLow = reader.getU32();
+			u32 maskHigh = reader.getU32();
 			u16 declined = reader.getU16();
 			if(reader.ok() && hasWorldAuthority()) {
 				g_session.lastAckAt = platform::getTime();
 				g_acksSeen++;              // TEMPORARY
-				ackSnapshot(beat);
+				ackSnapshot(latest, (u64(maskHigh) << 32) | maskLow);
 				// ...except these, which they threw away: they are owed again
 				for(u16 i = 0; i < declined && reader.ok(); i++) {
 					unconfirm(reader.getU16());
@@ -1553,9 +1629,9 @@ void handleMessage(const u8 * data, size_t size) {
 		}
 
 		case MsgWorldFx: {
-			if(isReplica()) {
-				ApplyScope scope;
-				applyWorldFx(reader);
+			u32 stamp = reader.getU32();
+			if(reader.ok() && isReplica()) {
+				holdOrApply(MsgWorldFx, stamp, reader);
 			}
 			break;
 		}
@@ -1579,10 +1655,9 @@ void handleMessage(const u8 * data, size_t size) {
 		}
 
 		case MsgDamagePlayer: {
-			float damage = reader.getFloat();
-			u32 damageType = reader.getU32();
+			u32 stamp = reader.getU32();
 			if(reader.ok()) {
-				applyRemoteDamage(damage, damageType);
+				holdOrApply(MsgDamagePlayer, stamp, reader);
 			}
 			break;
 		}
@@ -2200,6 +2275,7 @@ void stop() {
 	g_session.newestAvatarStamp = 0;
 	g_session.entityLatenessMs = 0.f;
 	g_session.bodyLatenessMs = 0.f;
+	g_heldRemote.clear();
 	g_session.lastLatenessDecay = 0;
 	g_session.snapshotTick = 0;
 	g_session.wasSharing = false;
@@ -2513,7 +2589,7 @@ void broadcastCollisionMats(u8 mat1, u8 mat2, float volume, float power, const V
 		return;
 	}
 	
-	Writer writer(MsgWorldFx);
+	Writer writer = fxWriter();
 	writer.put(u8(0)); // FxCollisionMats
 	writer.put(mat1);
 	writer.put(mat2);
@@ -2531,7 +2607,7 @@ void broadcastCollisionNames(std::string_view name1, std::string_view name2, flo
 		return;
 	}
 	
-	Writer writer(MsgWorldFx);
+	Writer writer = fxWriter();
 	writer.put(u8(1)); // FxCollisionNames
 	writer.put(name1);
 	writer.put(name2);
@@ -2548,7 +2624,7 @@ void broadcastBlood(const Vec3f & pos, float dmgs, std::string_view sourceId) {
 		return;
 	}
 	
-	Writer writer(MsgWorldFx);
+	Writer writer = fxWriter();
 	writer.put(u8(2)); // FxBlood
 	writer.put(pos);
 	writer.put(dmgs);
@@ -2563,7 +2639,7 @@ void broadcastBlood2(const Vec3f & pos, float dmgs, u32 color, std::string_view 
 		return;
 	}
 	
-	Writer writer(MsgWorldFx);
+	Writer writer = fxWriter();
 	writer.put(u8(3)); // FxBlood2
 	writer.put(pos);
 	writer.put(dmgs);
@@ -3240,6 +3316,30 @@ u32 pingMs() {
 	return g_session.peer ? g_session.peer->roundTripTime : 0;
 }
 
+static float lossPercent() {
+	if(!g_session.peer) {
+		return 0.f;
+	}
+	return float(g_session.peer->packetLoss) * 100.f / float(ENET_PEER_PACKET_LOSS_SCALE);
+}
+
+NetStats netStats() {
+	NetStats stats = g_hudRates;
+	stats.pingMs = pingMs();
+	stats.lossPercent = lossPercent();
+	stats.worldDelayMs = entityInterpDelayMs();
+	stats.bodyDelayMs = bodyInterpDelayMs();
+	stats.worldJitterMs = g_session.entityLatenessMs;
+	stats.bodyJitterMs = g_session.bodyLatenessMs;
+	stats.inFlight = u32(inFlightCount());
+	stats.held = u32(g_heldRemote.size());
+	return stats;
+}
+
+bool netGraphEnabled() {
+	return g_netGraph;
+}
+
 s64 bodyInterpDelayMs() {
 	float delay = 2.f * 33.f + 25.f + g_session.bodyLatenessMs;
 	if(delay < 80.f) {
@@ -3253,6 +3353,7 @@ s64 bodyInterpDelayMs() {
 void flush() {
 
 	pumpDelayedPackets();
+	pumpHeldRemote();
 
 	if(g_session.host && isHost()) {
 		// The beacon exists to be heard BEFORE anyone joins; it must not sit
@@ -3344,57 +3445,22 @@ void flush() {
 		PlatformDuration interval = combat ? 16ms : SnapshotInterval;
 		if(now - g_session.lastSnapshot >= interval) {
 			g_session.lastSnapshot = now;
-			/*
-			 * A keyframe only when we have heard nothing back for two
-			 * seconds. Losing a snapshot no longer costs anything - the
-			 * next one still sees the difference against what they
-			 * confirmed - so the old every-750ms retelling of the whole
-			 * area was pure repetition.
-			 */
-			/*
-			 * The whole world again, four times a second.
-			 *
-			 * Acknowledgements were supposed to replace this, and for
-			 * everything the other machine ACCEPTS they do. But it declines
-			 * updates for anything it is holding or has just moved, and the
-			 * rules around when that ownership ends are older and subtler than
-			 * this code - the practical result was items that would not move
-			 * until you moved them twice. The repetition is what covered that,
-			 * so the repetition stays until ownership is something both sides
-			 * agree about explicitly.
-			 *
-			 * It costs far less than it used to: an entity is 22 bytes now,
-			 * not 134.
-			 */
-			bool silent = g_session.lastAckAt == PlatformInstant(0)
-			              || now - g_session.lastAckAt >= 2000ms;
-			bool full = !g_session.wasSharing || silent
-			            || now - g_session.lastKeyframe >= 750ms;
-			if(full) {
-				g_session.lastKeyframe = now;
-				g_session.lastAckAt = now;   // do not repeat it every tick
-			}
+			// Starting to share again: the other side is told every name anew
+			bool restart = !g_session.wasSharing;
 			u32 beat = u32(toMsi(now));
-			Writer writer(MsgEntities);
-			writer.put(beat);
-			writer.put(u8(toMsi(interval)));
-			writeEntitySnapshot(writer, full, beat);
-			send(writer, ChannelSnapshot);
+			std::vector<Writer> packets;
+			buildEntitySnapshots(beat, u8(toMsi(interval)), restart, packets);
+			for(const Writer & packet : packets) {
+				send(packet, ChannelSnapshot);
+			}
 		}
 	}
 	g_session.wasSharing = sharing;
 
 	if(isReplica() && now - g_session.lastAckSent >= 100ms) {
 		g_session.lastAckSent = now;
-		if(u32 beat = lastAppliedBeat()) {
-			std::vector<u16> declined;
-			takeDeclined(declined);
-			Writer ack(MsgSnapAck);
-			ack.put(beat);
-			ack.put(u16(std::min<size_t>(declined.size(), 256)));
-			for(size_t i = 0; i < declined.size() && i < 256; i++) {
-				ack.put(declined[i]);
-			}
+		Writer ack(MsgSnapAck);
+		if(writeSnapshotAck(ack)) {
 			send(ack, ChannelSnapshot);
 		}
 	}
@@ -3409,7 +3475,7 @@ void flush() {
 	if(now - g_session.lastNetLog >= 5000ms) {
 		g_session.lastNetLog = now;
 		LogInfo << "[coop-net] ping " << (g_session.peer ? g_session.peer->roundTripTime : 0)
-		        << "ms, world delay " << entityInterpDelayMs() << "ms (jitter "
+		        << "ms, loss " << lossPercent() << "%, world delay " << entityInterpDelayMs() << "ms (jitter "
 		        << s64(g_session.entityLatenessMs) << "ms), body delay "
 		        << bodyInterpDelayMs() << "ms (jitter " << s64(g_session.bodyLatenessMs) << "ms)";
 
@@ -3418,6 +3484,11 @@ void flush() {
 			auto rate = [&](const Meter & m, Channel c) {
 				return u32(float(m.bytes[c]) / seconds);
 			};
+			g_hudRates.outBytesPerSec = rate(g_sent, ChannelSnapshot) + rate(g_sent, ChannelEvent)
+			                            + rate(g_sent, ChannelControl);
+			g_hudRates.inBytesPerSec = rate(g_received, ChannelSnapshot) + rate(g_received, ChannelEvent)
+			                           + rate(g_received, ChannelControl);
+			g_hudRates.snapshotsPerSec = u32(float(g_sent.packets[ChannelSnapshot]) / seconds);
 			LogInfo << "[coop-bytes] out " << rate(g_sent, ChannelSnapshot) << "/"
 			        << rate(g_sent, ChannelEvent) << "/" << rate(g_sent, ChannelControl)
 			        << " B/s (snapshot/event/control), in "
@@ -3834,9 +3905,7 @@ void reportItemDropped(const Entity & item, const Vec3f & at, const Vec3f & velo
 	 * for two seconds would show the object hanging where it left the hand and
 	 * then teleporting to wherever it had long since come to rest.
 	 */
-	if(velocity == Vec3f(0.f)) {
-		noteLocalEdit(item.idString());
-	}
+	holdLocally(item.idString());
 
 }
 
@@ -3910,6 +3979,7 @@ void reportPlayerDamage(float damage, u32 damageType) {
 	}
 
 	Writer writer(MsgDamagePlayer);
+	writer.put(u32(toMsi(platform::getTime())));
 	writer.put(damage);
 	writer.put(damageType);
 	send(writer, ChannelEvent);
@@ -4058,6 +4128,12 @@ void reportQuest(std::string_view questKey) {
 void sendChat(std::string_view text) {
 
 	if(!isPlaying() || text.empty()) {
+		return;
+	}
+
+	if(text == "/net") {
+		g_netGraph = !g_netGraph;
+		notification_add(g_netGraph ? "Net graph on" : "Net graph off");
 		return;
 	}
 

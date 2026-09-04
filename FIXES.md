@@ -1174,3 +1174,25 @@ by the same rule the file uses, so the two cannot disagree about what a new
 spell is called either. Confirmed by saving Summon Co-op and by renaming it and
 finding the same spell under the new name.
 
+## 49. An item player two dragged snapped back to where it was picked up
+
+**The problem.** As the joining player, drag a thing off the floor and put it
+down somewhere else: it jumps straight back to where it came from, and only a
+second drag makes it stay. Drag fast and it also seemed to take a long time to
+arrive.
+
+**Why did it happen?** Replicas are drawn from a short history of where the
+host said they were. Taking hold of a thing did not touch that history, and
+during a short drag no packet about that thing arrived (only what changes is
+sent now), so nothing cleared it. The moment the drag ended, the smoother was
+allowed at the thing again and drew it from the stale history: back to the
+pickup spot. The host's real answer then arrived within a frame but was
+ignored for a fixed two-second grace meant to keep stale host positions off a
+freshly moved item - which is the long delay.
+
+**The fix.** Taking hold of a thing, and putting it down, forgets its history
+and marks it as this player's at once; the smoother never moves what this
+player holds or just put down; and the grace is three round trips (300 ms on
+a LAN) instead of two seconds. Found with a trace build that logged every
+move of a dragged item on both machines, confirmed by the user dragging,
+dropping and throwing.

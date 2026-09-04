@@ -19,6 +19,12 @@
 
 #include "net/CoopPlayer.h"
 
+#include <iomanip>
+#include <sstream>
+
+#include "core/Core.h"
+#include "graphics/font/Font.h"
+
 #include <cstdio>
 #include <vector>
 #include <algorithm>
@@ -1530,12 +1536,57 @@ bool updateReviveOpportunity() {
 
 void drawPartnerHud() {
 
-	if(!isPlaying() || !g_avatar.valid) {
+	if(!isPlaying() || !netGraphEnabled() || !hFontDebug) {
 		return;
 	}
 
-	(void) 0; // the orb is drawn by drawPartnerHealthOrb, inside the HUD pass
+	NetStats stats = netStats();
+	std::ostringstream lines[5];
+	lines[0] << "net: ping " << stats.pingMs << " ms, loss " << std::fixed
+	         << std::setprecision(1) << stats.lossPercent << " %";
+	lines[1] << "world drawn " << stats.worldDelayMs << " ms back (jitter "
+	         << s64(stats.worldJitterMs) << " ms)";
+	lines[2] << "partner drawn " << stats.bodyDelayMs << " ms back (jitter "
+	         << s64(stats.bodyJitterMs) << " ms)";
+	lines[3] << "out " << (stats.outBytesPerSec / 1024) << " KB/s, in "
+	         << (stats.inBytesPerSec / 1024) << " KB/s, " << stats.snapshotsPerSec
+	         << " snapshots/s";
+	lines[4] << "unconfirmed packets " << stats.inFlight << ", held effects " << stats.held;
 
+	int x = 10;
+	int y = int(float(g_size.height()) * 0.3f);
+	int step = hFontDebug->getLineHeight() + 2;
+	for(const std::ostringstream & line : lines) {
+		std::string text = line.str();
+		hFontDebug->draw(x + 1, y + 1, text, Color::black);
+		hFontDebug->draw(x, y, text, Color::white);
+		y += step;
+	}
+
+}
+
+Vec3f avatarHitLead() {
+
+	if(g_bodyTrack.count < 2) {
+		return Vec3f(0.f);
+	}
+
+	const MotionSample & before = g_bodyTrack.at(g_bodyTrack.count - 2);
+	const MotionSample & newest = g_bodyTrack.newest();
+	s64 span = newest.timeMs - before.timeMs;
+	if(span <= 0 || span > 500) {
+		return Vec3f(0.f); // standing, or no recent word
+	}
+
+	Vec3f velocity = (newest.pos - before.pos) / float(span); // units per ms
+	float horizon = std::min(float(bodyInterpDelayMs()) + float(pingMs()) * 0.5f, 250.f);
+	Vec3f lead = velocity * horizon;
+	float length = glm::length(lead);
+	if(length > 150.f) {
+		lead *= 150.f / length;
+	}
+
+	return lead;
 }
 
 void drawPartnerHealthOrb(const Rectf & mine) {

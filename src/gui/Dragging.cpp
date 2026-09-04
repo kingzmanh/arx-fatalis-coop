@@ -38,7 +38,9 @@
 #include "math/GtxFunctions.h"
 #include "math/RandomVector.h"
 #include "math/Vector.h"
+#include "io/log/Logger.h"
 #include "net/CoopNet.h"
+#include "net/CoopWorld.h"
 #include "physics/Collisions.h"
 #include "physics/Physics.h"
 #include "platform/Platform.h"
@@ -92,6 +94,9 @@ void setDraggedEntity(Entity * entity) {
 	}
 	
 	g_draggedEntity = entity;
+	if(entity) {
+		coop::noteDragged(*entity);
+	}
 	
 	if(entity && entity->obj && entity->obj->pbox) {
 		entity->obj->pbox->active = 0;

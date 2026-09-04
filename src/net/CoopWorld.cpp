@@ -20,6 +20,8 @@
 #include "net/CoopWorld.h"
 
 #include <algorithm>
+#include <limits>
+#include <unordered_map>
 #include <map>
 #include <string>
 #include <vector>
@@ -135,7 +137,7 @@ std::map<std::string, ReplicaState, std::less<>> g_replicaTracks;
  * the timeline says it must be, so playback stays butter-smooth AND true.
  */
 void driveReplicatedAnim(Entity & entity, size_t layerIndex, ReplicaLayer & state,
-                         s64 renderTime) {
+                         s64 renderTime, float frameMs) {
 
 	if(!state.valid) {
 		return;
@@ -192,19 +194,37 @@ void driveReplicatedAnim(Entity & entity, size_t layerIndex, ReplicaLayer & stat
 			target = durationMs;
 		}
 	}
-	if(std::abs(toMsi(layer.ctime) - target) > 60) {
-		if(!(layer.flags & EA_LOOP) && !restarted && toMsi(layer.ctime) > target) {
-			/*
-			 * A one-shot may NEVER be corrected backwards. A finished door
-			 * animation holds its final frame while the authority's clock
-			 * keeps running, which makes the clip look ever more recently
-			 * started - and correcting for that replayed the last slice of
-			 * every settled door and lever on the replica's screen, forever.
-			 * Forward corrections only; the past stays finished.
-			 */
-		} else {
-			layer.ctime = std::chrono::milliseconds(target);
+	/*
+	 * Bring the playhead to where it belongs without a jump. A clip a few
+	 * frames off is hurried or held back by a fraction of each frame until
+	 * it catches up, which no eye tells from the clip itself; only a clip
+	 * that is far off snaps. A one-shot is NEVER corrected backwards: a
+	 * finished door holds its last frame while the authority's clock keeps
+	 * running, and correcting for that replayed the last slice of every
+	 * settled door and lever on the replica's screen, forever.
+	 */
+	s64 current = toMsi(layer.ctime);
+	s64 diff = target - current;
+	if((layer.flags & EA_LOOP) && durationMs > 0) {
+		if(diff > durationMs / 2) {
+			diff -= durationMs; // the shorter way round the loop
+		} else if(diff < -durationMs / 2) {
+			diff += durationMs;
 		}
+	}
+	if(!(layer.flags & EA_LOOP) && !restarted && diff < 0) {
+		// forward corrections only; the past stays finished
+	} else if(std::abs(diff) > 200) {
+		layer.ctime = std::chrono::milliseconds(target);
+	} else if(std::abs(diff) > 4) {
+		s64 step = std::max<s64>(1, s64(frameMs * 0.15f));
+		s64 next = current + glm::clamp(diff, -step, step);
+		if((layer.flags & EA_LOOP) && durationMs > 0) {
+			next = ((next % durationMs) + durationMs) % durationMs;
+		} else {
+			next = std::max<s64>(0, next);
+		}
+		layer.ctime = std::chrono::milliseconds(next);
 	}
 
 }
@@ -265,8 +285,19 @@ std::map<std::string, SentState, std::less<>> g_sentStates;
  * never arrives cannot leave a field wrong: the next one still sees that field
  * as unconfirmed and sends it again.
  */
-std::map<std::string, SentState, std::less<>> g_ackedStates;
-std::map<u32, std::vector<std::pair<std::string, SentState>>> g_inFlight;
+//! What the other machine confirmed it holds, by handle
+std::unordered_map<u16, SentState> g_ackedStates;
+//! Packets sent and neither confirmed nor given up on yet, by packet serial
+std::map<u32, std::vector<std::pair<u16, SentState>>> g_inFlight;
+u32 g_snapshotSerial = 0;
+u8 g_snapshotGeneration = 0; //!< bumped whenever the handles are renumbered
+
+//! When an entity was last described, and last described in full
+struct Cadence {
+	PlatformInstant lastSent = 0;
+	PlatformInstant lastRefresh = 0;
+};
+std::unordered_map<u16, Cadence> g_cadence;
 
 u64 g_snapEntities = 0;      //!< entity records written since the last report
 u64 g_snapWouldHave = 0;     //!< what those records used to cost
@@ -294,6 +325,7 @@ void forgetHandles() {
 	g_nextHandle = 1;
 	g_ackedStates.clear();
 	g_inFlight.clear();
+	g_cadence.clear();
 }
 
 bool sentStateDiffers(const SentState & a, const SentState & b) {
@@ -339,7 +371,21 @@ bool sentStateDiffers(const SentState & a, const SentState & b) {
 std::map<std::string, PlatformInstant, std::less<>> g_localEdits;
 
 //! Generous enough to cover a bad connection, short enough to self-heal.
-constexpr PlatformDuration LocalEditGrace = 2s;
+/*
+ * How long a thing this player just moved is left alone: long enough for
+ * the authority to have heard about it and answered with its own view,
+ * and no longer, or a put-down item would sit for seconds before the
+ * world agreed on where it is.
+ */
+static PlatformDuration localEditGrace() {
+	s64 ms = glm::clamp(s64(3) * s64(pingMs()), s64(300), s64(2000));
+	return std::chrono::milliseconds(ms);
+}
+
+static bool recentlyEditedLocally(std::string_view entityId) {
+	auto edit = g_localEdits.find(entityId);
+	return edit != g_localEdits.end() && platform::getTime() - edit->second < localEditGrace();
+}
 
 /*!
  * The entity flags worth sending, and the only ones ever written on receipt.
@@ -433,25 +479,26 @@ size_t ackedCount() {
 }
 
 void unconfirm(u16 handle) {
-
-	// Look up what that number stands for and forget we ever got it across.
-	auto named = g_handleNames.find(handle);
-	if(named != g_handleNames.end()) {
-		g_ackedStates.erase(named->second);
-	}
-
+	g_ackedStates.erase(handle);
 }
 
-void ackSnapshot(u32 beat) {
+void ackSnapshot(u32 latest, u64 mask) {
 
-	// Everything sent at or before that beat has landed, so it becomes the
-	// picture the next differences are measured against.
+	/*
+	 * Only a packet the other side says it saw counts. One that fell off the
+	 * wire is simply forgotten: the next difference is then measured against
+	 * what they really hold, and the lost news goes out again by itself.
+	 */
 	for(auto it = g_inFlight.begin(); it != g_inFlight.end(); ) {
-		if(it->first > beat) {
-			break;
+		u32 serial = it->first;
+		if(s32(serial - latest) > 0) {
+			break; // newer than anything they have seen yet
 		}
-		for(const auto & entry : it->second) {
-			g_ackedStates[entry.first] = entry.second;
+		u32 age = latest - serial;
+		if(age < 64 && (mask & (u64(1) << age))) {
+			for(const auto & entry : it->second) {
+				g_ackedStates[entry.first] = entry.second;
+			}
 		}
 		it = g_inFlight.erase(it);
 	}
@@ -482,25 +529,53 @@ ApplyScope::~ApplyScope() {
 
 // -- entity snapshots ----------------------------------------------------------
 
-void writeEntitySnapshot(Writer & writer, bool full, u32 beat) {
+/*!
+ * Describe the entities around the players, in packets that fit the wire.
+ *
+ * Every entity is measured against what the other machine confirmed it holds
+ * and only the difference is written. Motion of things far from both players
+ * is told less often - a rat forty metres away needs no sixty updates a
+ * second - while anything that changed what a thing IS (its clip, its life,
+ * whether it shows) goes out at once. A few entities per beat are also told
+ * in full regardless, oldest retelling first, so that within a second every
+ * one of them has been retold; that replaces "everything again every 750ms".
+ *
+ * Packets stay under the MTU, so ENet never turns them into reliable
+ * fragments, and each carries a serial so the acknowledgement can say
+ * exactly which ones arrived.
+ */
+void buildEntitySnapshots(u32 beat, u8 beatMs, bool restart, std::vector<Writer> & packets) {
 
-	if(full) {
-		// Rebuilt from scratch, so entries for entities that no longer exist
-		// do not linger - and the other side is about to be told every name
-		// again anyway.
-		g_sentStates.clear();
-		forgetHandles();
+	if(restart) {
+		forgetHandles(); // starting to share again: every name is said anew
+		g_snapshotGeneration++;
 	}
+
+	constexpr PlatformDuration RefreshInterval = std::chrono::milliseconds(1000);
+	constexpr PlatformDuration HoldMid = std::chrono::milliseconds(50);
+	constexpr PlatformDuration HoldFar = std::chrono::milliseconds(150);
+	constexpr size_t MaxRefreshPerBeat = 10;
+	constexpr size_t MaxPacketBytes = 1150;
+	constexpr size_t MaxPacketsPerBeat = 6;
+
+	const PlatformInstant now = platform::getTime();
 
 	struct Entry {
 		Entity * entity;
 		u16 handle;
 		u16 mask;
+		bool first;
+		bool due;
+		float distance;
+		PlatformInstant lastRefresh;
 		SentState state;
 	};
 
 	std::vector<Entry> entries;
 	entries.reserve(64);
+
+	Entity * mine = entities.player();
+	Entity * theirs = avatarEntity();
 
 	for(Entity & entity : entities) {
 
@@ -508,27 +583,16 @@ void writeEntitySnapshot(Writer & writer, bool full, u32 beat) {
 			continue;
 		}
 
-		/*
-		 * Only what somebody could plausibly notice.
-		 *
-		 * A rat on the far side of the level was being described forty-five
-		 * times a second to a player who cannot see it, will not hear it, and
-		 * whose screen it never touches. Anything beyond both players gets its
-		 * news when they come near - and because differences are measured
-		 * against what was acknowledged, the first update they get on
-		 * approach is the whole truth, not a stale fragment.
-		 *
-		 * Generous on purpose: twice the view distance, so nothing pops.
-		 */
-		{
-			const float reach = 6000.f;
-			Entity * mine = entities.player();
-			Entity * theirs = avatarEntity();
-			bool near = (mine && glm::distance(entity.pos, mine->pos) < reach)
-			            || (theirs && glm::distance(entity.pos, theirs->pos) < reach);
-			if(!near) {
-				continue;
-			}
+		// Only what somebody could plausibly notice: twice the view distance
+		float distance = std::numeric_limits<float>::max();
+		if(mine) {
+			distance = glm::distance(entity.pos, mine->pos);
+		}
+		if(theirs) {
+			distance = std::min(distance, glm::distance(entity.pos, theirs->pos));
+		}
+		if(distance >= 6000.f) {
+			continue;
 		}
 
 		SentState state;
@@ -552,11 +616,11 @@ void writeEntitySnapshot(Writer & writer, bool full, u32 beat) {
 		state.haloColor = entity.halo_native.color;
 		state.haloRadius = entity.halo_native.radius;
 
-		std::string id(entity.idString());
 		bool isNew = false;
-		u16 handle = handleFor(id, isNew);
+		u16 handle = handleFor(entity.idString(), isNew);
+		Cadence & cadence = g_cadence[handle];
 
-		auto known = g_ackedStates.find(id);
+		auto known = g_ackedStates.find(handle);
 		const bool first = isNew || known == g_ackedStates.end();
 		u16 mask = 0;
 
@@ -583,17 +647,9 @@ void writeEntitySnapshot(Writer & writer, bool full, u32 beat) {
 				mask |= SnapLife;
 			}
 			for(size_t l = 0; l < MAX_ANIM_LAYERS; l++) {
-				/*
-				 * The playhead is not news. It advances every frame by itself,
-				 * and the other machine advances its own copy the same way -
-				 * so sending it says nothing they could not work out, and it
-				 * was setting this bit on every entity that was moving at all,
-				 * every tick, at thirty two bytes a time.
-				 *
-				 * What IS news: a different clip, different flags, or a
-				 * playhead that went backwards, which means the clip started
-				 * again and they need to know when.
-				 */
+				// The playhead advances by itself on both machines; a
+				// different clip, different flags, or a playhead that went
+				// backwards (the clip started again) is what counts as news.
 				if(was.anim[l] != state.anim[l] || was.alt[l] != state.alt[l]
 				   || was.animFlags[l] != state.animFlags[l]
 				   || state.animTime[l] < was.animTime[l]) {
@@ -613,101 +669,188 @@ void writeEntitySnapshot(Writer & writer, bool full, u32 beat) {
 			}
 		}
 
-		if(!mask) {
-			continue;                  // nothing they do not already know
+		const bool due = now - cadence.lastRefresh >= RefreshInterval;
+		if(!mask && !due) {
+			continue; // nothing they do not already know
 		}
 
-		// TEMPORARY: what the authority says about things that are not people
-		if((mask & SnapPos) && !(entity.ioflags & IO_NPC)) {
-			LogWarning << "[item-trace] host sends " << id << " at "
-			           << entity.pos.x << "," << entity.pos.y << "," << entity.pos.z
-			           << (first ? " (first time)" : "");
-		}
-
-		entries.push_back({ &entity, handle, mask, state });
-		if(entries.size() >= MaxSnapshotEntities) {
-			break;
-		}
-
-	}
-
-	// what this cost, against what the old format would have: a name of about
-	// sixteen bytes plus a hundred and eighteen of record, every entity, every
-	// time
-	g_snapEntities += entries.size();
-	g_snapWouldHave += entries.size() * 134;
-
-	if(!entries.empty()) {
-		auto & flight = g_inFlight[beat];
-		flight.reserve(entries.size());
-		for(const Entry & entry : entries) {
-			flight.emplace_back(std::string(entry.entity->idString()), entry.state);
-		}
-		// A partner that never acknowledges must not grow this forever.
-		while(g_inFlight.size() > 400) {
-			g_inFlight.erase(g_inFlight.begin());
-		}
-	}
-
-	writer.put(u16(entries.size()));
-
-	for(const Entry & entry : entries) {
-
-		Entity * entity = entry.entity;
-		writer.put(entry.handle);
-		writer.put(entry.mask);
-
-		if(entry.mask & SnapName) {
-			writer.put(std::string_view(entity->idString()));
-		}
-		if(entry.mask & SnapPos) {
-			// quarter-unit precision, which is a twentieth of a footstep
-			writer.put(u16(glm::clamp(entity->pos.x, 0.f, 16383.f) * SnapPosScale));
-			writer.put(s16(glm::clamp(entity->pos.y, -8000.f, 8000.f) * SnapPosScale));
-			writer.put(u16(glm::clamp(entity->pos.z, 0.f, 16383.f) * SnapPosScale));
-		}
-		if(entry.mask & SnapYaw) {
-			// all three: a thrown object or a tilted prop uses the other two,
-			// and the old full record carried them
-			writer.put(u16(MAKEANGLE(entity->angle.getYaw()) * 182.f));
-			writer.put(u16(MAKEANGLE(entity->angle.getPitch()) * 182.f));
-			writer.put(u16(MAKEANGLE(entity->angle.getRoll()) * 182.f));
-		}
-		if(entry.mask & SnapShow) {
-			writer.put(u8(entity->show));
-		}
-		if(entry.mask & SnapLife) {
-			writer.put(entry.state.life);
-		}
-		if(entry.mask & SnapAnim) {
-			for(size_t l = 0; l < MAX_ANIM_LAYERS; l++) {
-				const AnimLayer & layer = entity->animlayer[l];
-				writer.put(animIndexOf(*entity, layer.cur_anim));
-				writer.put(u8(layer.altidx_cur));
-				writer.put(u16(layer.flags));
-				writer.put(s32(toMsi(layer.ctime)));
+		// Motion alone is paced by distance; anything else is news and goes now
+		const u16 motion = SnapPos | SnapYaw | SnapGlow | SnapHalo;
+		if(mask && !first && !due && (mask & ~motion) == 0) {
+			PlatformDuration hold = (distance < 1500.f) ? PlatformDuration(0)
+			                        : (distance < 3500.f) ? HoldMid : HoldFar;
+			if(now - cadence.lastSent < hold) {
+				continue;
 			}
 		}
+
+		entries.push_back({ &entity, handle, mask, first, due, distance, cadence.lastRefresh, state });
+	}
+
+	// The full retelling: the few that have waited longest
+	{
+		std::vector<size_t> waiting;
+		for(size_t i = 0; i < entries.size(); i++) {
+			if(entries[i].due && !entries[i].first) {
+				waiting.push_back(i);
+			}
+		}
+		std::sort(waiting.begin(), waiting.end(), [&](size_t a, size_t b) {
+			return entries[a].lastRefresh < entries[b].lastRefresh;
+		});
+		const u16 everything = SnapPos | SnapYaw | SnapShow | SnapLife | SnapAnim
+		                       | SnapGlow | SnapFlags | SnapHalo;
+		for(size_t i = 0; i < waiting.size(); i++) {
+			Entry & entry = entries[waiting[i]];
+			if(i < MaxRefreshPerBeat) {
+				entry.mask |= everything;
+				if(entry.entity->ioflags & IO_NPC) {
+					entry.mask |= SnapNpc;
+				}
+			} else {
+				entry.due = false; // its turn comes on a later beat
+			}
+		}
+		entries.erase(std::remove_if(entries.begin(), entries.end(),
+		                             [](const Entry & entry) { return entry.mask == 0; }),
+		              entries.end());
+	}
+
+	// Nearest first: if the beat's packets run out, it is the far ones that wait
+	std::stable_sort(entries.begin(), entries.end(), [](const Entry & a, const Entry & b) {
+		return a.distance < b.distance;
+	});
+
+	auto entryBytes = [](const Entry & entry) {
+		size_t bytes = 4; // handle and mask
+		if(entry.mask & SnapName) {
+			bytes += 2 + entry.entity->idString().size();
+		}
+		if(entry.mask & SnapPos) {
+			bytes += 6;
+		}
+		if(entry.mask & SnapYaw) {
+			bytes += 6;
+		}
+		if(entry.mask & SnapShow) {
+			bytes += 1;
+		}
+		if(entry.mask & SnapLife) {
+			bytes += 4;
+		}
+		if(entry.mask & SnapAnim) {
+			bytes += MAX_ANIM_LAYERS * 8;
+		}
 		if(entry.mask & SnapGlow) {
-			writer.put(entity->invisibility);
-			writer.put(entity->ignition);
+			bytes += 8;
 		}
 		if(entry.mask & SnapFlags) {
-			writer.put(u16(entity->gameFlags & ReplicatedGameFlags));
-			writer.put(u32(entity->ioflags & ReplicatedEntityFlags));
+			bytes += 6;
 		}
 		if(entry.mask & SnapHalo) {
-			writer.put(u16(entity->halo_native.flags));
-			writer.put(u8(glm::clamp(entity->halo_native.color.r, 0.f, 1.f) * 255.f));
-			writer.put(u8(glm::clamp(entity->halo_native.color.g, 0.f, 1.f) * 255.f));
-			writer.put(u8(glm::clamp(entity->halo_native.color.b, 0.f, 1.f) * 255.f));
-			writer.put(u16(glm::clamp(entity->halo_native.radius, 0.f, 6000.f)));
+			bytes += 7;
 		}
 		if(entry.mask & SnapNpc) {
-			writer.put(entity->_npcdata->lifePool.max);
-			writer.put(entity->_npcdata->vvpos);
+			bytes += 8;
+		}
+		return bytes;
+	};
+
+	size_t index = 0;
+	while(index < entries.size() && packets.size() < MaxPacketsPerBeat) {
+
+		size_t end = index;
+		size_t bytes = 13; // type, beat, beat length, serial, generation, count
+		while(end < entries.size()) {
+			size_t more = entryBytes(entries[end]);
+			if(end > index && bytes + more > MaxPacketBytes) {
+				break;
+			}
+			bytes += more;
+			end++;
 		}
 
+		u32 serial = ++g_snapshotSerial;
+		Writer writer(MsgEntities);
+		writer.put(beat);
+		writer.put(beatMs);
+		writer.put(serial);
+		writer.put(g_snapshotGeneration);
+		writer.put(u16(end - index));
+
+		auto & flight = g_inFlight[serial];
+		flight.reserve(end - index);
+
+		for(size_t i = index; i < end; i++) {
+
+			const Entry & entry = entries[i];
+			Entity * entity = entry.entity;
+			writer.put(entry.handle);
+			writer.put(entry.mask);
+
+			if(entry.mask & SnapName) {
+				writer.put(std::string_view(entity->idString()));
+			}
+			if(entry.mask & SnapPos) {
+				writer.put(u16(glm::clamp(entry.state.pos.x, 0.f, 16383.f) * SnapPosScale));
+				writer.put(s16(glm::clamp(entry.state.pos.y, -8000.f, 8000.f) * SnapPosScale));
+				writer.put(u16(glm::clamp(entry.state.pos.z, 0.f, 16383.f) * SnapPosScale));
+			}
+			if(entry.mask & SnapYaw) {
+				writer.put(u16(MAKEANGLE(entry.state.yaw) * 182.f));
+				writer.put(u16(MAKEANGLE(entry.state.pitch) * 182.f));
+				writer.put(u16(MAKEANGLE(entry.state.roll) * 182.f));
+			}
+			if(entry.mask & SnapShow) {
+				writer.put(entry.state.show);
+			}
+			if(entry.mask & SnapLife) {
+				writer.put(entry.state.life);
+			}
+			if(entry.mask & SnapAnim) {
+				for(size_t l = 0; l < MAX_ANIM_LAYERS; l++) {
+					writer.put(entry.state.anim[l]);
+					writer.put(entry.state.alt[l]);
+					writer.put(entry.state.animFlags[l]);
+					writer.put(entry.state.animTime[l]);
+				}
+			}
+			if(entry.mask & SnapGlow) {
+				writer.put(entry.state.invisibility);
+				writer.put(entry.state.ignition);
+			}
+			if(entry.mask & SnapFlags) {
+				writer.put(entry.state.gameFlags);
+				writer.put(entry.state.ioFlags);
+			}
+			if(entry.mask & SnapHalo) {
+				writer.put(entry.state.haloFlags);
+				writer.put(u8(glm::clamp(entry.state.haloColor.r, 0.f, 1.f) * 255.f));
+				writer.put(u8(glm::clamp(entry.state.haloColor.g, 0.f, 1.f) * 255.f));
+				writer.put(u8(glm::clamp(entry.state.haloColor.b, 0.f, 1.f) * 255.f));
+				writer.put(u16(glm::clamp(entry.state.haloRadius, 0.f, 6000.f)));
+			}
+			if(entry.mask & SnapNpc) {
+				writer.put(entity->_npcdata->lifePool.max);
+				writer.put(entity->_npcdata->vvpos);
+			}
+
+			flight.emplace_back(entry.handle, entry.state);
+			Cadence & cadence = g_cadence[entry.handle];
+			cadence.lastSent = now;
+			if(entry.first || entry.due) {
+				cadence.lastRefresh = now;
+			}
+			g_snapEntities++;
+			g_snapWouldHave += 134;
+		}
+
+		packets.push_back(std::move(writer));
+		index = end;
+	}
+
+	while(g_inFlight.size() > 400) {
+		g_inFlight.erase(g_inFlight.begin());
 	}
 
 }
@@ -765,8 +908,56 @@ void takeDeclined(std::vector<u16> & out) {
 	g_declined.clear();
 }
 
+void holdLocally(std::string_view entityId) {
+	g_replicaTracks.erase(std::string(entityId));
+	noteLocalEdit(entityId);
+}
+
+void noteDragged(const Entity & entity) {
+	holdLocally(entity.idString());
+}
+
+static u32 g_ackLatest = 0;
+static u64 g_ackMask = 0;
+static bool g_ackAny = false;
+
 void forgetSnapshotHandles() {
 	g_known.clear();
+	g_ackAny = false;
+	g_ackMask = 0;
+}
+
+void noteSnapshotSerial(u32 serial) {
+	if(!g_ackAny) {
+		g_ackAny = true;
+		g_ackLatest = serial;
+		g_ackMask = 1;
+		return;
+	}
+	s32 ahead = s32(serial - g_ackLatest);
+	if(ahead > 0) {
+		g_ackMask = (ahead >= 64) ? 0 : (g_ackMask << ahead);
+		g_ackMask |= 1;
+		g_ackLatest = serial;
+	} else if(ahead > -64) {
+		g_ackMask |= u64(1) << u32(-ahead);
+	}
+}
+
+bool writeSnapshotAck(Writer & writer) {
+	if(!g_ackAny) {
+		return false;
+	}
+	writer.put(g_ackLatest);
+	writer.put(u32(g_ackMask & 0xffffffffu));
+	writer.put(u32(g_ackMask >> 32));
+	std::vector<u16> declined;
+	takeDeclined(declined);
+	writer.put(u16(std::min<size_t>(declined.size(), 256)));
+	for(size_t i = 0; i < declined.size() && i < 256; i++) {
+		writer.put(declined[i]);
+	}
+	return true;
 }
 
 /*
@@ -779,9 +970,18 @@ u32 lastAppliedBeat() {
 	return g_appliedBeat;
 }
 
+static u8 g_knownGeneration = 0;
+
 void readEntitySnapshot(Reader & reader, u32 serverTimeMs) {
 
 	g_appliedBeat = serverTimeMs;
+
+	// Renumbered handles: what we knew by number is no longer true
+	u8 generation = reader.getU8();
+	if(generation != g_knownGeneration) {
+		g_knownGeneration = generation;
+		g_known.clear();
+	}
 
 	size_t count = reader.getU16();
 
@@ -916,9 +1116,6 @@ void readEntitySnapshot(Reader & reader, u32 serverTimeMs) {
 		 * back to the shared world.
 		 */
 		if(ownsLocally(entity)) {
-			if(!(entity->ioflags & IO_NPC)) {
-				LogWarning << "[item-trace] guest ignores " << id << ": we are holding it";
-			}
 			g_declined.push_back(handle);
 			g_localEdits[std::string(id)] = platform::getTime();
 			g_replicaTracks.erase(id);
@@ -929,11 +1126,7 @@ void readEntitySnapshot(Reader & reader, u32 serverTimeMs) {
 		// composed before they heard about it.
 		auto edit = g_localEdits.find(id);
 		if(edit != g_localEdits.end()) {
-			if(platform::getTime() - edit->second < LocalEditGrace) {
-				if(!(entity->ioflags & IO_NPC)) {
-					LogWarning << "[item-trace] guest ignores " << id
-					           << ": we moved it a moment ago";
-				}
+			if(platform::getTime() - edit->second < localEditGrace()) {
 				g_declined.push_back(handle);
 				g_replicaTracks.erase(id);
 				continue;
@@ -978,12 +1171,6 @@ void readEntitySnapshot(Reader & reader, u32 serverTimeMs) {
 		 * applies, because those are the authority's to state at any time.
 		 */
 		const bool moved = (mask & SnapPos) != 0;
-		if(!(entity->ioflags & IO_NPC)) {
-			LogWarning << "[item-trace] guest gets " << id << (moved ? " with" : " without")
-			           << " a position; it is at " << entity->pos.x << "," << entity->pos.z
-			           << ", told " << pos.x << "," << pos.z
-			           << ", track has " << track.count;
-		}
 		if(moved) {
 		/*
 		 * A camera we are watching a scene through flies; bodies walk.
@@ -1149,7 +1336,7 @@ void smoothReplicatedEntities() {
 		 * the cursor moves quickly, because a slow drag never gets far enough
 		 * from the remembered position for the correction to be visible.
 		 */
-		if(entity == g_draggedEntity) {
+		if(entity == g_draggedEntity || ownsLocally(entity) || recentlyEditedLocally(it->first)) {
 			++it;
 			continue;
 		}
@@ -1199,7 +1386,7 @@ void smoothReplicatedEntities() {
 		// belongs to - which is what makes a sword swing start at the same
 		// point of the approach on both screens.
 		for(size_t l = 0; l < MAX_ANIM_LAYERS; l++) {
-			driveReplicatedAnim(*entity, l, state.layers[l], renderTime);
+			driveReplicatedAnim(*entity, l, state.layers[l], renderTime, g_framedelay);
 		}
 
 		++it;
@@ -1487,6 +1674,11 @@ void resetReplication() {
 void forgetReplicatedEntity(std::string_view entityId) {
 	g_replicaTracks.erase(std::string(entityId));
 	g_sentStates.erase(std::string(entityId));
+	auto handle = g_handles.find(entityId);
+	if(handle != g_handles.end()) {
+		g_ackedStates.erase(handle->second);
+		g_cadence.erase(handle->second);
+	}
 }
 
 // -- story state ----------------------------------------------------------------
@@ -1835,7 +2027,8 @@ void applyItemDropped(std::string_view entityId, std::string_view classPath, s16
 		LogInfo << "[coop] the other player dropped " << entityId
 		        << ", which we did not have; created " << item->idString();
 	} else {
-		LogInfo << "[coop] the other player put " << entityId << " down here";
+		LogInfo << "[coop] the other player put " << entityId << " down here at " << at.x << ","
+		        << at.y << "," << at.z << " v=" << velocity.x << "," << velocity.y << "," << velocity.z;
 	}
 
 	if((item->ioflags & IO_ITEM) && item->_itemdata) {

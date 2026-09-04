@@ -342,6 +342,13 @@ void clearAdoptedSceneOwner();
 void drawPartnerHud();
 
 /*!
+ * How far ahead of where the partner's body is drawn they really are:
+ * their last reported motion carried over the body's drawing delay and
+ * half the round trip. For aiming blows at them, not for drawing.
+ */
+[[nodiscard]] Vec3f avatarHitLead();
+
+/*!
  * The other player's life orb, drawn directly above the local one.
  *
  * Called from inside the interface's own render pass and handed the local

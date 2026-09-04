@@ -8,6 +8,13 @@ seen working, **known issues** are broken and understood, and **needs testing**
 was built with care but has not yet been proven in a live game - if you try
 one of those and it misbehaves, that report is exactly what we need.
 
+## 0.16
+
+- Fixed the drag bug.
+- Improved the network.
+
+Both players need this build (protocol 31 -> 33).
+
 ## 0.15
 
 Spells kept in a text file, and arrivals that land where they were aimed.

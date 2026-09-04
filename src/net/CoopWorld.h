@@ -48,7 +48,7 @@ namespace coop {
  * \param full when set, ignore the sent-state cache and carry every entity;
  *             otherwise carry only what changed since the last snapshot.
  */
-void writeEntitySnapshot(Writer & writer, bool full, u32 beat);
+void buildEntitySnapshots(u32 beat, u8 beatMs, bool restart, std::vector<Writer> & packets);
 
 //! TEMPORARY: how much is waiting to be confirmed, and how much is.
 size_t inFlightCount();
@@ -58,13 +58,29 @@ size_t ackedCount();
 void unconfirm(u16 handle);
 
 //! The other machine confirmed everything up to this beat; fold it in.
-void ackSnapshot(u32 beat);
+void ackSnapshot(u32 latest, u64 mask);
 
 //! What we refused since the last acknowledgement, so it can be resent.
 void takeDeclined(std::vector<u16> & out);
 
 //! The newest snapshot this machine has applied, to acknowledge back.
 u32 lastAppliedBeat();
+
+//! Remember that a snapshot packet with this serial arrived, for the acknowledgement
+void noteSnapshotSerial(u32 serial);
+
+//! Write what arrived and what was declined; false when there is nothing to say yet
+bool writeSnapshotAck(Writer & writer);
+
+//! This player took hold of a thing with the cursor
+void noteDragged(const Entity & entity);
+
+/*!
+ * This player just took hold of or put down a thing: forget what the
+ * authority last said about where it is, and leave it alone until the
+ * authority has heard and answered.
+ */
+void holdLocally(std::string_view entityId);
 
 //! How many entity records went out, and what the old format would have cost.
 void takeSnapshotCost(u64 & records, u64 & wouldHave);

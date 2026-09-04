@@ -38,7 +38,7 @@ namespace coop {
  * misread a newer one. Both sides check this during the handshake and refuse
  * the connection rather than desyncing silently later.
  */
-constexpr u32 ProtocolVersion = 32;
+constexpr u32 ProtocolVersion = 33;
 
 /*
  * What a snapshot entry carries.
@@ -157,7 +157,7 @@ enum MessageType : u8 {
 	MsgPlayerPush   = 74, //!< RETIRED - the push turned chasing creatures into thrusters; number stays reserved
 	MsgWorldAudit   = 75, //!< guest -> host: here is what my world looks like; fix what diverged
 	MsgWorldFx      = 76, //!< host -> guest: a sound or particle burst the simulation produced
-	MsgSnapAck      = 7, //!< guest -> host: the newest snapshot beat I have applied
+	MsgSnapAck      = 7, //!< guest -> host: the newest snapshot packet serial seen, and a mask of the 64 before it
 	MsgTravelHold   = 77, //!< host -> guest: a travel has begun for you; freeze and fade NOW
 	MsgCutsceneSeen = 78, //!< either -> other: this story sequence is consumed for BOTH of us
 	MsgPartnerEffect = 79, //!< either -> other: your player receives this effect (heal, hunger, ...)
