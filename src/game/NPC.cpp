@@ -692,6 +692,49 @@ bool ARX_NPC_LaunchPathfind(Entity * io, EntityHandle target)
 	return ARX_NPC_LaunchPathfind_End(io, target, pos2);
 }
 
+int enemyHealthSetting() {
+	int hosts = coop::hostEnemyHealth();
+	return glm::clamp(hosts > 0 ? hosts : config.input.enemyHealth, 1, 3);
+}
+
+/*
+ * The multiplier a creature carries is kept as a script variable on it, so
+ * it is saved and loaded with the creature and survives a level change. A
+ * creature without one is at its scripted life: multiplier one.
+ */
+static const char * const EnemyHealthVar = "\xc2\xa7" "coop_hp";
+
+static int carriedEnemyHealth(const Entity & npc) {
+	long carried = GETVarValueLong(npc.m_variables, EnemyHealthVar);
+	return carried > 0 ? int(carried) : 1;
+}
+
+void applyEnemyHealth(Entity & npc, float life) {
+	if(!npc._npcdata) {
+		return;
+	}
+	int setting = enemyHealthSetting();
+	npc._npcdata->lifePool.max = npc._npcdata->lifePool.current = life * float(setting);
+	SETVarValueLong(npc.m_variables, EnemyHealthVar, setting);
+}
+
+void rescaleEnemyHealth() {
+	int setting = enemyHealthSetting();
+	for(Entity & npc : entities(IO_NPC)) {
+		if(npc == *entities.player() || !npc._npcdata || coop::isAvatarEntity(&npc)) {
+			continue;
+		}
+		int carried = carriedEnemyHealth(npc);
+		if(carried == setting) {
+			continue;
+		}
+		float ratio = float(setting) / float(carried);
+		npc._npcdata->lifePool.max *= ratio;
+		npc._npcdata->lifePool.current *= ratio;
+		SETVarValueLong(npc.m_variables, EnemyHealthVar, setting);
+	}
+}
+
 bool ARX_NPC_SetStat(Entity & io, std::string_view statname, float value) {
 	
 	arx_assert(io.ioflags & IO_NPC);
@@ -719,7 +762,7 @@ bool ARX_NPC_SetStat(Entity & io, std::string_view statname, float value) {
 	} else if(statname == "aimtime") {
 		io._npcdata->aimtime = std::chrono::duration<float, std::milli>(std::max(value, 0.f));
 	} else if(statname == "life") {
-		io._npcdata->lifePool.max = io._npcdata->lifePool.current = value < 0 ? 0.0000001f : value;
+		applyEnemyHealth(io, value < 0 ? 0.0000001f : value);
 	} else if(statname == "mana") {
 		io._npcdata->manaPool.max = io._npcdata->manaPool.current = value < 0 ? 0 : value;
 	} else if(statname == "resistfire") {

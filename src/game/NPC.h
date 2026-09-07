@@ -253,6 +253,22 @@ const float ARX_NPC_AUDIBLE_PRESENCE_DEFAULT = 1.f;
 
 void ARX_NPC_Revive(Entity * io, bool init);
 bool ARX_NPC_SetStat(Entity & io, std::string_view statname, float value);
+
+/*!
+ * How much life creatures get: 1 normal, 2 double, 3 triple. The player's own
+ * setting, or the host's while joined to one - the host's world is the one
+ * being fought in.
+ */
+[[nodiscard]] int enemyHealthSetting();
+
+//! A script gave this creature its life: scale it, and remember what it carries.
+void applyEnemyHealth(Entity & npc, float life);
+
+/*!
+ * Bring every creature to the current setting. After a load (a save made on
+ * another setting), and when the setting is changed with a world loaded.
+ */
+void rescaleEnemyHealth();
 bool ARX_NPC_LaunchPathfind(Entity * io, EntityHandle target);
 bool IsDeadNPC(const Entity & io);
 

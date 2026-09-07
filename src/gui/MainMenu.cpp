@@ -35,6 +35,7 @@
 #include "core/Application.h"
 #include "core/Benchmark.h"
 #include "core/Config.h"
+#include "game/NPC.h"
 #include "core/ArxGame.h"
 #include "core/Core.h"
 #include "core/Localisation.h"
@@ -1797,8 +1798,7 @@ class CoopMenuPage final : public MenuPage {
 	CheckboxWidget * m_portCheckbox = nullptr;
 	CheckboxWidget * m_micTest = nullptr;
 	TextWidget * m_micMeter = nullptr;
-	TextWidget * m_micDevice = nullptr;
-	TextWidget * m_voiceMode = nullptr;
+	CycleTextWidget * m_micCycle = nullptr;
 	TextWidget * m_portLabel = nullptr;
 
 	/*
@@ -1901,25 +1901,6 @@ public:
 			};
 			addCenter(std::move(cb));
 		}
-		{
-			/*
-			 * How your own voice carries, one click apart. VOIP is the
-			 * proximity voice: out of your body, fading with distance. NORMAL
-			 * is a phone call: they hear you at full volume anywhere, other
-			 * levels included - asked for by players who split up to explore.
-			 * The choice rides with your voice, so each player sets their own.
-			 */
-			auto txt = std::make_unique<TextWidget>(hFontControls,
-			                                        coop::voice::everywhere() ? "VOICE: NORMAL" : "VOICE: VOIP");
-			txt->clicked = [this](Widget * /* widget */) {
-				coop::voice::setEverywhere(!coop::voice::everywhere());
-				if(m_voiceMode) {
-					m_voiceMode->setText(coop::voice::everywhere() ? "VOICE: NORMAL" : "VOICE: VOIP");
-				}
-			};
-			m_voiceMode = txt.get();
-			addCenter(std::move(txt));
-		}
 
 		{
 			/*
@@ -1965,15 +1946,18 @@ public:
 
 		{
 			/*
-			 * Which microphone. Click to move to the next one.
+			 * Which microphone, with arrows, the way Cutscenes is chosen.
 			 *
 			 * Not a nicety - this machine offers three microphones and all three
 			 * are virtual devices, only one of which carries a voice. Nothing in
 			 * software can tell which, so the player picks and watches the meter.
+			 * Device names run long, so the tail is what gets kept: the part in
+			 * brackets is what tells two headsets apart.
 			 */
-			auto txt = std::make_unique<TextWidget>(hFontControls, " ");
-			txt->clicked = [this](Widget * /* widget */) {
-				coop::voice::nextDevice();
+			auto slider = std::make_unique<CycleTextWidget>(sliderSize(), hFontMenu,
+			                                               "Microphone", hFontControls);
+			slider->valueChanged = [this](int pos, std::string_view /* string */) {
+				coop::voice::setDevice(pos - 1); // entry 0 is the system default
 				if(!coop::voice::testing()) {
 					// Choosing a microphone means wanting to hear it.
 					coop::voice::setTesting(true);
@@ -1982,8 +1966,42 @@ public:
 					}
 				}
 			};
-			m_micDevice = txt.get();
-			addCenter(std::move(txt));
+			// The system default is always an entry, so the row is never empty:
+			// the arrows divide by the entry count, and zero entries was a crash.
+			int count = std::max(0, coop::voice::deviceCount());
+			for(int i = -1; i < count; i++) {
+				std::string name = coop::voice::deviceName(i);
+				const size_t room = 26;
+				if(name.size() > room) {
+					name = ".." + name.substr(name.size() - (room - 2));
+				}
+				slider->addEntry(name);
+				if(i == coop::voice::device()) {
+					slider->selectLast();
+				}
+			}
+			m_micCycle = slider.get();
+			addCenter(std::move(slider));
+		}
+
+		{
+			/*
+			 * How your own voice carries. VOIP is the proximity voice: out of
+			 * your body, fading with distance. NORMAL is a phone call: they hear
+			 * you at full volume anywhere, other levels included. The choice
+			 * rides with your voice, so each player sets their own.
+			 */
+			auto slider = std::make_unique<CycleTextWidget>(sliderSize(), hFontMenu,
+			                                               "Voice", hFontControls);
+			slider->valueChanged = [](int pos, std::string_view /* string */) {
+				coop::voice::setEverywhere(pos == 1);
+			};
+			slider->addEntry("VOIP - from your body");
+			slider->addEntry("NORMAL - heard anywhere");
+			if(coop::voice::everywhere()) {
+				slider->selectLast();
+			}
+			addCenter(std::move(slider));
 		}
 
 		{
@@ -2016,6 +2034,31 @@ public:
 			if(config.misc.cutscenes == CutscenesForHost) {
 				slider->selectLast();
 			}
+			addCenter(std::move(slider));
+		}
+
+		{
+			/*
+			 * How much life creatures get: a plain multiplier rather than easy /
+			 * normal / hard, so it says exactly what it does. The host's choice
+			 * rules in co-op - the host's world is the one being fought in - so
+			 * a guest only reads it here.
+			 */
+			auto slider = std::make_unique<CycleTextWidget>(sliderSize(), hFontMenu,
+			                                               "Enemy health", hFontControls);
+			slider->valueChanged = [](int pos, std::string_view /* string */) {
+				if(coop::isGuest()) {
+					return;
+				}
+				config.input.enemyHealth = glm::clamp(pos + 1, 1, 3);
+				config.save();
+				rescaleEnemyHealth();
+			};
+			slider->addEntry("normal");
+			slider->addEntry("double health");
+			slider->addEntry("triple health");
+			slider->setValue(glm::clamp(enemyHealthSetting(), 1, 3) - 1);
+			slider->setEnabled(!coop::isGuest());
 			addCenter(std::move(slider));
 		}
 
@@ -2124,22 +2167,8 @@ public:
 			m_leaveButton->setEnabled(active);
 		}
 
-		if(m_micDevice) {
-
-			/*
-			 * Device names run long - "Headset Microphone (HyperX Virtual
-			 * Surround Sound)" is fifty characters - and this menu runs off the
-			 * screen well before that, so the tail is what gets kept: the part
-			 * in brackets is what tells two headsets apart.
-			 */
-			std::string name = coop::voice::deviceName(coop::voice::device());
-			const size_t room = 26;
-			if(name.size() > room) {
-				name = ".." + name.substr(name.size() - (room - 2));
-			}
-			m_micDevice->setText(coop::voice::enabled() ? ("MIC: " + name)
-			                                            : std::string(" "));
-
+		if(m_micCycle) {
+			m_micCycle->setEnabled(coop::voice::enabled());
 		}
 
 		if(m_micMeter) {

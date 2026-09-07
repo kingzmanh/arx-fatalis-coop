@@ -188,6 +188,23 @@ it, join the same network, and use the address it gives you.
 
 ![Two of you](docs/screenshots/together.png)
 
+## Enemy health
+
+The **ENEMY HEALTH:** line in the co-op menu gives creatures **NORMAL**,
+**DOUBLE** or **TRIPLE** life. It is a real multiplier on their health, not
+a damage trick, and it is saved, so it applies to solo play too. In co-op the
+host's choice counts, because the host's world is the one being fought in;
+a joined player sees it and cannot change it. Switching it with a world
+loaded rescales every creature at once, and a save made on one setting is
+brought to the current one when loaded.
+
+Hit a creature and a **target frame** in the top-left corner shows its name
+and health, with the numbers and the percent, for a few seconds after your
+last blow - the way other games show the thing you are fighting.
+
+Type `/hp` in chat to also see every creature's name and health over its
+head, and `/hp` again to hide it.
+
 ## Voice chat
 
 Turn on VOICE CHAT in the co-op menu and hold **V** to speak.

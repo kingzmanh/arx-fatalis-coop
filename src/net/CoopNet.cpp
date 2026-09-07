@@ -53,6 +53,7 @@
 #include "gui/Notification.h"
 #include "gui/Speech.h"
 #include "io/log/Logger.h"
+#include "core/Config.h"
 #include "net/CoopPlayer.h"
 #include "net/CoopPortMap.h"
 #include "net/CoopVoice.h"
@@ -200,6 +201,8 @@ struct Session {
 
 	//! Guest: top vitals up once the received world finishes loading.
 	bool freshSpawnVitals = false;
+	//! The host's enemy health setting (1..3), told in the welcome; 0 = not told
+	u8 hostEnemyHealth = 0;
 
 	//! Guest: suspended mid-air while a travel completes.
 	bool travelHold = false;
@@ -1306,6 +1309,8 @@ void handleMessage(const u8 * data, size_t size) {
 				welcome.put(std::string_view(g_session.localName));
 				welcome.put(u32(g_currentArea.handleData()));
 				welcome.put(std::string_view(g_session.playthroughId));
+				// Trailing, so a 0.17 guest never reads it: how much life creatures get here
+				welcome.put(u8(glm::clamp(config.input.enemyHealth, 1, 3)));
 				send(welcome, ChannelControl);
 			}
 			onHandshakeComplete();
@@ -1330,6 +1335,8 @@ void handleMessage(const u8 * data, size_t size) {
 				break;
 			}
 			g_session.playthroughId = playthrough;
+			// A 0.17 host says nothing here: normal creatures
+			g_session.hostEnemyHealth = reader.remaining() >= 1 ? u8(glm::clamp(int(reader.getU8()), 1, 3)) : u8(1);
 			if(version != ProtocolVersion) {
 				setStatus(Status::Failed, "JOIN FAILED - VERSION MISMATCH");
 				stop();
@@ -2320,6 +2327,7 @@ void stop() {
 	g_session.remoteArea = AreaId();
 	g_session.clockOffsetMs = 0;
 	g_session.clockValid = false;
+	g_session.hostEnemyHealth = 0;
 	g_session.newestEntitiesStamp = 0;
 	g_session.newestAvatarStamp = 0;
 	g_session.entityLatenessMs = 0.f;
@@ -3653,6 +3661,16 @@ bool requestAction(const Entity & target) {
 	return true;
 }
 
+int hostEnemyHealth() {
+	return (isGuest() && g_session.handshaken) ? int(g_session.hostEnemyHealth) : 0;
+}
+
+static bool g_creatureBars = false;
+
+bool creatureBars() {
+	return config.input.creatureBars || g_creatureBars;
+}
+
 bool awaitingGuestIdentity() {
 	return g_session.freshSpawnVitals;
 }
@@ -4187,6 +4205,12 @@ void reportQuest(std::string_view questKey) {
 void sendChat(std::string_view text) {
 
 	if(!isPlaying() || text.empty()) {
+		return;
+	}
+
+	if(text == "/hp") {
+		g_creatureBars = !g_creatureBars;
+		notification_add(g_creatureBars ? "Creature health bars on" : "Creature health bars off");
 		return;
 	}
 

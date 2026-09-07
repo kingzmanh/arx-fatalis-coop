@@ -1249,3 +1249,21 @@ changed or not - about the size of a chat line - so any loss heals within a
 second. The forced full resends and the painted-face reset stay. Confirmed
 by the user twice with the exact failing sequence, with the host log
 showing the look arriving every second.
+
+## 52. Choosing a microphone froze the game for a second
+
+**The problem.** Changing the microphone in the co-op menu froze the game
+for about a second on some entries, once per step when walking through
+the list with the new arrows.
+
+**Why did it happen?** Choosing a microphone closed the old one and opened
+the new one on the spot, on the game's own thread, so the meter would
+answer at once. Opening a virtual microphone - a headset's surround
+driver, a streaming filter, a VR headset's device - takes the best part
+of a second, and the old click-to-cycle button paid it too; the arrows
+just made it a run of them.
+
+**The fix.** An arrow press only records the choice. The switch happens
+once, in the voice update, after the choice has rested for 400 ms, so a
+run of presses costs one open at the end. Found and confirmed by the
+user on this machine's three virtual microphones.

@@ -2570,6 +2570,8 @@ static bool ARX_CHANGELEVEL_PopLevel(AreaId area, bool reloadflag, std::string_v
 	
 	// Restoring all Missing Objects required by other objects...
 	ARX_CHANGELEVEL_PopAllIO_FINISH(reloadflag, firstTime);
+	// A save made on another enemy health setting, or the host's setting for a guest
+	rescaleEnemyHealth();
 	
 	progressBarAdvance(15.f);
 	LoadLevelScreen();

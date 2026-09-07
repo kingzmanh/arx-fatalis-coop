@@ -1487,6 +1487,8 @@ void HudRoot::draw() {
 		// alpha-cut textures: outside it they come out as flat pictures that
 		// never drain.
 		coop::drawPartnerHealthOrb(healthGauge.rect());
+		coop::drawCreatureHealthBars();
+		coop::drawTargetFrame();
 
 		if(bRenderInCursorMode) {
 			if(!MAGICMODE) {

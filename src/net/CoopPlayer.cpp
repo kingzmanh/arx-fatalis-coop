@@ -19,6 +19,7 @@
 
 #include "net/CoopPlayer.h"
 
+#include <cmath>
 #include <iomanip>
 #include <sstream>
 
@@ -44,6 +45,7 @@
 #include "graphics/Renderer.h"
 #include "graphics/data/Mesh.h"
 #include "core/Config.h"
+#include "core/Localisation.h"
 #include "graphics/texture/TextureStage.h"
 #include "gui/Dragging.h"
 #include "gui/Hud.h"
@@ -1809,6 +1811,149 @@ void drawPartnerHealthOrb(const Rectf & mine) {
 		UNICODE_ARXDrawTextCenter(hFontInGame,
 		                          Vec2f(theirs.center().x, theirs.top - 14.f * scale),
 		                          g_avatar.dead ? "down" : "away", Color::gray(0.7f));
+	}
+
+}
+
+void drawCreatureHealthBars() {
+
+	if(!creatureBars() || !entities.player()) {
+		return;
+	}
+
+	const float scale = minSizeRatio();
+	const float width = 110.f * scale;
+	const float height = 12.f * scale;
+	const float edge = 1.f * scale;
+
+	int seen = 0, drawn = 0;
+	for(Entity & npc : entities.inScene(IO_NPC)) {
+		if(npc == *entities.player() || !npc._npcdata || isAvatarEntity(&npc)) {
+			continue;
+		}
+		seen++;
+		if(npc._npcdata->lifePool.max <= 0.f || npc._npcdata->lifePool.current <= 0.f) {
+			continue;
+		}
+		if(fartherThan(npc.pos, entities.player()->pos, 2500.f)) {
+			continue;
+		}
+		// Just above the head: the cylinder's height points up (negative y)
+		Vec3f head = npc.pos + Vec3f(0.f, npc.physics.cyl.height - 30.f, 0.f);
+		Vec4f clip = worldToClipSpace(head);
+		if(clip.w <= 0.f) {
+			continue; // behind the camera
+		}
+		Vec2f screen = Vec2f(clip) / clip.w;
+		float fraction = glm::clamp(npc._npcdata->lifePool.current / npc._npcdata->lifePool.max, 0.f, 1.f);
+
+		/*
+		 * The plate: a dark backing, a red bar that empties from the right,
+		 * the numbers on the bar, the name above it. Plain coloured quads -
+		 * no texture - so nothing depends on the gauge art.
+		 */
+		Rectf bar(Vec2f(screen.x - width * 0.5f, screen.y - height), width, height);
+		Rectf backing(bar.topLeft() - Vec2f(edge), width + 2.f * edge, height + 2.f * edge);
+		Rectf fill(bar.topLeft(), std::max(1.f, width * fraction), height);
+		EERIEDrawBitmap(backing, 0.002f, nullptr, Color::black);
+		EERIEDrawBitmap(bar, 0.0015f, nullptr, Color::rgb(0.25f, 0.05f, 0.05f));
+		EERIEDrawBitmap(fill, 0.001f, nullptr, Color::rgb(0.85f, 0.12f, 0.12f));
+		if(hFontInGame) {
+			std::string numbers = std::to_string(int(std::ceil(npc._npcdata->lifePool.current))) + " / "
+			                      + std::to_string(int(std::ceil(npc._npcdata->lifePool.max)));
+			drawTextCentered(hFontInGame, bar.center(), numbers, Color::white);
+			std::string_view name = getLocalised(npc.locname);
+			if(!name.empty()) {
+				drawTextCentered(hFontInGame, Vec2f(screen.x, bar.top - 11.f * scale), name, Color::white);
+			}
+		}
+		drawn++;
+	}
+
+	// Every few seconds while on, so a plate that does not show can be read from the log
+	static PlatformInstant lastLog = 0;
+	PlatformInstant now = platform::getTime();
+	if(now - lastLog >= 5000ms) {
+		lastLog = now;
+		LogInfo << "[coop] creature bars: " << drawn << " drawn of " << seen << " creatures in scene";
+	}
+
+}
+
+static EntityHandle g_targetHandle;
+static PlatformInstant g_targetHitAt = 0;
+
+void noteTargetHit(const Entity & npc) {
+	if(!(npc.ioflags & IO_NPC) || isAvatarEntity(&npc)) {
+		return;
+	}
+	g_targetHandle = npc.index();
+	g_targetHitAt = platform::getTime();
+}
+
+void drawTargetFrame() {
+
+	if(g_targetHitAt == PlatformInstant(0)) {
+		return;
+	}
+	Entity * npc = entities.get(g_targetHandle);
+	if(!npc || !(npc->ioflags & IO_NPC) || !npc->_npcdata) {
+		return;
+	}
+	float max = std::max(1.f, npc->_npcdata->lifePool.max);
+	float cur = glm::clamp(npc->_npcdata->lifePool.current, 0.f, max);
+	bool dead = npc->_npcdata->lifePool.current <= 0.f;
+	PlatformDuration since = platform::getTime() - g_targetHitAt;
+	if(since > (dead ? 3000ms : 8000ms)) {
+		return;
+	}
+
+	/*
+	 * The plate, drawn from plain coloured quads in the shape other games
+	 * use: a thin gold rim, a dark body, a name strip along the top, a red
+	 * health bar with the numbers on it and the percent at its end, and a
+	 * thin blue mana bar under it when the creature has mana at all.
+	 */
+	const float s = minSizeRatio();
+	const Vec2f origin(18.f * s, 18.f * s);
+	const float w = 300.f * s;
+	const bool hasMana = npc->_npcdata->manaPool.max > 0.f;
+	const float h = (hasMana ? 84.f : 66.f) * s;
+
+	Rectf body(origin, w, h);
+	Rectf rim(origin - Vec2f(2.f * s), w + 4.f * s, h + 4.f * s);
+	Rectf nameStrip(origin, w, 26.f * s);
+	Rectf healthBack(origin + Vec2f(8.f * s, 32.f * s), w - 16.f * s, 22.f * s);
+	Rectf healthFill(healthBack.topLeft(), std::max(1.f, healthBack.width() * (cur / max)), healthBack.height());
+
+	EERIEDrawBitmap(rim, 0.004f, nullptr, Color::rgb(0.62f, 0.5f, 0.2f));
+	EERIEDrawBitmap(body, 0.0035f, nullptr, Color::rgb(0.06f, 0.06f, 0.09f));
+	EERIEDrawBitmap(nameStrip, 0.003f, nullptr, Color::rgb(0.13f, 0.11f, 0.18f));
+	EERIEDrawBitmap(healthBack, 0.0025f, nullptr, Color::rgb(0.25f, 0.05f, 0.05f));
+	EERIEDrawBitmap(healthFill, 0.002f, nullptr, dead ? Color::gray(0.35f) : Color::rgb(0.8f, 0.1f, 0.1f));
+
+	if(hasMana) {
+		float maxMana = std::max(1.f, npc->_npcdata->manaPool.max);
+		float mana = glm::clamp(npc->_npcdata->manaPool.current, 0.f, maxMana);
+		Rectf manaBack(origin + Vec2f(8.f * s, 60.f * s), w - 16.f * s, 12.f * s);
+		Rectf manaFill(manaBack.topLeft(), std::max(1.f, manaBack.width() * (mana / maxMana)), manaBack.height());
+		EERIEDrawBitmap(manaBack, 0.0025f, nullptr, Color::rgb(0.05f, 0.08f, 0.25f));
+		EERIEDrawBitmap(manaFill, 0.002f, nullptr, Color::rgb(0.15f, 0.35f, 0.9f));
+	}
+
+	if(hFontInGame) {
+		std::string_view name = getLocalised(npc->locname);
+		std::string fallback;
+		if(name.empty()) {
+			fallback = npc->idString();
+			name = fallback;
+		}
+		drawTextCentered(hFontInGame, nameStrip.center(), name,
+		                 dead ? Color::gray(0.6f) : Color::rgb(1.f, 0.82f, 0.3f));
+		std::string numbers = std::to_string(int(std::ceil(cur))) + " / " + std::to_string(int(std::ceil(max)));
+		drawTextCentered(hFontInGame, healthBack.center(), numbers, Color::white);
+		std::string percent = std::to_string(int(std::round(cur / max * 100.f))) + "%";
+		drawTextCentered(hFontInGame, Vec2f(healthBack.right - 24.f * s, healthBack.center().y), percent, Color::white);
 	}
 
 }

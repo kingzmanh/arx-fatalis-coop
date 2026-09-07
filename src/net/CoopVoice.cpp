@@ -19,6 +19,8 @@
 
 #include "net/CoopVoice.h"
 
+#include "platform/Time.h"
+
 #include <algorithm>
 #include <cstring>
 #include <deque>
@@ -121,6 +123,7 @@ bool g_enabled = true;
 bool g_openMic = false;
 bool g_everywhere = false;      //!< how OUR voice carries: NORMAL (true) or VOIP; sent with every packet
 bool g_heardEverywhere = false; //!< how the voice being played was sent, from its packets
+PlatformInstant g_reopenAt = 0;  //!< when a newly chosen microphone gets opened; 0 = nothing pending
 bool g_transmitting = false;
 bool g_available = false;
 int g_hangover = 0;
@@ -555,6 +558,15 @@ void update() {
 		return;
 	}
 
+	// A microphone chosen a moment ago: swap to it now, once, see setDevice()
+	if(g_reopenAt != PlatformInstant(0) && platform::getTime() >= g_reopenAt) {
+		g_reopenAt = 0;
+		if(g_encoder) {
+			stop();
+		}
+		g_startFailed = false; // the new one deserves a fresh try below
+	}
+
 	if(!coop::isPlaying() && !g_testing) {
 		/*
 		 * Nobody to talk to. Give the microphone back rather than sit holding it
@@ -697,7 +709,13 @@ float level() {
 }
 
 int deviceCount() {
-	return SDL_GetNumAudioDevices(1);
+	// The menu asks before any microphone was ever opened, and an audio
+	// system that is not up yet answers -1: bring it up, and never say less
+	// than none, or a list built from the answer comes out empty.
+	if(!SDL_WasInit(SDL_INIT_AUDIO) && SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) {
+		return 0;
+	}
+	return std::max(0, SDL_GetNumAudioDevices(1));
 }
 
 const char * deviceName(int index) {
@@ -725,17 +743,13 @@ void setDevice(int index) {
 	g_level = 0.f;
 
 	/*
-	 * Reopen straight away rather than wait for the next session, so the meter
-	 * answers immediately - the whole point of choosing is to see whether this
-	 * one is the right one.
+	 * Not reopened on the spot. Opening some microphones - the virtual ones
+	 * especially - takes the best part of a second and freezes the game for
+	 * it, and the arrows in the menu walk through several in a row. The
+	 * reopen waits until the choice has rested for a moment, then happens
+	 * once, in update(); the meter answers right after.
 	 */
-	bool wasTesting = g_testing;
-	bool wasEnabled = g_enabled;
-	stop();
-	g_startFailed = false;
-	if((wasTesting || coop::isPlaying()) && wasEnabled) {
-		start();
-	}
+	g_reopenAt = platform::getTime() + 400ms;
 
 }
 

@@ -233,6 +233,8 @@ public:
 		bool borderTurning;
 		bool useAltRuneRecognition;
 		bool improvedBowAim;
+		int enemyHealth; //!< how much life creatures get: 1 normal, 2 double, 3 triple
+		bool creatureBars; //!< health bars with names over creatures in view
 		QuickLevelTransition quickLevelTransition;
 		bool allowConsole;
 		

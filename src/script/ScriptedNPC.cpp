@@ -439,9 +439,7 @@ public:
 		
 		DebugScript(' ' << life);
 		
-		IO_NPCDATA & npc = *context.getEntity()->_npcdata;
-		
-		npc.lifePool.max = npc.lifePool.current = life;
+		applyEnemyHealth(*context.getEntity(), life);
 		
 		return Success;
 	}

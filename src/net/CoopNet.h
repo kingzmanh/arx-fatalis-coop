@@ -290,6 +290,12 @@ void broadcastBlood2(const Vec3f & pos, float dmgs, u32 color, std::string_view 
 [[nodiscard]] inline bool isHost() { return role() == Role::Host; }
 [[nodiscard]] inline bool isGuest() { return role() == Role::Guest; }
 
+//! The host's enemy health setting while joined to one, else 0 (use your own).
+[[nodiscard]] int hostEnemyHealth();
+
+//! /hp in chat: health bars with numbers over every creature in view.
+[[nodiscard]] bool creatureBars();
+
 //! Both players are connected and the world has been synchronised.
 [[nodiscard]] bool isPlaying();
 

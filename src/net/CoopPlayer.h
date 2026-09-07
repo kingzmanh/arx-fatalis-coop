@@ -361,6 +361,15 @@ void drawPartnerHud();
  */
 void drawPartnerHealthOrb(const Rectf & mine);
 
+//! /hp: a health bar with its numbers above every living creature in view.
+void drawCreatureHealthBars();
+
+//! The local player just landed a blow on this creature: it becomes the target frame's subject.
+void noteTargetHit(const Entity & npc);
+
+//! Top-left target frame: name, health with numbers and percent, mana if any; fades a few seconds after the last blow.
+void drawTargetFrame();
+
 } // namespace coop
 
 #endif // ARX_NET_COOPPLAYER_H

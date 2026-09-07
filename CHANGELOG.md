@@ -8,6 +8,16 @@ seen working, **known issues** are broken and understood, and **needs testing**
 was built with care but has not yet been proven in a live game - if you try
 one of those and it misbehaves, that report is exactly what we need.
 
+## 0.18
+
+- Enemy health: NORMAL, DOUBLE or TRIPLE, in the co-op menu (the host's choice counts in co-op, and it works solo too).
+- Target frame: hit a creature and a frame in the top-left shows its name and health with numbers and percent for a few seconds.
+- /hp in chat: name and health over every creature in view.
+- Co-op menu: Microphone, Voice and Enemy health are arrowed rows like Cutscenes.
+- Switching microphones no longer freezes the game.
+
+Works with 0.17 (the protocol is the same).
+
 ## 0.17
 
 - Revive is now cast with Aam Spacium (it was Mega Yok Aam).

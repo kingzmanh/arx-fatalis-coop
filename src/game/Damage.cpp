@@ -847,6 +847,9 @@ float damageNpc(Entity & npc, float dmg, Entity * source, Spell * spell, DamageT
 	if(dmg > 0.f && source) {
 		coop::noteAttacker(npc, *source);
 	}
+	if(source == entities.player()) {
+		coop::noteTargetHit(npc);
+	}
 
 	if((npc.ioflags & IO_INVULNERABILITY)) {
 		return 0.f;
