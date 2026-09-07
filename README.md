@@ -108,7 +108,7 @@ second player to do them to.
 | Spell | Runes | What it does | Mana |
 |---|---|---|---|
 | **Summon Co-op** | `yok` `aam` | Opens a rift where you are looking and your partner steps out of it, halfway through it opening. It reaches across the map, and across levels: if they are somewhere else entirely they travel and arrive at that spot, not at the level's front door. | half your mana pool |
-| **Revive** | `mega` `yok` `aam` | Puts your dead partner back on their feet from wherever you are standing. | half your mana pool |
+| **Revive** | `aam` `spacium` | Puts your dead partner back on their feet from wherever you are standing. | half your mana pool |
 
 Standing over your dead partner no longer raises them - earlier versions did
 that after two seconds, because co-op needed some way back. Revive is the way
@@ -131,7 +131,7 @@ rune name at the top. Change a line, start the game, cast it.
 
     spell revive
     name   Revive
-    runes  MEGA YOK AAM
+    runes  AAM SPACIUM
     level  2
     mana   50%              a number instead - "mana 12" - is a flat cost
     kind   revive_partner
@@ -140,8 +140,8 @@ rune name at the top. Change a line, start the game, cast it.
 
 If you pick runes another spell already uses, that spell is left out rather
 than fighting over them, and `arx.log` says which spell has them. Updating the
-mod keeps your version of the file; the one the new version ships is left
-beside it as `studio-spells-default.txt`.
+mod replaces this file with the one the new version ships, so keep your own
+edits in a copy under another name and put them back after an update.
 
 ## New and not yet tested
 
@@ -195,6 +195,12 @@ Turn on VOICE CHAT in the co-op menu and hold **V** to speak.
 It is proximity based, not a phone call. Your voice comes out of your character,
 so it gets quieter the further apart you are and arrives from the direction you
 are standing in. Walk far enough away and your friend cannot hear you at all.
+
+The **VOICE:** line on the same menu says how your **own** voice carries.
+**VOIP** is the proximity voice above. **NORMAL** is a phone call: your friend
+hears you at full volume wherever they are, other levels included. Each
+player sets their own, so a friend on VOIP still fades with distance even if
+you are on NORMAL.
 
 There is a **MIC TEST** on the same menu with a level meter, so you can check
 your microphone before you rely on it. If nothing moves, click **MIC:** to try

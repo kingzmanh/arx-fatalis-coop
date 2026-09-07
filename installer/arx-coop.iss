@@ -61,15 +61,10 @@ SelectDirLabel3=Setup will add Arx Fatalis Co-op to the game folder below. This 
 SelectDirBrowseLabel=To continue, click Next. To choose a different folder, click Browse.
 
 [Files]
-; Everything except the spells, which are handled below.
-Source: "..\release\arx-coop-{#Version}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "data\game\studio-spells.txt"
-
-; The spells are a text file the player is invited to edit - the runes a
-; spell is drawn with are one line in it. Writing over that on every update
-; would quietly undo their changes, so a file already there is left exactly
-; as it is, and the version this release ships is put beside it to read.
-Source: "..\release\arx-coop-{#Version}\data\game\studio-spells.txt"; DestDir: "{app}\data\game"; Flags: onlyifdoesntexist
-Source: "..\release\arx-coop-{#Version}\data\game\studio-spells.txt"; DestDir: "{app}\data\game"; DestName: "studio-spells-default.txt"; Flags: ignoreversion
+; Everything the release ships replaces whatever is there, the spells file
+; included: what a version ships is what a version plays with. A player who
+; edited their spells keeps their own copy under another name.
+Source: "..\release\arx-coop-{#Version}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\Arx Fatalis Co-op"; Filename: "{app}\arx.exe"; WorkingDir: "{app}"

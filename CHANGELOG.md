@@ -8,6 +8,16 @@ seen working, **known issues** are broken and understood, and **needs testing**
 was built with care but has not yet been proven in a live game - if you try
 one of those and it misbehaves, that report is exactly what we need.
 
+## 0.17
+
+- Revive is now cast with Aam Spacium (it was Mega Yok Aam).
+- Player two's pack survives a rejoin as it was: counts, worn items, slots, bags.
+- After a rejoin the other player sees your face and gear at once.
+- The installer now replaces data\game\studio-spells.txt (it used to keep yours).
+- Voice chat: set how your own voice carries, VOIP (from your body, as before) or NORMAL (heard at full volume anywhere). VOICE: line in the co-op menu.
+
+Works with 0.16 (the protocol is the same).
+
 ## 0.16
 
 - Fixed the drag bug.

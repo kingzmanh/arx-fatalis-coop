@@ -154,6 +154,9 @@ struct ScopedGuestItems {
 void applyGuestIdentity();
 void saveGuestProfileIfDue(bool force);
 
+//! Something entered or left this player's pack; the profile is written soon.
+void noteBelongingsChanged();
+
 //! Debug: name everything this player wears or carries, with entity ids.
 void logOwnBelongings(const char * when);
 

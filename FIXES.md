@@ -1196,3 +1196,56 @@ player holds or just put down; and the grace is three round trips (300 ms on
 a LAN) instead of two seconds. Found with a trace build that logged every
 move of a dragged item on both machines, confirmed by the user dragging,
 dropping and throwing.
+
+## 50. Player two's pack came back wrong after a rejoin
+
+**The problem.** As the joining player, leave and join again (or close the
+game, reopen it and load the save): a stack of arrows is one arrow, a worn
+weapon is new again, things sit in different slots, and if you had more bags
+than the host the overflow is dumped at your feet.
+
+**Why did it happen?** Joining loads the host's savegame, which makes the
+guest a copy of the host; the guest's own character is then rebuilt from a
+small profile file. That profile stored only the class name of each carried
+thing - "arrow", "leather leggings" - so every item was created brand new:
+count one, full durability, no script state, no grid position, and the bag
+count was never stored at all, so the guest kept the host's.
+
+**The fix.** Every carried thing is written with the game's own savegame
+writer into a save block beside the profile (the code a normal save uses for
+each entity: count, durability, charges, poison, script variables, contents
+of carried containers), together with its grid slot or equipment slot and the
+bag count. On rejoin the same reader brings each one back under its own id
+and puts it where it was; a thing that already exists in the received world
+(dropped or handed over after the profile was written) is left to the world.
+The profile is also written shortly after every pickup, drop or hand-over,
+not only once a minute, and never while the guest is still the host's copy.
+Old profiles still load the old way. Confirmed by the user: the pack
+survived a rejoin as it was.
+
+## 51. After a rejoin the other player saw a stranger with nothing equipped
+
+**The problem.** When player two closed the game, reopened it and joined
+again, player one saw them with the default face, wearing and holding
+nothing, until player two toggled combat mode (which resends the face) and
+re-equipped every item (which resends the gear).
+
+**Why did it happen?** The face and gear travel inside the body packet, on
+the unreliable snapshot channel, and only when they change compared with the
+last one sent. A trace build showed the guest sending its full look exactly
+once, right after its own character was installed - and the host never
+receiving it: not dropped, simply lost. That moment sits directly behind the
+world transfer (about 450 KB over the reliable channel), and ENet throttles
+unreliable packets hard while a peer's round trip is inflated like that. One
+lost packet, and the look was never repeated, because the sender's delta
+baseline already counted it as told. Two earlier guesses were wrong: the
+baseline surviving a quit-to-menu rejoin in the same process (real, fixed by
+a forced resend on handshake and after the character install, but not this
+case), and the host's painted-face memory outliving the body (also real,
+also reset now, also not this case).
+
+**The fix.** The face and gear go out again once a second whether they
+changed or not - about the size of a chat line - so any loss heals within a
+second. The forced full resends and the painted-face reset stay. Confirmed
+by the user twice with the exact failing sequence, with the host log
+showing the look arriving every second.

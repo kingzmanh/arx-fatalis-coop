@@ -1798,6 +1798,7 @@ class CoopMenuPage final : public MenuPage {
 	CheckboxWidget * m_micTest = nullptr;
 	TextWidget * m_micMeter = nullptr;
 	TextWidget * m_micDevice = nullptr;
+	TextWidget * m_voiceMode = nullptr;
 	TextWidget * m_portLabel = nullptr;
 
 	/*
@@ -1899,6 +1900,25 @@ public:
 				coop::voice::setOpenMic(checked);
 			};
 			addCenter(std::move(cb));
+		}
+		{
+			/*
+			 * How your own voice carries, one click apart. VOIP is the
+			 * proximity voice: out of your body, fading with distance. NORMAL
+			 * is a phone call: they hear you at full volume anywhere, other
+			 * levels included - asked for by players who split up to explore.
+			 * The choice rides with your voice, so each player sets their own.
+			 */
+			auto txt = std::make_unique<TextWidget>(hFontControls,
+			                                        coop::voice::everywhere() ? "VOICE: NORMAL" : "VOICE: VOIP");
+			txt->clicked = [this](Widget * /* widget */) {
+				coop::voice::setEverywhere(!coop::voice::everywhere());
+				if(m_voiceMode) {
+					m_voiceMode->setText(coop::voice::everywhere() ? "VOICE: NORMAL" : "VOICE: VOIP");
+				}
+			};
+			m_voiceMode = txt.get();
+			addCenter(std::move(txt));
 		}
 
 		{

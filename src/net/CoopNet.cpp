@@ -724,6 +724,20 @@ void sendGlobalState() {
 
 }
 
+/*
+ * The face and gear are told once and then only when they change, measured
+ * against the last thing sent. A join or a rejoin gives the other machine a
+ * brand new body wearing the default skin and holding nothing, while this
+ * side still believes it already described itself - so nothing is resent and
+ * the body stays a naked stranger until something is re-equipped. This makes
+ * the next avatar carry everything again.
+ */
+static bool g_resendFullAvatar = false;
+
+void resendFullAvatar() {
+	g_resendFullAvatar = true;
+}
+
 void sendAvatar() {
 
 	Avatar local;
@@ -739,6 +753,11 @@ void sendAvatar() {
 	 */
 	static Avatar sent;
 	static bool everSent = false;
+
+	if(g_resendFullAvatar) {
+		everSent = false; // spell the whole body out on the next tick
+		g_resendFullAvatar = false;
+	}
 
 	enum {
 		AvPos = 1 << 0, AvAngle = 1 << 1, AvLife = 1 << 2, AvMana = 1 << 3,
@@ -787,6 +806,27 @@ void sendAvatar() {
 		   || sent.shield != local.shield) {
 			mask |= AvGear;
 		}
+	}
+
+	/*
+	 * The face and gear go again once a second whether they changed or not.
+	 *
+	 * This travels on the unreliable channel, and ENet throttles unreliable
+	 * packets hard in the seconds after a big reliable transfer - which is
+	 * exactly when a joining player describes itself for the first time,
+	 * right behind the whole world. Told once and lost, the look was never
+	 * repeated, because the delta above already counted it as told: the
+	 * other machine kept a default body until a Tab or a re-equip changed
+	 * something. A repeat every second costs about the size of a chat line
+	 * and heals any loss within a second.
+	 */
+	static PlatformInstant lastLook = 0;
+	PlatformInstant lookNow = platform::getTime();
+	if(lookNow - lastLook >= 1000ms) {
+		mask |= AvState | AvGear;
+	}
+	if(mask & (AvState | AvGear)) {
+		lastLook = lookNow;
 	}
 
 	sent = local;
@@ -1071,6 +1111,9 @@ void onHandshakeComplete() {
 
 	restoreVitalsForSpawn();
 
+	// A body was just spawned for us over there; make sure it wears our face.
+	resendFullAvatar();
+
 	// Magic is shared, so say what we know as soon as there is someone to tell.
 	// Both sides do this and both keep the union, so it does not matter who
 	// arrived with which runes, or who was first.
@@ -1270,6 +1313,7 @@ void handleMessage(const u8 * data, size_t size) {
 				// They never left the world, only the wire did. Resend everything
 				// once and play on; the audit heals whatever drifted meanwhile.
 				resetReplication();
+				resendFullAvatar();
 				notification_add(avatar().name + " reconnected");
 			} else {
 				notification_add(avatar().name + " joined the game");
@@ -1300,6 +1344,7 @@ void handleMessage(const u8 * data, size_t size) {
 				g_session.handshaken = true;
 				g_session.synchronised = true;
 				resetReplication();
+				resendFullAvatar();
 				setStatus(Status::Playing, "CO-OP: PLAYING WITH " + avatar().name);
 				notification_add("Reconnected");
 				reportAreaChange(g_currentArea);
@@ -1438,7 +1483,9 @@ void handleMessage(const u8 * data, size_t size) {
 			u16 length = reader.getU16();
 			const u8 * audio = reader.getRaw(length);
 			if(reader.ok() && audio) {
-				voice::onPacket(audio, length);
+				// A 0.16 speaker sends no choice: VOIP, as it always was.
+				bool everywhere = reader.remaining() >= 1 && reader.getBool();
+				voice::onPacket(audio, length, everywhere);
 			}
 			break;
 		}
@@ -1480,6 +1527,7 @@ void handleMessage(const u8 * data, size_t size) {
 			if(reader.ok()) {
 				ApplyScope scope;
 				applyCombineTaken(sourceId);
+				noteBelongingsChanged();
 			}
 			break;
 		}
@@ -1552,6 +1600,7 @@ void handleMessage(const u8 * data, size_t size) {
 			s16 count = reader.getS16();
 			if(reader.ok()) {
 				ApplyScope scope;
+				noteBelongingsChanged();
 				applyGiveItem(classPath, count);
 			}
 			break;
@@ -3604,7 +3653,13 @@ bool requestAction(const Entity & target) {
 	return true;
 }
 
+bool awaitingGuestIdentity() {
+	return g_session.freshSpawnVitals;
+}
+
 bool requestTake(const Entity & item) {
+
+	noteBelongingsChanged();
 
 	// Only meaningful while both players are looking at the same floor. Sent
 	// from somewhere else it would name an entity id that happens to exist in
@@ -3835,6 +3890,8 @@ bool chargePartner(long delta) {
 
 void reportCombineTaken(std::string_view sourceId) {
 
+	noteBelongingsChanged();
+
 	if(!isPlaying()) {
 		return;
 	}
@@ -3876,6 +3933,8 @@ bool giveToPartner(Entity * item) {
 }
 
 void reportItemDropped(const Entity & item, const Vec3f & at, const Vec3f & velocity) {
+
+	noteBelongingsChanged();
 
 	if(!sharingArea() || isApplyingRemote()) {
 		return;
@@ -4367,15 +4426,22 @@ void sendTravelCancel() {
 
 void sendVoice(const u8 * data, size_t size) {
 
-	// Only worth sending when they are close enough to hear it at all - and
-	// sharingArea() is also what guarantees there is a body to speak from.
-	if(!isPlaying() || !sharingArea() || !data || size == 0) {
+	/*
+	 * Sent whatever the distance: whether it can be heard is the listener's
+	 * call, not ours. In VOIP mode they drop it unless we share their level;
+	 * in NORMAL mode they hear it from anywhere. Nothing goes out while
+	 * nobody is talking, so this costs nothing in silence.
+	 */
+	if(!isPlaying() || !data || size == 0) {
 		return;
 	}
 
 	Writer writer(MsgVoice);
 	writer.put(u16(size));
 	writer.putRaw(data, size);
+	// How this voice carries, the speaker's choice. Trailing, so a 0.16
+	// listener simply never reads it and hears VOIP as it always did.
+	writer.put(voice::everywhere());
 	send(writer, ChannelVoice);
 
 }
@@ -4447,6 +4513,15 @@ void onAreaLoaded(AreaId area) {
 		applyGuestIdentity();
 		logOwnBelongings("guest, own character installed");
 		restoreVitalsForSpawn();
+		/*
+		 * Our face and gear are now our own, not the host's clone we wore a
+		 * moment ago. The other machine has spawned a fresh body for us; tell
+		 * it the whole appearance again so it is dressed right away, rather
+		 * than waiting for us to re-equip something. A handshake-time resend is
+		 * too early - it would have gone out as the clone - so this is the one
+		 * that matters after a fresh join or a save reload.
+		 */
+		resendFullAvatar();
 	}
 
 	if(isPlaying() && BLOCK_PLAYER_CONTROLS && player.lifePool.current > 0.f) {

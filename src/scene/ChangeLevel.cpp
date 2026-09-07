@@ -198,6 +198,23 @@ static Entity * convertToValidIO(std::string_view idString) {
 	return ARX_CHANGELEVEL_Pop_IO(idString, instance);
 }
 
+bool ARX_CHANGELEVEL_SaveEntityTo(SaveBlock & block, const Entity & entity, AreaId area) {
+	SaveBlock * previous = g_currentSavedGame;
+	g_currentSavedGame = &block;
+	bool ok = ARX_CHANGELEVEL_Push_IO(&entity, area);
+	g_currentSavedGame = previous;
+	return ok;
+}
+
+Entity * ARX_CHANGELEVEL_LoadEntityFrom(SaveBlock & block, std::string_view idString,
+                                        EntityInstance instance) {
+	SaveBlock * previous = g_currentSavedGame;
+	g_currentSavedGame = &block;
+	Entity * entity = ARX_CHANGELEVEL_Pop_IO(idString, instance);
+	g_currentSavedGame = previous;
+	return entity;
+}
+
 template <size_t N>
 static Entity * ConvertToValidIO(const char (&str)[N]) {
 	return convertToValidIO(util::toLowercase(util::loadString(str)));

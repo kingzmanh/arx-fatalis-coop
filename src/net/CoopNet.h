@@ -424,6 +424,9 @@ bool requestAction(const Entity & target);
 //! Tell the authority this player took an item, so it leaves the shared world.
 bool requestTake(const Entity & item);
 
+//! True from the moment the host's world lands until this player's own character is back in it.
+[[nodiscard]] bool awaitingGuestIdentity();
+
 /*!
  * Ask the authority to give one of this player's items to a world entity.
  *

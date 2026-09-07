@@ -174,8 +174,8 @@ like from the list at the top of that file, save, and start the game.
 If you pick runes another spell already uses, that spell is left out
 rather than fighting over them, and arx.log says which one has them.
 
-Updating the mod keeps your version of this file. The one that came
-with the new version is left beside it as studio-spells-default.txt.
+Updating the mod replaces this file with the one that came with the
+new version, so keep your own edits in a copy under another name.
 
 
 To play together

@@ -56,11 +56,13 @@ namespace voice {
 bool start() { return false; }
 void stop() { }
 void update() { }
-void onPacket(const u8 *, size_t) { }
+void onPacket(const u8 *, size_t, bool) { }
 bool enabled() { return false; }
 void setEnabled(bool) { }
 bool openMic() { return false; }
 void setOpenMic(bool) { }
+bool everywhere() { return false; }
+void setEverywhere(bool) { }
 bool transmitting() { return false; }
 void setTesting(bool) { }
 bool testing() { return false; }
@@ -117,6 +119,8 @@ bool g_playing = false;               //!< the source is running and should stay
 
 bool g_enabled = true;
 bool g_openMic = false;
+bool g_everywhere = false;      //!< how OUR voice carries: NORMAL (true) or VOIP; sent with every packet
+bool g_heardEverywhere = false; //!< how the voice being played was sent, from its packets
 bool g_transmitting = false;
 bool g_available = false;
 int g_hangover = 0;
@@ -417,9 +421,19 @@ void playHeard() {
 
 	recycleBuffers();
 
-	Vec3f at(0.f);
-	if(partnerPosition(at)) {
-		alSource3f(g_source, AL_POSITION, at.x, at.y, at.z);
+	if(g_heardEverywhere) {
+		// They chose NORMAL: a phone call, pinned to the listener, no distance.
+		alSourcei(g_source, AL_SOURCE_RELATIVE, AL_TRUE);
+		alSource3f(g_source, AL_POSITION, 0.f, 0.f, 0.f);
+		alSourcef(g_source, AL_ROLLOFF_FACTOR, 0.f);
+	} else {
+		// VOIP: out of their body, as set up in setupAudio.
+		alSourcei(g_source, AL_SOURCE_RELATIVE, AL_FALSE);
+		alSourcef(g_source, AL_ROLLOFF_FACTOR, 1.f);
+		Vec3f at(0.f);
+		if(partnerPosition(at)) {
+			alSource3f(g_source, AL_POSITION, at.x, at.y, at.z);
+		}
 	}
 
 	/*
@@ -572,11 +586,21 @@ void update() {
 
 }
 
-void onPacket(const u8 * data, size_t size) {
+void onPacket(const u8 * data, size_t size, bool everywhere) {
 
 	if(!g_enabled || !g_decoder || !data || size == 0) {
 		return;
 	}
+	/*
+	 * How this voice carries is the speaker's choice, carried in the packet.
+	 * VOIP comes out of their body, and there is no body when they are in
+	 * another level - so nothing is heard, exactly as before. NORMAL is
+	 * heard from anywhere.
+	 */
+	if(!everywhere && !coop::sharingArea()) {
+		return;
+	}
+	g_heardEverywhere = everywhere;
 
 	/*
 	 * Drop the oldest rather than the newest when the buffer overruns. If we
@@ -630,6 +654,14 @@ bool openMic() {
 void setOpenMic(bool on) {
 	g_openMic = on;
 	g_hangover = 0;
+}
+
+bool everywhere() {
+	return g_everywhere;
+}
+
+void setEverywhere(bool on) {
+	g_everywhere = on;
 }
 
 bool transmitting() {

@@ -51,9 +51,13 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 #include <string_view>
 
 #include "graphics/BaseGraphicsTypes.h"
+#include "game/EntityId.h"
 
 
 namespace fs { class path; }
+
+class Entity;
+class SaveBlock;
 
 void ARX_CHANGELEVEL_Change(AreaId area, std::string_view target, float angle);
 
@@ -88,5 +92,17 @@ void currentSavedGameStoreEntityDeletion(std::string_view idString);
  * This should only be done when the entity isn't referenced anymore (destroyed).
  */
 void currentSavedGameRemoveEntity(std::string_view idString);
+
+/*!
+ * Co-op: write one entity into a save block of its own, exactly as a savegame
+ * would, and read it back later.
+ *
+ * The block stands in for the current game while the call lasts, so whatever
+ * the entity refers to - the contents of its inventory, objects linked to it -
+ * is written to, and later read from, the same block.
+ */
+bool ARX_CHANGELEVEL_SaveEntityTo(SaveBlock & block, const Entity & entity, AreaId area);
+Entity * ARX_CHANGELEVEL_LoadEntityFrom(SaveBlock & block, std::string_view idString,
+                                        EntityInstance instance);
 
 #endif // ARX_SCENE_CHANGELEVEL_H

@@ -56,7 +56,8 @@ void stop();
 void update();
 
 //! A moment of speech arrived from the other player.
-void onPacket(const u8 * data, size_t size);
+//! \param everywhere how the speaker chose to carry: NORMAL (true) or VOIP (false)
+void onPacket(const u8 * data, size_t size, bool everywhere);
 
 // -- what the player can change -------------------------------------------
 
@@ -72,6 +73,20 @@ void setEnabled(bool on);
  */
 bool openMic();
 void setOpenMic(bool on);
+
+/*!
+ * How this player's own voice carries; the choice travels with every voice
+ * packet and the listener obeys it.
+ *
+ * Off - VOIP, the default: out of your body, fading with distance and
+ * arriving from your direction; the proximity voice this mod was built
+ * with. On - NORMAL: in their ears at full volume wherever they are, other
+ * levels included, like a phone call. Asked for by players who split up.
+ * Each player sets their own: a friend on VOIP still fades with distance
+ * even if you are on NORMAL.
+ */
+bool everywhere();
+void setEverywhere(bool on);
 
 //! True while speech is actually being sent, for showing the player a mic icon.
 bool transmitting();

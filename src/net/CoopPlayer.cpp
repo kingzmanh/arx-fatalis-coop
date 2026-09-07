@@ -61,6 +61,9 @@
 #include "scene/Object.h"
 #include "game/Inventory.h"
 #include "io/fs/SystemPaths.h"
+#include "io/SaveBlock.h"
+#include "io/fs/Filesystem.h"
+#include "scene/ChangeLevel.h"
 #include "script/Script.h"
 #include "platform/Time.h"
 
@@ -826,6 +829,10 @@ void destroyAvatarEntity() {
 	g_avatarHelmet.clear();
 	g_avatarArmour.clear();
 	g_avatarLeggings.clear();
+	// And no face is painted. Without this the memory of the last body's skin
+	// outlives it, and a fresh body wearing the same number is left with the
+	// default face, because the paint step thinks nothing has changed.
+	g_paintedSkin = 0xff;
 
 	resetAvatar();
 
@@ -1150,6 +1157,11 @@ fs::path guestProfileFile() {
 	return fs::getUserDir() / ("coop-profile-" + playthroughId() + ".bin");
 }
 
+//! The full copies of what the guest carries, in the game's own save format.
+static fs::path guestBelongingsFile() {
+	return fs::getUserDir() / ("coop-belongings-" + playthroughId() + ".sav");
+}
+
 //! Everything of the local player's that is carried or worn.
 static void collectBelongings(std::vector<Entity *> & out, std::vector<s8> * slots) {
 
@@ -1179,6 +1191,37 @@ static void collectBelongings(std::vector<Entity *> & out, std::vector<s8> * slo
 
 }
 
+/*!
+ * Whatever sits inside a carried thing, however deep. A container in the
+ * pack is one entity, but its contents are entities of their own and are
+ * saved one by one, just as a savegame does.
+ */
+static void collectCarriedContents(std::vector<Entity *> & belongings) {
+
+	for(size_t i = 0; i < belongings.size(); i++) {
+		if(!belongings[i]->inventory) {
+			continue;
+		}
+		for(Entity & e : entities) {
+			if(&e == entities.player()) {
+				continue;
+			}
+			InventoryPos ip = locateInInventories(&e);
+			if(ip && ip.container == belongings[i]
+			   && std::find(belongings.begin(), belongings.end(), &e) == belongings.end()) {
+				belongings.push_back(&e);
+			}
+		}
+	}
+
+}
+
+static bool g_belongingsChanged = false;
+
+void noteBelongingsChanged() {
+	g_belongingsChanged = true;
+}
+
 void saveGuestProfileIfDue(bool force) {
 
 	static PlatformInstant lastSave = 0;
@@ -1188,19 +1231,33 @@ void saveGuestProfileIfDue(bool force) {
 		return;
 	}
 
-	PlatformInstant now = platform::getTime();
-	if(!force && lastSave != PlatformInstant(0) && now - lastSave < 60000ms) {
+	// Never while this player is still the host's clone: that would file the
+	// host's pack away as ours.
+	if(awaitingGuestIdentity()) {
 		return;
 	}
+
+	/*
+	 * Once a minute as before, and soon after the pack changed: a crash or a
+	 * dropped wire then loses nothing that was picked up in the last minute.
+	 */
+	PlatformInstant now = platform::getTime();
+	if(!force && lastSave != PlatformInstant(0)) {
+		PlatformDuration since = now - lastSave;
+		if(since < 60000ms && !(g_belongingsChanged && since >= 1500ms)) {
+			return;
+		}
+	}
 	lastSave = now;
+	g_belongingsChanged = false;
 
 	std::FILE * f = std::fopen(guestProfileFile().string().c_str(), "wb");
 	if(!f) {
 		return;
 	}
 
-	// "ACP2" - the same profile as ACP1 with the chosen face on the end
-	u32 magic = 0x32504341u;
+	// "ACP3" - ACP2 plus the bag count and a full copy of every carried thing
+	u32 magic = 0x33504341u;
 	std::fwrite(&magic, sizeof(magic), 1, f);
 	/*
 	 * What they look like.
@@ -1226,22 +1283,70 @@ void saveGuestProfileIfDue(bool force) {
 	std::fwrite(&player.rune_flags, sizeof(player.rune_flags), 1, f);
 	std::fwrite(&player.hunger, sizeof(player.hunger), 1, f);
 
+	s16 bags = s16(entities.player()->inventory->bags());
+	std::fwrite(&bags, sizeof(bags), 1, f);
+
 	std::vector<Entity *> belongings;
 	std::vector<s8> slots;
 	collectBelongings(belongings, &slots);
+	size_t direct = belongings.size();
+	collectCarriedContents(belongings);
+
+	/*
+	 * Every carried thing goes into a save block of its own, written by the
+	 * same code that writes a savegame: count, durability, charges, poison,
+	 * script variables and all. The list below only says where each one sat.
+	 */
+	fs::path blockFile = guestBelongingsFile();
+	fs::remove(blockFile);
+	SaveBlock block(blockFile);
+	bool blockOpen = block.open(true);
+	if(!blockOpen) {
+		LogWarning << "[coop] could not write " << blockFile << "; keeping only item classes";
+	}
 
 	u16 count = u16(std::min<size_t>(belongings.size(), 0xffff));
 	std::fwrite(&count, sizeof(count), 1, f);
+	u16 stored = 0;
 	for(size_t i = 0; i < count; i++) {
-		std::string cls = belongings[i]->classPath().string();
+		Entity * item = belongings[i];
+		std::string cls = item->classPath().string();
 		u16 len = u16(std::min<size_t>(cls.size(), 0xffff));
 		std::fwrite(&len, sizeof(len), 1, f);
 		std::fwrite(cls.data(), 1, len, f);
-		std::fwrite(&slots[i], sizeof(s8), 1, f);
+		std::string id = item->idString();
+		u16 idLen = u16(std::min<size_t>(id.size(), 0xffff));
+		std::fwrite(&idLen, sizeof(idLen), 1, f);
+		std::fwrite(id.data(), 1, idLen, f);
+		s32 instance = s32(item->instance());
+		std::fwrite(&instance, sizeof(instance), 1, f);
+		// -1: in the grid, -2: inside something else that is carried, else worn in that slot
+		s8 slot = i < direct ? slots[i] : s8(-2);
+		std::fwrite(&slot, sizeof(slot), 1, f);
+		s16 bag = -1, x = -1, y = -1;
+		if(slot == -1) {
+			if(InventoryPos ip = locateInInventories(item); ip && ip.container == entities.player()) {
+				bag = ip.bag;
+				x = ip.x;
+				y = ip.y;
+			}
+		}
+		std::fwrite(&bag, sizeof(bag), 1, f);
+		std::fwrite(&x, sizeof(x), 1, f);
+		std::fwrite(&y, sizeof(y), 1, f);
+		u8 saved = (blockOpen && ARX_CHANGELEVEL_SaveEntityTo(block, *item, g_currentArea)) ? 1 : 0;
+		std::fwrite(&saved, sizeof(saved), 1, f);
+		stored += saved;
 	}
 
 	std::fclose(f);
-	LogInfo << "[coop] saved this playthrough's character (" << count << " items)";
+	if(blockOpen) {
+		u16 index = count;
+		block.save("index", reinterpret_cast<const char *>(&index), sizeof(index));
+		block.flush("index");
+	}
+	LogInfo << "[coop] saved this playthrough's character (" << count << " items, "
+	        << stored << " in full)";
 
 }
 
@@ -1389,15 +1494,17 @@ void applyGuestIdentity() {
 
 	u32 magic = 0;
 	std::fread(&magic, sizeof(magic), 1, f);
-	if(magic != 0x31504341u && magic != 0x32504341u) {
+	if(magic != 0x31504341u && magic != 0x32504341u && magic != 0x33504341u) {
 		std::fclose(f);
 		ARX_PLAYER_MakeFreshHero();
 		LogWarning << "[coop] unreadable character profile; starting fresh";
 		return;
 	}
 
-	// ACP2 carries the face they chose; ACP1 predates it and keeps this one
-	bool hasFace = (magic == 0x32504341u);
+	// ACP2 carries the face they chose; ACP1 predates it and keeps this one.
+	// ACP3 adds the bag count and a full copy of every carried thing.
+	bool hasFace = (magic != 0x31504341u);
+	bool hasCopies = (magic == 0x33504341u);
 	u8 skin = player.skin;
 	if(hasFace) {
 		std::fread(&skin, sizeof(skin), 1, f);
@@ -1430,9 +1537,23 @@ void applyGuestIdentity() {
 		ARX_PLAYER_Restore_Skin();
 	}
 
+	if(hasCopies) {
+		s16 bags = 1;
+		std::fread(&bags, sizeof(bags), 1, f);
+		entities.player()->inventory->setBags(size_t(glm::clamp(int(bags), 1, 3)));
+	}
+
+	// The full copies, when this profile has them
+	SaveBlock block(guestBelongingsFile());
+	bool blockOpen = hasCopies && block.open(false);
+	if(hasCopies && !blockOpen) {
+		LogWarning << "[coop] " << guestBelongingsFile() << " is missing; items come back new";
+	}
+
 	u16 count = 0;
 	std::fread(&count, sizeof(count), 1, f);
 	u16 restored = 0;
+	u16 inFull = 0;
 	for(u16 i = 0; i < count; i++) {
 		u16 len = 0;
 		if(std::fread(&len, sizeof(len), 1, f) != 1 || len == 0 || len > 512) {
@@ -1442,16 +1563,69 @@ void applyGuestIdentity() {
 		if(std::fread(cls.data(), 1, len, f) != len) {
 			break;
 		}
+		std::string id;
+		s32 instance = -1;
 		s8 slot = -1;
-		std::fread(&slot, sizeof(slot), 1, f);
+		s16 bag = -1, x = -1, y = -1;
+		u8 saved = 0;
+		if(hasCopies) {
+			u16 idLen = 0;
+			if(std::fread(&idLen, sizeof(idLen), 1, f) != 1 || idLen == 0 || idLen > 512) {
+				break;
+			}
+			id.resize(idLen);
+			if(std::fread(id.data(), 1, idLen, f) != idLen) {
+				break;
+			}
+			std::fread(&instance, sizeof(instance), 1, f);
+			std::fread(&slot, sizeof(slot), 1, f);
+			std::fread(&bag, sizeof(bag), 1, f);
+			std::fread(&x, sizeof(x), 1, f);
+			std::fread(&y, sizeof(y), 1, f);
+			std::fread(&saved, sizeof(saved), 1, f);
+		} else {
+			std::fread(&slot, sizeof(slot), 1, f);
+		}
 
-		Entity * item = AddItem(res::path::load(cls));
-		if(!item) {
+		if(slot == -2 && entities.getById(id)) {
+			// Inside something else that is carried, and came back along with it
+			restored++;
+			inFull++;
 			continue;
 		}
-		item->scriptload = 1;
-		SendInitScriptEvent(item);
-		giveToPlayer(item);
+
+		Entity * item = nullptr;
+		if(saved && blockOpen) {
+			if(entities.getById(id)) {
+				/*
+				 * Already in the world we just received: it left this pack after
+				 * the profile was written (dropped, handed over) and the world's
+				 * word on it is the newer one.
+				 */
+				LogInfo << "[coop] " << id << " is in the world already, not restoring it";
+				continue;
+			}
+			item = ARX_CHANGELEVEL_LoadEntityFrom(block, id, EntityInstance(instance));
+			if(item) {
+				inFull++;
+			} else {
+				LogWarning << "[coop] could not read " << id << " back; it comes back new";
+			}
+		}
+		if(!item) {
+			item = AddItem(res::path::load(cls));
+			if(!item) {
+				continue;
+			}
+			item->scriptload = 1;
+			SendInitScriptEvent(item);
+		}
+
+		if(slot < 0 && bag >= 0 && size_t(bag) < entities.player()->inventory->bags()) {
+			giveToPlayer(item, InventoryPos(entities.player(), Vec3s(x, y, bag)));
+		} else {
+			giveToPlayer(item);
+		}
 		if(slot >= 0) {
 			ARX_EQUIPMENT_Equip(entities.player(), item);
 		}
@@ -1460,7 +1634,10 @@ void applyGuestIdentity() {
 	std::fclose(f);
 
 	ARX_PLAYER_ComputePlayerFullStats();
-	LogInfo << "[coop] this playthrough's character restored (" << restored << " items)";
+	// Written in the new form soon, so the next rejoin has the full copies
+	noteBelongingsChanged();
+	LogInfo << "[coop] this playthrough's character restored (" << restored << " items, "
+	        << inFull << " in full)";
 
 }
 
