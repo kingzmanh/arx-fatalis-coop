@@ -38,7 +38,7 @@ namespace coop {
  * misread a newer one. Both sides check this during the handshake and refuse
  * the connection rather than desyncing silently later.
  */
-constexpr u32 ProtocolVersion = 33;
+constexpr u32 ProtocolVersion = 34;
 
 /*
  * What a snapshot entry carries.

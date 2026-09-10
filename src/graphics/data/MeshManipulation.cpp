@@ -66,6 +66,7 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 #include "io/resource/PakReader.h"
 #include "io/log/Logger.h"
+#include "game/EntityManager.h"
 
 #include "math/Types.h"
 #include "math/Vector.h"
@@ -494,6 +495,7 @@ void EERIE_MESH_TWEAK_Do(Entity * io, TweakType tw, const res::path & path) {
 	if(!io || !io->obj) {
 		return;
 	}
+	
 	
 	res::path ftl_file = ("game" / path).set_ext("ftl");
 	if((!g_resources->getFile(ftl_file)) && (!g_resources->getFile(path))) {

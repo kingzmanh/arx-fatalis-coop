@@ -83,6 +83,7 @@ struct Avatar {
 	bool combat = false;
 	float invisibility = 0.f;
 	u8 skin = 0;
+	u8 bodyKind = 0; //!< the body they play in, see PlayerBodyKind
 
 	//! Class path of the weapon in hand, empty when unarmed. Used to hang the
 	//! right mesh off the body so the other player can see what you are holding.
@@ -369,6 +370,15 @@ void noteTargetHit(const Entity & npc);
 
 //! Top-left target frame: name, health with numbers and percent, mana if any; fades a few seconds after the last blow.
 void drawTargetFrame();
+
+//! True while the target frame is up for this creature: the game's own hover name would only repeat it.
+[[nodiscard]] bool targetFrameShows(const Entity * entity);
+
+//! A click at this screen point: the nearest living creature drawn there becomes the frame's subject. No range limit.
+bool targetCreatureAt(const Vec2f & screen);
+
+//! The target frame's right edge in pixels while it is up, else 0: what else sits top-left steps aside.
+[[nodiscard]] float targetFrameRight();
 
 } // namespace coop
 

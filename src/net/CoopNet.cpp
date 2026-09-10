@@ -36,6 +36,7 @@
 #include "core/GameTime.h"
 #include "game/Entity.h"
 #include "game/EntityManager.h"
+#include "game/Inventory.h"
 #include "game/Item.h"
 #include "game/NPC.h"
 #include "game/Player.h"
@@ -801,7 +802,8 @@ void sendAvatar() {
 		 */
 		mask |= AvAnim;
 		if(sent.dead != local.dead || sent.combat != local.combat
-		   || sent.invisibility != local.invisibility || sent.skin != local.skin) {
+		   || sent.invisibility != local.invisibility || sent.skin != local.skin
+		   || sent.bodyKind != local.bodyKind) {
 			mask |= AvState;
 		}
 		if(sent.weapon != local.weapon || sent.helmet != local.helmet
@@ -884,6 +886,7 @@ void sendAvatar() {
 		writer.put(local.combat);
 		writer.put(local.invisibility);
 		writer.put(local.skin);
+		writer.put(local.bodyKind);
 	}
 	if(mask & AvGear) {
 		writer.put(std::string_view(local.weapon));
@@ -983,7 +986,7 @@ void receiveAvatar(Reader & reader) {
 	s32 anim1Time = remote.anim1Time;
 	bool dead = remote.dead, combat = remote.combat;
 	float invisibility = remote.invisibility;
-	u8 skin = remote.skin;
+	u8 skin = remote.skin, bodyKind = remote.bodyKind;
 	std::string weapon = remote.weapon, helmet = remote.helmet;
 	std::string armour = remote.armour, leggings = remote.leggings;
 	std::string shield = remote.shield;
@@ -1025,6 +1028,7 @@ void receiveAvatar(Reader & reader) {
 		combat = reader.getBool();
 		invisibility = reader.getFloat();
 		skin = reader.getU8();
+		bodyKind = reader.getU8();
 	}
 	if(mask & AvGear) {
 		weapon = reader.getString();
@@ -1060,6 +1064,7 @@ void receiveAvatar(Reader & reader) {
 	remote.combat = combat;
 	remote.invisibility = invisibility;
 	remote.skin = skin;
+	remote.bodyKind = bodyKind;
 	remote.weapon = std::move(weapon);
 	remote.helmet = std::move(helmet);
 	remote.armour = std::move(armour);
@@ -4217,6 +4222,29 @@ void sendChat(std::string_view text) {
 	if(text == "/net") {
 		g_netGraph = !g_netGraph;
 		notification_add(g_netGraph ? "Net graph on" : "Net graph off");
+		return;
+	}
+
+	if(text == "/near") {
+		// What stands around you, into the log: for telling a real thing from a ghost
+		std::vector<std::pair<float, std::string>> around;
+		for(Entity & entity : entities) {
+			if(entity.index() == EntityHandle_Player) {
+				continue;
+			}
+			float distance = glm::distance(entity.pos, player.pos);
+			InventoryPos held = locateInInventories(&entity);
+			std::string line = entity.idString() + " " + std::to_string(int(distance)) + "u show=" + std::to_string(int(entity.show))
+			                   + (held.container ? " in " + held.container->idString() : std::string())
+			                   + " load=" + std::to_string(int(entity.scriptload))
+			                   + (isReplica() ? (ownsLocally(&entity) ? " local" : " shared") : "");
+			around.emplace_back(distance, line);
+		}
+		std::sort(around.begin(), around.end(), [](const auto & a, const auto & b) { return a.first < b.first; });
+		for(size_t i = 0; i < around.size() && i < 16; i++) {
+			LogWarning << "[near] " << around[i].second;
+		}
+		notification_add("Nearest things written to the log");
 		return;
 	}
 

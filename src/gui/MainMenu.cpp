@@ -36,6 +36,9 @@
 #include "core/Benchmark.h"
 #include "core/Config.h"
 #include "game/NPC.h"
+#include "game/Equipment.h"
+#include "game/EntityManager.h"
+#include "game/Player.h"
 #include "core/ArxGame.h"
 #include "core/Core.h"
 #include "core/Localisation.h"
@@ -1956,6 +1959,7 @@ public:
 			 */
 			auto slider = std::make_unique<CycleTextWidget>(sliderSize(), hFontMenu,
 			                                               "Microphone", hFontControls);
+			slider->setSnug(sliderSize().y * 0.4f);
 			slider->valueChanged = [this](int pos, std::string_view /* string */) {
 				coop::voice::setDevice(pos - 1); // entry 0 is the system default
 				if(!coop::voice::testing()) {
@@ -1993,6 +1997,7 @@ public:
 			 */
 			auto slider = std::make_unique<CycleTextWidget>(sliderSize(), hFontMenu,
 			                                               "Voice", hFontControls);
+			slider->setSnug(sliderSize().y * 0.4f);
 			slider->valueChanged = [](int pos, std::string_view /* string */) {
 				coop::voice::setEverywhere(pos == 1);
 			};
@@ -2025,6 +2030,7 @@ public:
 			 */
 			auto slider = std::make_unique<CycleTextWidget>(sliderSize(), hFontMenu,
 			                                               "Cutscenes", hFontControls);
+			slider->setSnug(sliderSize().y * 0.4f);
 			slider->valueChanged = [](int pos, std::string_view /* string */) {
 				config.misc.cutscenes = (pos == 1) ? CutscenesForHost : CutscenesForTrigger;
 				config.save();
@@ -2046,6 +2052,7 @@ public:
 			 */
 			auto slider = std::make_unique<CycleTextWidget>(sliderSize(), hFontMenu,
 			                                               "Enemy health", hFontControls);
+			slider->setSnug(sliderSize().y * 0.4f);
 			slider->valueChanged = [](int pos, std::string_view /* string */) {
 				if(coop::isGuest()) {
 					return;
@@ -2059,6 +2066,21 @@ public:
 			slider->addEntry("triple health");
 			slider->setValue(glm::clamp(enemyHealthSetting(), 1, 3) - 1);
 			slider->setEnabled(!coop::isGuest());
+			addCenter(std::move(slider));
+		}
+
+		{
+			// The top-left frame for the creature being fought: name, health, mana.
+			auto slider = std::make_unique<CycleTextWidget>(sliderSize(), hFontMenu,
+			                                               "Enemy health bar", hFontControls);
+			slider->setSnug(sliderSize().y * 0.4f);
+			slider->valueChanged = [](int pos, std::string_view /* string */) {
+				config.input.targetFrame = (pos == 0);
+				config.save();
+			};
+			slider->addEntry("on");
+			slider->addEntry("off");
+			slider->setValue(config.input.targetFrame ? 0 : 1);
 			addCenter(std::move(slider));
 		}
 

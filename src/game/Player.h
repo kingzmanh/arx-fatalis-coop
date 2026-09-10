@@ -317,6 +317,7 @@ struct ARXCHARACTER {
 	
 	long xp;
 	unsigned char skin;
+	unsigned char bodyKind; //!< the body played in, see PlayerBodyKind; chosen at character creation
 	
 	RuneFlags rune_flags;
 	
@@ -367,6 +368,7 @@ struct ARXCHARACTER {
 		, level(0)
 		, xp(0)
 		, skin(0)
+		, bodyKind(0)
 		, poison(0)
 		, hunger(0)
 		, gold(0)
@@ -459,10 +461,68 @@ void ARX_PLAYER_Rune_Add_All();
 //! The four head textures a chosen face uses: bare, chainmail, mithril, leather.
 void ARX_PLAYER_SkinTextures(unsigned char skin, res::path & tx, res::path & tx2,
                              res::path & tx3, res::path & tx4);
-void ARX_PLAYER_Restore_Skin();
+/*!
+ * The head shape a face was painted for, when it is not the hero's own: put on
+ * the body wherever its mesh is built, before any helmet. Null for the game's
+ * faces and for those of ours that fit the hero's head.
+ */
+const res::path * ARX_PLAYER_FaceHeadMesh(unsigned char skin);
+
+//! That head put on a freshly built body, with its neck painted plain where the file says so.
+void ARX_PLAYER_PutFaceHead(Entity * io, unsigned char skin);
+
+/*!
+ * The body a player plays in, chosen at character creation as their race.
+ * The hero; a guard, the hero's body in the guards' chainmail with a guard's
+ * head; the goblin and the goblin lord, the game's own meshes with their own
+ * animations where they have them and the hero's for the rest, which is what
+ * the game's goblins do themselves (all share one skeleton). Armour shapes
+ * and faces are the hero's: they fit the human bodies only; on a goblin
+ * armour counts but does not show.
+ */
+enum PlayerBodyKind : unsigned char {
+	BodyHuman = 0,
+	BodyGuard = 1,
+	BodyGoblin = 2,
+	BodyGoblinLord = 3,
+	BodyKindCount = 4
+};
+//! The body this machine's player plays in.
+[[nodiscard]] unsigned char ARX_PLAYER_LocalBodyKind();
+//! Its name, for the character sheet.
+[[nodiscard]] const char * ARX_PLAYER_BodyName(unsigned char kind);
+//! The mesh a body is built from.
+[[nodiscard]] const char * ARX_PLAYER_BodyMesh(unsigned char kind);
+//! Whether armour shapes fit that body.
+[[nodiscard]] bool ARX_PLAYER_BodyWearsArmour(unsigned char kind);
+//! Whether the chosen face goes on that body.
+[[nodiscard]] bool ARX_PLAYER_BodyHasFace(unsigned char kind);
+//! Where the character creation close-up puts the body so its head fills the frame.
+[[nodiscard]] Vec3f ARX_PLAYER_BodyCreationPos(unsigned char kind);
+//! Where the character sheet in play puts the body so all of it fits the page.
+[[nodiscard]] Vec3f ARX_PLAYER_BodySheetPos(unsigned char kind);
+/*!
+ * Build a body's bare mesh on an entity: the old mesh goes, the body's mesh,
+ * skin, animations and kept textures come. Falls back to the hero when the
+ * body's mesh is missing, and says so in kind. False only when even that fails.
+ */
+bool ARX_PLAYER_LoadBody(Entity * io, unsigned char & kind);
+/*!
+ * Keep a body's textures across level changes. Textures that come in through
+ * a mesh are marked as the level's and freed when it unloads, and the player's
+ * body outlives levels: the hero's own textures are kept because the game
+ * loads them at startup inside a keep-forever window. This marks whatever a
+ * body wears the same way.
+ */
+void ARX_PLAYER_KeepBodyTextures(EERIE_3DOBJ * obj);
+//! Swap in the animations that body has of its own, and back; safe to call again.
+void ARX_PLAYER_BodyAnimations(Entity * io, unsigned char kind);
+
+//! wasSkin: the face the body wears now, if known, so its textures are told apart from armour's.
+void ARX_PLAYER_Restore_Skin(unsigned char wasSkin = 0xff);
 
 //! Put a chosen face on one body, replacing whichever face it wears now.
-void ARX_PLAYER_ApplySkin(EERIE_3DOBJ * obj, unsigned char skin);
+void ARX_PLAYER_ApplySkin(EERIE_3DOBJ * obj, unsigned char skin, unsigned char wasSkin = 0xff);
 float GetPlayerStealth();
 
 void ARX_GAME_Reset();

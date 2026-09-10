@@ -64,6 +64,7 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 #include "game/NPC.h"
 #include "game/Player.h"
 #include "game/Spells.h"
+#include "game/magic/StudioWorld.h"
 
 #include "gui/Dragging.h"
 #include "gui/Interface.h"
@@ -81,6 +82,7 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 #include "graphics/particle/Spark.h"
 
 #include "io/log/Logger.h"
+#include "io/resource/PakReader.h"
 #include "io/resource/ResourcePath.h"
 
 #include "math/Random.h"
@@ -172,14 +174,53 @@ extern long EXITING;
 void ARX_EQUIPMENT_ApplyTweak(Entity * io, Entity * item, TweakType tw,
                               std::string_view selection) {
 
-	if(!io || !io->obj || !item || !item->tweakerinfo) {
+	if(!io || !io->obj || !item) {
 		return;
 	}
 
-	const IO_TWEAKER_INFO & tweak = *item->tweakerinfo;
+	/*
+	 * The mod's world edits may say how a piece looks instead of its script -
+	 * the way to give the cm plate set, whose own look was never made, the
+	 * Ylside armour in its "mx" paint.
+	 */
+	IO_TWEAKER_INFO told;
+	const IO_TWEAKER_INFO * info = item->tweakerinfo;
+	if(const StudioWear * wear = studioWorldWear(item->className())) {
+		told.filename = wear->mesh;
+		told.skintochange = wear->skinFrom;
+		told.skinchangeto = wear->skinTo;
+		info = &told;
+	}
+	if(!info) {
+		return;
+	}
+
+	const IO_TWEAKER_INFO & tweak = *info;
 	
 	if(!tweak.filename.empty()) {
 		res::path mesh = "graph/obj3d/interactive/npc/human_base/tweaks" / tweak.filename;
+		/*
+		 * A piece naming a body shape that was never made. The "cm" plate set
+		 * names human_plate_cm, and no such mesh exists in any pak, so wearing it
+		 * changed nothing on the body. The family name is what it was cut from:
+		 * drop the last "_" suffix and wear that instead. Only a missing mesh
+		 * takes this road; every shape that exists is used as named.
+		 */
+		auto exists = [](const res::path & file) {
+			return g_resources->getFile(("game" / file).set_ext("ftl")) || g_resources->getFile(file);
+		};
+		if(!exists(mesh)) {
+			std::string stem(tweak.filename.basename());
+			size_t cut = stem.rfind('_');
+			if(cut != std::string::npos) {
+				res::path family = res::path("graph/obj3d/interactive/npc/human_base/tweaks")
+				                   / (stem.substr(0, cut) + std::string(tweak.filename.ext()));
+				if(exists(family)) {
+					LogInfo << "body shape " << tweak.filename << " does not exist; wearing " << family.filename();
+					mesh = family;
+				}
+			}
+		}
 		EERIE_MESH_TWEAK_Do(io, tw, mesh);
 	}
 	
@@ -204,7 +245,8 @@ void ARX_EQUIPMENT_ApplyTweak(Entity * io, Entity * item, TweakType tw,
 	MaterialId oldMaterial;
 	for(MaterialId material : io->obj->materials.handles()) {
 		if(io->obj->materials[material] &&
-		   io->obj->materials[material]->m_texName.filename() == tweak.skintochange) {
+		   (io->obj->materials[material]->m_texName.filename() == tweak.skintochange
+		    || io->obj->materials[material]->m_texName.basename() == tweak.skintochange)) {
 			oldMaterial = material;
 		}
 	}
@@ -241,13 +283,21 @@ void ARX_EQUIPMENT_RecreatePlayerMesh() {
 	arx_assert(entities.player());
 	Entity * io = entities.player();
 	
-	delete io->obj;
+	unsigned char kind = ARX_PLAYER_LocalBodyKind();
+	if(!ARX_PLAYER_LoadBody(io, kind)) {
+		return;
+	}
 	
-	io->obj = loadObject("graph/obj3d/interactive/npc/human_base/human_base.teo", false).release();
+	if(ARX_PLAYER_BodyHasFace(kind)) {
+		// A face painted for another head shape brings that head; a helmet still goes over it
+		ARX_PLAYER_PutFaceHead(io, player.skin);
+	}
 	
-	applyTweak(EQUIP_SLOT_HELMET, TWEAK_HEAD, "head");
-	applyTweak(EQUIP_SLOT_ARMOR, TWEAK_TORSO, "chest");
-	applyTweak(EQUIP_SLOT_LEGGINGS, TWEAK_LEGS, "leggings");
+	if(ARX_PLAYER_BodyWearsArmour(kind)) {
+		applyTweak(EQUIP_SLOT_HELMET, TWEAK_HEAD, "head");
+		applyTweak(EQUIP_SLOT_ARMOR, TWEAK_TORSO, "chest");
+		applyTweak(EQUIP_SLOT_LEGGINGS, TWEAK_LEGS, "leggings");
+	}
 	
 	for(EntityHandle equipment : player.equiped) {
 		if(Entity * toequip = entities.get(equipment); toequip && toequip->obj) {
@@ -265,6 +315,12 @@ void ARX_EQUIPMENT_RecreatePlayerMesh() {
 	}
 	
 	ARX_PLAYER_Restore_Skin();
+	ARX_PLAYER_KeepBodyTextures(io->obj);
+	{
+		const res::path * head = ARX_PLAYER_FaceHeadMesh(player.skin);
+		LogInfo << "[face] player body " << int(kind) << ", face " << int(player.skin)
+		        << ", head " << (head ? head->string() : std::string("hero")) << ", " << io->obj->vertexlist.size() << " vertices";
+	}
 	HERO_SHOW_1ST = -1;
 	ARX_INTERACTIVE_Show_Hide_1st(entities.player(), !EXTERNALVIEW);
 	ARX_INTERACTIVE_HideGore(entities.player(), false);

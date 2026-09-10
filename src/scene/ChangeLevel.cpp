@@ -70,6 +70,7 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 #include "game/EntityManager.h"
 #include "game/Equipment.h"
 #include "game/NPC.h"
+#include "game/magic/StudioWorld.h"
 #include "game/Spells.h"
 #include "game/Player.h"
 #include "game/Levels.h"
@@ -574,9 +575,27 @@ static size_t getScriptVariableSaveSize(const SCRIPT_VARIABLES & variables) {
 	return size;
 }
 
+//! How many of these the writer will actually put down
+static size_t savableVariableCount(const SCRIPT_VARIABLES & variables) {
+	size_t count = 0;
+	for(const SCRIPT_VAR & variable : variables) {
+		if(getVariableType(variable.name) != TYPE_UNKNOWN) {
+			count++;
+		}
+	}
+	return count;
+}
+
 static void storeScriptVariables(char * dat, size_t & pos, const SCRIPT_VARIABLES & variables, size_t diff) {
 	
 	for(const SCRIPT_VAR & variable : variables) {
+		
+		if(getVariableType(variable.name) == TYPE_UNKNOWN) {
+			// The format types a variable by its first byte; one it cannot type would
+			// be written as garbage and read back as a corrupted record. Left out.
+			LogWarning << "Not saving script variable \"" << variable.name << "\": its name has no known type";
+			continue;
+		}
 		
 		ARX_CHANGELEVEL_VARIABLE_SAVE * avs = reinterpret_cast<ARX_CHANGELEVEL_VARIABLE_SAVE *>(dat + pos);
 		memset(avs, 0, sizeof(ARX_CHANGELEVEL_VARIABLE_SAVE));
@@ -626,7 +645,7 @@ static bool ARX_CHANGELEVEL_Push_Globals() {
 	ARX_CHANGELEVEL_SAVE_GLOBALS acsg;
 	
 	memset(&acsg, 0, sizeof(ARX_CHANGELEVEL_SAVE_GLOBALS));
-	acsg.nb_globals = svar.size();
+	acsg.nb_globals = savableVariableCount(svar);
 	acsg.version = ARX_GAMESAVE_VERSION;
 	
 	size_t allocsize = sizeof(ARX_CHANGELEVEL_SAVE_GLOBALS) + getScriptVariableSaveSize(svar);
@@ -812,6 +831,7 @@ static bool ARX_CHANGELEVEL_Push_Player(AreaId area) {
 	asp->Skill_Close_Combat = player.m_skill.closeCombat;
 	asp->Skill_Defense = player.m_skill.defense;
 	asp->skin = s32(player.skin);
+	asp->padding[236] = s32(player.bodyKind); // the body played in; zero, the hero, in every older save
 	
 	asp->xp = player.xp;
 	asp->nb_PlayerQuest = g_playerQuestLogEntries.size();
@@ -1139,7 +1159,7 @@ static bool ARX_CHANGELEVEL_Push_IO(const Entity * io, AreaId area) {
 		ARX_CHANGELEVEL_SCRIPT_SAVE * ass = reinterpret_cast<ARX_CHANGELEVEL_SCRIPT_SAVE *>(dat + pos);
 		ass->allowevents = io->m_disabledEvents;
 		ass->lastcall = 0;
-		ass->nblvar = io->m_variables.size();
+		ass->nblvar = savableVariableCount(io->m_variables);
 		pos += sizeof(ARX_CHANGELEVEL_SCRIPT_SAVE);
 		storeScriptVariables(dat, pos, io->m_variables, 1);
 	}
@@ -1632,6 +1652,7 @@ static bool ARX_CHANGELEVEL_Pop_Player(std::string_view target, float angle) {
 	player.m_skill.defense = asp->Skill_Defense;
 	
 	player.skin = util::to<unsigned char>(asp->skin);
+	player.bodyKind = static_cast<unsigned char>(std::min(std::max(asp->padding[236], s32(0)), s32(BodyKindCount - 1)));
 	
 	player.xp = asp->xp;
 	GLOBAL_MAGIC_MODE = (asp->Global_Magic_Mode != 0);
@@ -1739,7 +1760,24 @@ static bool loadScriptVariables(SCRIPT_VARIABLES & var, const char * dat, size_t
 		var[i].name = util::toLowercase(util::loadString(avs->name));
 		
 		VariableType type = getVariableType(var[i].name);
-		if(type == TYPE_UNKNOWN || type != VariableType(avs->type)) {
+		VariableType saved = VariableType(avs->type);
+		if(type == TYPE_UNKNOWN) {
+			/*
+			 * A variable the format cannot type: a name with an odd first byte, as
+			 * an earlier build of ours wrote for its enemy-health tag. What the
+			 * writer put after it is stepped over by the type it recorded, and the
+			 * variable is dropped, rather than the whole record and with it the
+			 * creature's pack, which then lay strewn on the floor.
+			 */
+			LogWarning << "Dropping script variable \"" << var[i].name << "\" of unknown type " << avs->type;
+			if((saved == TYPE_G_TEXT || saved == TYPE_L_TEXT) && avs->fval > 0.f) {
+				pos += size_t(avs->fval);
+			}
+			var.erase(var.begin() + long(i));
+			i--;
+			continue;
+		}
+		if(type != saved) {
 			LogError << "Unexpected variable type: \"" << var[i].name << "\" vs. " << avs->type;
 			var.resize(i);
 			return false;
@@ -2572,6 +2610,8 @@ static bool ARX_CHANGELEVEL_PopLevel(AreaId area, bool reloadflag, std::string_v
 	ARX_CHANGELEVEL_PopAllIO_FINISH(reloadflag, firstTime);
 	// A save made on another enemy health setting, or the host's setting for a guest
 	rescaleEnemyHealth();
+	// The mod's own world edits, after the level's scripts have had their say
+	applyStudioWorld();
 	
 	progressBarAdvance(15.f);
 	LoadLevelScreen();

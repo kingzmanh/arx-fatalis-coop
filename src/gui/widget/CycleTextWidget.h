@@ -46,6 +46,13 @@ public:
 	
 	void addEntry(std::string_view label);
 	
+	/*!
+	 * Arrows right by the widest choice instead of a fixed distance apart, so a
+	 * row with short choices does not show a gap. Call before adding entries.
+	 * \param padding room kept between the text and each arrow
+	 */
+	void setSnug(float padding);
+	
 	void move(const Vec2f & offset) override;
 	bool click() override;
 	void render(bool mouseOver = false) override;
@@ -70,6 +77,8 @@ private:
 	Rectf m_content;
 	
 	int m_value;
+	bool m_snug = false;
+	float m_pad = 0.f;
 	
 };
 

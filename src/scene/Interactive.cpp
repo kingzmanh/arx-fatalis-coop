@@ -250,7 +250,12 @@ void ARX_INTERACTIVE_Show_Hide_1st(Entity * io, bool hide1st) {
 	
 	HERO_SHOW_1ST = long(hide1st);
 	
-	if(VertexSelectionId selection = EERIE_OBJECT_GetSelection(io->obj, "1st")) {
+	VertexSelectionId selection = EERIE_OBJECT_GetSelection(io->obj, "1st");
+	if(!selection) {
+		// A body cut without a first-person part (the goblin): its head goes instead
+		selection = EERIE_OBJECT_GetSelection(io->obj, "head");
+	}
+	if(selection) {
 		for(EERIE_FACE & face : io->obj->facelist) {
 			for(VertexId vertex : face.vid) {
 				if(IsInSelection(io->obj, vertex, selection)) {
@@ -662,6 +667,10 @@ bool ARX_INTERACTIVE_USEMESH(Entity * io, const res::path & temp) {
 	
 	bool pbox = (!(io->ioflags & IO_FIX) && !(io->ioflags & IO_NPC));
 	io->obj = loadObject(io->usemesh, pbox).release();
+	io->faceHeadOn = 0xff;
+	if(io == entities.player()) {
+		LogInfo << "[face] the player's mesh is replaced by " << io->usemesh;
+	}
 	
 	EERIE_COLLISION_Cylinder_Create(io);
 	return true;

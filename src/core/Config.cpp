@@ -94,6 +94,7 @@ constexpr const int
 	quickLevelTransition = JumpToChangeLevel;
 const int enemyHealth = 1;
 const bool creatureBars = false;
+const bool targetFrame = true;
 
 const CutsceneAudience cutscenes = CutscenesForTrigger;
 
@@ -281,6 +282,7 @@ constexpr const std::string_view
 	quickLevelTransition = "quick_level_transition",
 	enemyHealth = "enemy_health",
 	creatureBars = "creature_health_bars",
+	targetFrame = "target_frame",
 	allowConsole = "allow_console";
 
 // Input key options
@@ -548,6 +550,7 @@ bool Config::save() {
 	writer.writeKey(Key::quickLevelTransition, int(input.quickLevelTransition));
 	writer.writeKey(Key::enemyHealth, input.enemyHealth);
 	writer.writeKey(Key::creatureBars, input.creatureBars);
+	writer.writeKey(Key::targetFrame, input.targetFrame);
 	if(input.allowConsole) {
 		// Only write this if true so that switching from release to debug builds enables the console
 		writer.writeKey(Key::allowConsole, input.allowConsole);
@@ -691,6 +694,7 @@ bool Config::init(const fs::path & file) {
 	input.quickLevelTransition = QuickLevelTransition(glm::clamp(quickLevelTransition, 0, 2));
 	input.enemyHealth = glm::clamp(reader.getKey(Section::Input, Key::enemyHealth, Default::enemyHealth), 1, 3);
 	input.creatureBars = reader.getKey(Section::Input, Key::creatureBars, Default::creatureBars);
+	input.targetFrame = reader.getKey(Section::Input, Key::targetFrame, Default::targetFrame);
 	input.allowConsole = reader.getKey(Section::Input, Key::allowConsole, Default::allowConsole);
 	
 	// Get action key settings

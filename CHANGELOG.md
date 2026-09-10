@@ -8,6 +8,23 @@ seen working, **known issues** are broken and understood, and **needs testing**
 was built with care but has not yet been proven in a live game - if you try
 one of those and it misbehaves, that report is exactly what we need.
 
+## 0.19
+
+- The target frame is painted now: parchment and iron, name strip, red health and blue mana bars with numbers.
+- Click a creature under the crosshair, however far, and it fills the frame; a blow still does too.
+- Creature names read "Goblin", not "A goblin."; the game's hints step right of the frame while it is up.
+- Enemy health bar: on / off, under Enemy health in the co-op menu.
+- Co-op menu: the arrows sit right by the choices on every arrowed row.
+- World edits, a text file of ours (data\game\studio-world.txt): show hidden things, put items into bodies and chests, say how a piece of armour looks.
+- The Mega and Vista runes hidden by the demo flag lie in the first level again.
+- The developers' hidden plate set can be worn, in the Ylside armour with its owner's red-and-gold paint.
+- God mode (invulnerability) now holds against curses too.
+- Player two no longer finds creatures' packs spilled on the floor after joining (fix 55).
+- Race, chosen at character creation beside Appearance: human, guard, goblin or goblin lord, saved with the character. The goblins are the game's own, walking, running, fighting and dying with their animations; the other player sees your race. Armour counts on a goblin but does not show.
+- Character creation offers 7 more faces, the game's bare male heads, each on the head shape it was painted for; listed in the world edits file.
+
+Both players need 0.19: the message that carries your look grew by one byte for the race.
+
 ## 0.18
 
 - Enemy health: NORMAL, DOUBLE or TRIPLE, in the co-op menu (the host's choice counts in co-op, and it works solo too).

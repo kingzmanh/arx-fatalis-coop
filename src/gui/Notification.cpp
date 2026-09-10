@@ -31,6 +31,7 @@
 #include "gui/Text.h"
 #include "gui/TextManager.h"
 #include "math/Rectangle.h"
+#include "net/CoopPlayer.h"
 
 struct Notification {
 	
@@ -79,19 +80,22 @@ void notification_check() {
 	
 	UseRenderState state(render2D());
 	
+	// Stepped right of the co-op target frame while that is up, so the two never overlap
+	float left = std::max(120.f * g_sizeRatio.x, coop::targetFrameRight() + 26.f * minSizeRatio());
+
 	for(Notification & notification : g_notifications) {
-		
+
 		arx_assert(!notification.text.empty());
-		
+
 		Rectf rect(
-			Vec2f(120 * g_sizeRatio.x - 16 * minSizeRatio(), igrec),
+			Vec2f(left - 16 * minSizeRatio(), igrec),
 			16 * minSizeRatio(),
 			16 * minSizeRatio()
 		);
-		
+
 		EERIEDrawBitmap(rect, .00001f, arx_logo_tc, Color::white);
-		
-		igrec += ARX_UNICODE_DrawTextInRect(hFontInGame, Vec2f(120.f * g_sizeRatio.x, igrec), 500 * g_sizeRatio.x,
+
+		igrec += ARX_UNICODE_DrawTextInRect(hFontInGame, Vec2f(left, igrec), 500 * g_sizeRatio.x,
 		                                    std::string(" ") += getLocalised(notification.text),
 		                                    Color::white, nullptr);
 		

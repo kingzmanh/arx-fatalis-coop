@@ -38,6 +38,9 @@
 #include "game/magic/RuneDraw.h"
 #include "graphics/Draw.h"
 #include "graphics/Renderer.h"
+#include "io/log/Logger.h"
+#include "scene/Object.h"
+#include "graphics/data/MeshManipulation.h"
 #include "graphics/effects/Halo.h"
 #include "graphics/particle/ParticleEffects.h"
 #include "graphics/texture/TextureStage.h"
@@ -1103,13 +1106,13 @@ void StatsPage::RenderBookPlayerCharacter() {
 				break;
 		}
 		
-		pos = Vec3f(8, 162, 75);
+		pos = ARX_PLAYER_BodyCreationPos(ARX_PLAYER_LocalBodyKind());
 		eLight1.pos.z = -90.f;
 		
 	} else {
 		
 		ePlayerAngle.setYaw(-20.f);
-		pos = Vec3f(20.f, 96.f, 260.f);
+		pos = ARX_PLAYER_BodySheetPos(ARX_PLAYER_LocalBodyKind());
 		
 		ARX_EQUIPMENT_AttachPlayerWeaponToHand();
 	}
@@ -1134,6 +1137,7 @@ void StatsPage::RenderBookPlayerCharacter() {
 		
 		EERIEDrawAnimQuatUpdate(eobj, player.bookAnimation, ePlayerAngle, pos, time, nullptr, true);
 		EERIEDrawAnimQuatRender(eobj, pos, nullptr, invisibility);
+		
 	}
 	
 	IN_BOOK_DRAW = 0;

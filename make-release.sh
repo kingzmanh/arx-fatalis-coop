@@ -120,6 +120,21 @@ if [ -f "$HERE/game/data/game/studio-spells.txt" ]; then
 	echo "  spells: $(grep -c '^spell ' "$OUT/data/game/studio-spells.txt")"
 fi
 
+# The world edits, same folder, same rules: ours, read over the game's own.
+if [ -f "$HERE/game/data/game/studio-world.txt" ]; then
+	mkdir -p "$OUT/data/game"
+	cp "$HERE/game/data/game/studio-world.txt" "$OUT/data/game/"
+	echo "  world edits: $(grep -c '^\(show\|put\) ' "$OUT/data/game/studio-world.txt")"
+fi
+
+# The mod's own interface art (the target frame and its bars), loose files the
+# game reads over its paks. Ours, made for the mod - never Arkane's.
+if [ -d "$HERE/game/data/graph/interface/coop" ]; then
+	mkdir -p "$OUT/data/graph/interface/coop"
+	cp "$HERE/game/data/graph/interface/coop/"*.png "$OUT/data/graph/interface/coop/"
+	echo "  interface art: $(ls "$OUT/data/graph/interface/coop" | wc -l) files"
+fi
+
 echo "  $(find "$OUT/data" -type f | wc -l) files"
 
 # What a player needs to know, in the folder rather than on a web page they

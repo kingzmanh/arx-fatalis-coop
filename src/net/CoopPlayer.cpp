@@ -38,6 +38,7 @@
 #include "game/Entity.h"
 #include "game/EntityManager.h"
 #include "game/Equipment.h"
+#include "graphics/data/MeshManipulation.h"
 #include "game/NPC.h"
 #include "game/Player.h"
 #include "graphics/Draw.h"
@@ -67,6 +68,7 @@
 #include "io/fs/Filesystem.h"
 #include "scene/ChangeLevel.h"
 #include "script/Script.h"
+#include "util/String.h"
 #include "platform/Time.h"
 
 //! Defined in ArxGame.cpp; the accumulator that shoves the player around.
@@ -198,15 +200,17 @@ Entity * createAvatarEntity() {
 
 	// Its own mesh copy. Sharing the player's would mean the first-person
 	// trimming that hides our own head also hides the other player's.
-	body->obj = loadObject("graph/obj3d/interactive/npc/human_base/human_base.teo", false).release();
-	if(!body->obj) {
+	unsigned char kind = g_avatar.bodyKind;
+	if(!ARX_PLAYER_LoadBody(body, kind)) {
 		LogWarning << "[coop] could not load the body mesh for the other player";
 		delete body;
 		return nullptr;
 	}
 
 	// Their face, not a repaint of ours. See paintAvatarFace.
-	paintAvatarFace(body, g_avatar.skin);
+	if(ARX_PLAYER_BodyHasFace(kind)) {
+		paintAvatarFace(body, g_avatar.skin);
+	}
 
 	body->ioflags = IO_NPC;
 	body->_npcdata = new IO_NPCDATA;
@@ -255,13 +259,17 @@ Entity * createAvatarEntity() {
 
 	// The head/neck/chest/belt groups let the body look up and down the way the
 	// player's does, so the other player's aim is readable.
+	VertexGroupId neck = EERIE_OBJECT_GetGroup(body->obj, "neck");
+	if(!neck) {
+		neck = EERIE_OBJECT_GetGroup(body->obj, "neck+head"); // the goblin's name for it
+	}
 	if(EERIE_OBJECT_GetGroup(body->obj, "head")
-	   && EERIE_OBJECT_GetGroup(body->obj, "neck")
+	   && neck
 	   && EERIE_OBJECT_GetGroup(body->obj, "chest")
 	   && EERIE_OBJECT_GetGroup(body->obj, "belt")) {
 		body->_npcdata->ex_rotate = new EERIE_EXTRA_ROTATE();
 		body->_npcdata->ex_rotate->group_number[0] = EERIE_OBJECT_GetGroup(body->obj, "head");
-		body->_npcdata->ex_rotate->group_number[1] = EERIE_OBJECT_GetGroup(body->obj, "neck");
+		body->_npcdata->ex_rotate->group_number[1] = neck;
 		body->_npcdata->ex_rotate->group_number[2] = EERIE_OBJECT_GetGroup(body->obj, "chest");
 		body->_npcdata->ex_rotate->group_number[3] = EERIE_OBJECT_GetGroup(body->obj, "belt");
 		body->_npcdata->ex_rotate->group_number[4] = EERIE_OBJECT_GetGroup(body->obj, "left_shoulder");
@@ -272,6 +280,7 @@ Entity * createAvatarEntity() {
 	}
 
 	shareAnimations(body);
+	ARX_PLAYER_BodyAnimations(body, g_avatar.bodyKind); // theirs, whatever ours is
 
 	ARX_INTERACTIVE_RemoveGoreOnIO(body);
 
@@ -293,6 +302,7 @@ Entity * createAvatarEntity() {
  * to do, and leave the new body in its underwear - which is exactly what it did.
  */
 std::string g_avatarHelmet, g_avatarArmour, g_avatarLeggings;
+u8 g_avatarBodyKind = 0xff;
 const Entity * g_dressedBody = nullptr;
 
 /*
@@ -344,6 +354,7 @@ void paintAvatarFace(Entity * body, u8 skin) {
 		return;
 	}
 
+	u8 wasSkin = g_paintedSkin;
 	g_paintedSkin = skin;
 
 	/*
@@ -354,7 +365,7 @@ void paintAvatarFace(Entity * body, u8 skin) {
 	 * in the same room wearing different faces - which the engine had never had
 	 * to do before.
 	 */
-	ARX_PLAYER_ApplySkin(body->obj, skin);
+	ARX_PLAYER_ApplySkin(body->obj, skin, wasSkin);
 
 }
 
@@ -364,21 +375,31 @@ void updateAvatarArmour(Entity * body) {
 		return;
 	}
 
-	if(body == g_dressedBody
+	if(body == g_dressedBody && g_avatarBodyKind == g_avatar.bodyKind
 	   && g_avatarHelmet == g_avatar.helmet && g_avatarArmour == g_avatar.armour
 	   && g_avatarLeggings == g_avatar.leggings) {
 		return;
 	}
 
 	g_dressedBody = body;
+	g_avatarBodyKind = g_avatar.bodyKind;
 	g_avatarHelmet = g_avatar.helmet;
 	g_avatarArmour = g_avatar.armour;
 	g_avatarLeggings = g_avatar.leggings;
 
-	delete body->obj;
-	body->obj = loadObject("graph/obj3d/interactive/npc/human_base/human_base.teo",
-	                       false).release();
-	if(!body->obj) {
+	unsigned char kind = g_avatar.bodyKind;
+	if(!ARX_PLAYER_LoadBody(body, kind)) {
+		return;
+	}
+
+	// Their face's own head shape, if it has one, under whatever helmet follows
+	if(ARX_PLAYER_BodyHasFace(kind)) {
+		ARX_PLAYER_PutFaceHead(body, g_avatar.skin);
+	}
+
+	if(!ARX_PLAYER_BodyWearsArmour(kind)) {
+		// No armour shape fits this body: what they wear counts, unseen
+		EERIE_Object_Precompute_Fast_Access(body->obj);
 		return;
 	}
 
@@ -425,9 +446,12 @@ void updateAvatarArmour(Entity * body) {
 	}
 
 	// The mesh that was just loaded wears the shared hero textures again.
-	paintAvatarFace(body, g_avatar.skin);
+	if(ARX_PLAYER_BodyHasFace(kind)) {
+		paintAvatarFace(body, g_avatar.skin);
+	}
 
 	EERIE_Object_Precompute_Fast_Access(body->obj);
+	ARX_PLAYER_KeepBodyTextures(body->obj);
 
 	// The weapon and the shield hang off the mesh that was just replaced, so
 	// they have to be hung again on the new one.
@@ -831,6 +855,7 @@ void destroyAvatarEntity() {
 	g_avatarHelmet.clear();
 	g_avatarArmour.clear();
 	g_avatarLeggings.clear();
+	g_avatarBodyKind = 0xff;
 	// And no face is painted. Without this the memory of the last body's skin
 	// outlives it, and a fresh body wearing the same number is left with the
 	// default face, because the paint step thinks nothing has changed.
@@ -858,6 +883,7 @@ void captureLocalAvatar(Avatar & out) {
 	out.dead = (player.lifePool.current <= 0.f);
 	out.combat = (player.Interface & INTER_COMBATMODE) != 0;
 	out.skin = player.skin;
+	out.bodyKind = ARX_PLAYER_LocalBodyKind();
 
 	if(self) {
 		out.anim0 = findAnimIndex(self, self->animlayer[0].cur_anim);
@@ -1094,7 +1120,13 @@ void updateAvatar() {
 	 * which is the default nobody picked.
 	 */
 	if(g_avatar.skin != g_paintedSkin) {
-		paintAvatarFace(body, g_avatar.skin);
+		if(ARX_PLAYER_FaceHeadMesh(g_avatar.skin) != ARX_PLAYER_FaceHeadMesh(g_paintedSkin)) {
+			// A different head shape: the body is built again, face and all
+			g_dressedBody = nullptr;
+			updateAvatarArmour(body);
+		} else {
+			paintAvatarFace(body, g_avatar.skin);
+		}
 	}
 	updateAvatarWeapon(body);
 	updateAvatarShield(body);
@@ -1258,8 +1290,8 @@ void saveGuestProfileIfDue(bool force) {
 		return;
 	}
 
-	// "ACP3" - ACP2 plus the bag count and a full copy of every carried thing
-	u32 magic = 0x33504341u;
+	// "ACP4" - ACP3 (bag count, full copies of carried things) plus the body they play in
+	u32 magic = 0x34504341u;
 	std::fwrite(&magic, sizeof(magic), 1, f);
 	/*
 	 * What they look like.
@@ -1270,6 +1302,8 @@ void saveGuestProfileIfDue(bool force) {
 	 */
 	u8 skin = player.skin;
 	std::fwrite(&skin, sizeof(skin), 1, f);
+	u8 bodyKind = ARX_PLAYER_LocalBodyKind();
+	std::fwrite(&bodyKind, sizeof(bodyKind), 1, f);
 	s32 level = player.level;
 	std::fwrite(&level, sizeof(level), 1, f);
 	s64 xp = player.xp;
@@ -1496,7 +1530,7 @@ void applyGuestIdentity() {
 
 	u32 magic = 0;
 	std::fread(&magic, sizeof(magic), 1, f);
-	if(magic != 0x31504341u && magic != 0x32504341u && magic != 0x33504341u) {
+	if(magic != 0x31504341u && magic != 0x32504341u && magic != 0x33504341u && magic != 0x34504341u) {
 		std::fclose(f);
 		ARX_PLAYER_MakeFreshHero();
 		LogWarning << "[coop] unreadable character profile; starting fresh";
@@ -1506,10 +1540,15 @@ void applyGuestIdentity() {
 	// ACP2 carries the face they chose; ACP1 predates it and keeps this one.
 	// ACP3 adds the bag count and a full copy of every carried thing.
 	bool hasFace = (magic != 0x31504341u);
-	bool hasCopies = (magic == 0x33504341u);
+	bool hasCopies = (magic == 0x33504341u || magic == 0x34504341u);
+	bool hasBody = (magic == 0x34504341u); // ACP4 adds the body they play in
 	u8 skin = player.skin;
+	u8 bodyKind = player.bodyKind;
 	if(hasFace) {
 		std::fread(&skin, sizeof(skin), 1, f);
+	}
+	if(hasBody) {
+		std::fread(&bodyKind, sizeof(bodyKind), 1, f);
 	}
 
 	s32 level = 0;
@@ -1536,7 +1575,13 @@ void applyGuestIdentity() {
 	 */
 	if(hasFace) {
 		player.skin = skin;
-		ARX_PLAYER_Restore_Skin();
+		player.bodyKind = (bodyKind < BodyKindCount) ? bodyKind : static_cast<u8>(BodyHuman);
+		// Rebuilt, not repainted: a face may bring its own head shape, or leave one behind
+		if(entities.get(EntityHandle_Player)) {
+			ARX_EQUIPMENT_RecreatePlayerMesh();
+		} else {
+			ARX_PLAYER_Restore_Skin();
+		}
 	}
 
 	if(hasCopies) {
@@ -1815,6 +1860,8 @@ void drawPartnerHealthOrb(const Rectf & mine) {
 
 }
 
+static std::string plateName(std::string_view name); // defined with the target frame below
+
 void drawCreatureHealthBars() {
 
 	if(!creatureBars() || !entities.player()) {
@@ -1862,7 +1909,7 @@ void drawCreatureHealthBars() {
 			std::string numbers = std::to_string(int(std::ceil(npc._npcdata->lifePool.current))) + " / "
 			                      + std::to_string(int(std::ceil(npc._npcdata->lifePool.max)));
 			drawTextCentered(hFontInGame, bar.center(), numbers, Color::white);
-			std::string_view name = getLocalised(npc.locname);
+			std::string name = plateName(getLocalised(npc.locname));
 			if(!name.empty()) {
 				drawTextCentered(hFontInGame, Vec2f(screen.x, bar.top - 11.f * scale), name, Color::white);
 			}
@@ -1880,6 +1927,29 @@ void drawCreatureHealthBars() {
 
 }
 
+/*
+ * The game's creature names read as sentences - "A goblin.", "An ylside." -
+ * which is right in a description line and wrong on a name plate. The
+ * article and the full stop go, and the first letter stands up.
+ */
+static std::string plateName(std::string_view name) {
+	std::string tidy(name);
+	while(!tidy.empty() && (tidy.back() == '.' || tidy.back() == ' ')) {
+		tidy.pop_back();
+	}
+	for(const char * article : { "a ", "an ", "the " }) {
+		size_t n = std::strlen(article);
+		if(tidy.size() > n && util::toLowercase(tidy.substr(0, n)) == article) {
+			tidy.erase(0, n);
+			break;
+		}
+	}
+	if(!tidy.empty() && tidy[0] >= 'a' && tidy[0] <= 'z') {
+		tidy[0] = char(tidy[0] - 'a' + 'A');
+	}
+	return tidy;
+}
+
 static EntityHandle g_targetHandle;
 static PlatformInstant g_targetHitAt = 0;
 
@@ -1891,9 +1961,64 @@ void noteTargetHit(const Entity & npc) {
 	g_targetHitAt = platform::getTime();
 }
 
+bool targetFrameShows(const Entity * entity) {
+	if(!config.input.targetFrame || !entity || g_targetHitAt == PlatformInstant(0)
+	   || entity->index() != g_targetHandle) {
+		return false;
+	}
+	return platform::getTime() - g_targetHitAt <= 8000ms;
+}
+
+bool targetCreatureAt(const Vec2f & screen) {
+	/*
+	 * The game's own pick refuses creatures beyond a few hundred units, which
+	 * is right for using and talking and wrong for looking. This one takes
+	 * any living creature whose drawn box is under the point, nearest first.
+	 */
+	Entity * best = nullptr;
+	float bestDist = 0.f;
+	for(Entity & npc : entities.inScene(IO_NPC)) {
+		if(npc == *entities.player() || !npc._npcdata || isAvatarEntity(&npc)
+		   || npc._npcdata->lifePool.current <= 0.f) {
+			continue;
+		}
+		const EERIE_2D_BBOX & box = npc.bbox2D;
+		if(box.min.x > box.max.x || screen.x < box.min.x || screen.x > box.max.x
+		   || screen.y < box.min.y || screen.y > box.max.y) {
+			continue;
+		}
+		float dist = glm::distance(npc.pos, entities.player()->pos);
+		if(!best || dist < bestDist) {
+			best = &npc;
+			bestDist = dist;
+		}
+	}
+	if(!best) {
+		return false;
+	}
+	noteTargetHit(*best);
+	return true;
+}
+
+float targetFrameRight() {
+	if(!config.input.targetFrame || g_targetHitAt == PlatformInstant(0)) {
+		return 0.f;
+	}
+	Entity * npc = entities.get(g_targetHandle);
+	if(!npc || !(npc->ioflags & IO_NPC) || !npc->_npcdata) {
+		return 0.f;
+	}
+	bool dead = npc->_npcdata->lifePool.current <= 0.f;
+	if(platform::getTime() - g_targetHitAt > (dead ? 3000ms : 8000ms)) {
+		return 0.f;
+	}
+	// The same geometry drawTargetFrame() uses: 5 in from the corner, 161 wide
+	return (5.f + 161.f) * minSizeRatio();
+}
+
 void drawTargetFrame() {
 
-	if(g_targetHitAt == PlatformInstant(0)) {
+	if(!config.input.targetFrame || g_targetHitAt == PlatformInstant(0)) {
 		return;
 	}
 	Entity * npc = entities.get(g_targetHandle);
@@ -1902,29 +2027,99 @@ void drawTargetFrame() {
 	}
 	float max = std::max(1.f, npc->_npcdata->lifePool.max);
 	float cur = glm::clamp(npc->_npcdata->lifePool.current, 0.f, max);
+	float fraction = cur / max;
 	bool dead = npc->_npcdata->lifePool.current <= 0.f;
 	PlatformDuration since = platform::getTime() - g_targetHitAt;
 	if(since > (dead ? 3000ms : 8000ms)) {
 		return;
 	}
+	const bool hasMana = npc->_npcdata->manaPool.max > 0.f;
+	float maxMana = std::max(1.f, npc->_npcdata->manaPool.max);
+	float mana = glm::clamp(npc->_npcdata->manaPool.current, 0.f, maxMana);
 
 	/*
-	 * The plate, drawn from plain coloured quads in the shape other games
-	 * use: a thin gold rim, a dark body, a name strip along the top, a red
-	 * health bar with the numbers on it and the percent at its end, and a
-	 * thin blue mana bar under it when the creature has mana at all.
+	 * The painted frame: parchment and iron, a name strip along the top, an
+	 * empty trough for health and a thinner one for mana. Where the troughs
+	 * sit was measured off the picture once, as fractions of its size, so
+	 * the bars land inside them at any resolution. The strips are cut to the
+	 * fraction rather than squashed, so a half-full bar shows half the
+	 * texture, not all of it crammed into half the room.
 	 */
+	static TextureContainer * frameTex = nullptr;
+	static TextureContainer * healthTex = nullptr;
+	static TextureContainer * manaTex = nullptr;
+	static bool looked = false;
+	if(!looked) {
+		looked = true;
+		frameTex = TextureContainer::LoadUI("graph/interface/coop/target_frame");
+		healthTex = TextureContainer::LoadUI("graph/interface/coop/target_health");
+		manaTex = TextureContainer::LoadUI("graph/interface/coop/target_mana");
+		if(!frameTex || !healthTex || !manaTex) {
+			LogWarning << "[coop] target frame art missing; drawing the plain one";
+		}
+	}
+
 	const float s = minSizeRatio();
-	const Vec2f origin(18.f * s, 18.f * s);
+	const Vec2f origin(5.f * s, 5.f * s);
+
+	if(frameTex && healthTex && manaTex) {
+
+		const float w = 161.f * s;
+		const float h = w / 3.167f; // the picture's own proportions
+		Rectf body(origin, w, h);
+
+		// Measured off the picture: the troughs' insides and the name strip
+		auto part = [&](float x0, float y0, float x1, float y1) {
+			return Rectf(origin + Vec2f(x0 * w, y0 * h), (x1 - x0) * w, (y1 - y0) * h);
+		};
+		Rectf healthSlot = part(0.0465f, 0.3494f, 0.9526f, 0.6087f);
+		Rectf manaSlot = part(0.0465f, 0.7307f, 0.9526f, 0.8471f);
+		Rectf nameStrip = part(0.03f, 0.075f, 0.97f, 0.212f);
+
+		EERIEDrawBitmap(body, 0.003f, frameTex, Color::white);
+
+		auto fillBar = [&](const Rectf & slot, TextureContainer * tex, float amount, Color tint) {
+			if(amount <= 0.f) {
+				return;
+			}
+			Rectf fill(slot.topLeft(), std::max(1.f, slot.width() * amount), slot.height());
+			EERIEDrawBitmap_uv(fill, 0.002f, tex, tint, 0.f, 0.f, amount, 1.f);
+		};
+		fillBar(healthSlot, healthTex, fraction, dead ? Color::gray(0.45f) : Color::white);
+		if(hasMana) {
+			fillBar(manaSlot, manaTex, mana / maxMana, Color::white);
+		}
+
+		if(hFontInBook) {
+			std::string name = plateName(getLocalised(npc->locname));
+			if(name.empty()) {
+				name = npc->idString();
+			}
+			drawTextCentered(hFontInBook, nameStrip.center(), name,
+			                 dead ? Color::gray(0.6f) : Color::rgb(1.f, 0.85f, 0.4f));
+			std::string numbers = std::to_string(int(std::ceil(cur))) + " / " + std::to_string(int(std::ceil(max)));
+			drawTextCentered(hFontInBook, healthSlot.center(), numbers, Color::white);
+			if(hasMana) {
+				std::string manaText = std::to_string(int(std::ceil(mana))) + " / " + std::to_string(int(std::ceil(maxMana)));
+				drawTextCentered(hFontInBook, manaSlot.center(), manaText, Color::white);
+			}
+		}
+		return;
+	}
+
+	/*
+	 * No art: plain coloured quads in the same shape. A thin gold rim, a dark
+	 * body, a name strip along the top, a red health bar with the numbers on
+	 * it and the percent at its end, a thin blue mana bar under it if any.
+	 */
 	const float w = 300.f * s;
-	const bool hasMana = npc->_npcdata->manaPool.max > 0.f;
 	const float h = (hasMana ? 84.f : 66.f) * s;
 
 	Rectf body(origin, w, h);
 	Rectf rim(origin - Vec2f(2.f * s), w + 4.f * s, h + 4.f * s);
 	Rectf nameStrip(origin, w, 26.f * s);
 	Rectf healthBack(origin + Vec2f(8.f * s, 32.f * s), w - 16.f * s, 22.f * s);
-	Rectf healthFill(healthBack.topLeft(), std::max(1.f, healthBack.width() * (cur / max)), healthBack.height());
+	Rectf healthFill(healthBack.topLeft(), std::max(1.f, healthBack.width() * fraction), healthBack.height());
 
 	EERIEDrawBitmap(rim, 0.004f, nullptr, Color::rgb(0.62f, 0.5f, 0.2f));
 	EERIEDrawBitmap(body, 0.0035f, nullptr, Color::rgb(0.06f, 0.06f, 0.09f));
@@ -1933,8 +2128,6 @@ void drawTargetFrame() {
 	EERIEDrawBitmap(healthFill, 0.002f, nullptr, dead ? Color::gray(0.35f) : Color::rgb(0.8f, 0.1f, 0.1f));
 
 	if(hasMana) {
-		float maxMana = std::max(1.f, npc->_npcdata->manaPool.max);
-		float mana = glm::clamp(npc->_npcdata->manaPool.current, 0.f, maxMana);
 		Rectf manaBack(origin + Vec2f(8.f * s, 60.f * s), w - 16.f * s, 12.f * s);
 		Rectf manaFill(manaBack.topLeft(), std::max(1.f, manaBack.width() * (mana / maxMana)), manaBack.height());
 		EERIEDrawBitmap(manaBack, 0.0025f, nullptr, Color::rgb(0.05f, 0.08f, 0.25f));
@@ -1942,17 +2135,15 @@ void drawTargetFrame() {
 	}
 
 	if(hFontInGame) {
-		std::string_view name = getLocalised(npc->locname);
-		std::string fallback;
+		std::string name = plateName(getLocalised(npc->locname));
 		if(name.empty()) {
-			fallback = npc->idString();
-			name = fallback;
+			name = npc->idString();
 		}
 		drawTextCentered(hFontInGame, nameStrip.center(), name,
 		                 dead ? Color::gray(0.6f) : Color::rgb(1.f, 0.82f, 0.3f));
 		std::string numbers = std::to_string(int(std::ceil(cur))) + " / " + std::to_string(int(std::ceil(max)));
 		drawTextCentered(hFontInGame, healthBack.center(), numbers, Color::white);
-		std::string percent = std::to_string(int(std::round(cur / max * 100.f))) + "%";
+		std::string percent = std::to_string(int(std::round(fraction * 100.f))) + "%";
 		drawTextCentered(hFontInGame, Vec2f(healthBack.right - 24.f * s, healthBack.center().y), percent, Color::white);
 	}
 

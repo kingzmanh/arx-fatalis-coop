@@ -235,6 +235,7 @@ public:
 		bool improvedBowAim;
 		int enemyHealth; //!< how much life creatures get: 1 normal, 2 double, 3 triple
 		bool creatureBars; //!< health bars with names over creatures in view
+		bool targetFrame; //!< the top-left frame for the creature being fought
 		QuickLevelTransition quickLevelTransition;
 		bool allowConsole;
 		

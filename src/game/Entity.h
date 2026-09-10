@@ -284,6 +284,7 @@ public:
 
 	res::path usemesh; // Alternate Mesh/path
 	EERIE_3DOBJ * tweaky; // tweaked original obj backup
+	unsigned char faceHeadOn = 0xff; //!< the face whose own head shape this mesh carries, 0xff none (see ARX_PLAYER_PutFaceHead)
 	audio::SourcedSample m_sound;
 	ItemType type_flags; // object type (weapon,goblin...)
 	long scriptload; // Is This object Loaded by Script ?

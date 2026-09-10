@@ -139,6 +139,7 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 #include "math/Vector.h"
 
 #include "net/CoopNet.h"
+#include "game/magic/StudioWorld.h"
 #include "net/CoopPlayer.h"
 #include "net/CoopWorld.h"
 
@@ -2109,6 +2110,16 @@ void ArxGame::render() {
 			}
 		}
 		
+		studioWorldUpdate();
+
+		// A click on a creature under the crosshair puts it in the target frame,
+		// however far it is; the frame would otherwise wait for a blow to land.
+		if(eeMouseDown1() && !BLOCK_PLAYER_CONTROLS && ARXmenu.mode() == Mode_InGame
+		   && !g_cursorOverBook && eMouseState != MOUSE_IN_NOTE) {
+			bool crosshair = (player.Interface & INTER_COMBATMODE) || PLAYER_MOUSELOOK_ON;
+			coop::targetCreatureAt(crosshair ? Vec2f(g_size.center()) : Vec2f(DANAEMouse));
+		}
+
 		if((player.Interface & INTER_COMBATMODE) || PLAYER_MOUSELOOK_ON) {
 			FlyingOverIO = nullptr; // Avoid to check with those modes
 		} else {

@@ -205,6 +205,27 @@ last blow - the way other games show the thing you are fighting.
 Type `/hp` in chat to also see every creature's name and health over its
 head, and `/hp` again to hide it.
 
+## Faces and races
+
+Character creation has more to choose from.
+
+**Appearance** cycles the game's four faces and then seven more: Kultar,
+Erzog, Ortiern, Calpal, Thorgal and the two hidden hero heads. Each is painted
+on the head shape it was made for, so Kultar brings Kultar's head. The list
+lives in `data\game\studio-world.txt` as `face` lines; delete a line and that
+face is gone.
+
+**Race**, the button beside it, is the body you play in: **human**, **guard**
+(the hero in the guards' chainmail), **goblin** or **goblin lord**. The goblins
+are the game's own creatures, and walk, run, fight and die with their own
+animations. The other player sees your race, it is saved with your character,
+and armour still counts on a goblin even though no armour shape fits one.
+
+`data\game\studio-world.txt` is the mod's world edits file, read after every
+level loads: it can show hidden things, put items into bodies and chests, and
+say how a piece of armour looks. The Mega and Vista runes, hidden since the
+demo, lie in the first level again because of two lines in it.
+
 ## Voice chat
 
 Turn on VOICE CHAT in the co-op menu and hold **V** to speak.

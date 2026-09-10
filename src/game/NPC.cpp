@@ -702,7 +702,13 @@ int enemyHealthSetting() {
  * it is saved and loaded with the creature and survives a level change. A
  * creature without one is at its scripted life: multiplier one.
  */
-static const char * const EnemyHealthVar = "\xc2\xa7" "coop_hp";
+/*
+ * The sigil is the script language's one-byte section sign, which is also
+ * what the save format types a local long by. Written as two bytes (UTF-8)
+ * the save could not type it and threw the whole creature record away on
+ * load, pack included.
+ */
+static const char * const EnemyHealthVar = "\xa7" "coop_hp";
 
 static int carriedEnemyHealth(const Entity & npc) {
 	long carried = GETVarValueLong(npc.m_variables, EnemyHealthVar);

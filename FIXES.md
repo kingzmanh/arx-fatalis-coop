@@ -1267,3 +1267,73 @@ just made it a run of them.
 once, in the voice update, after the choice has rested for 400 ms, so a
 run of presses costs one open at the end. Found and confirmed by the
 user on this machine's three virtual microphones.
+
+## 53. God mode did not stop a curse from killing you
+
+**The problem.** With `invulnerability -p on` set, spawning the developers'
+hidden boss killed the player at once.
+
+**Why did it happen?** Her script casts Curse at level 50 the moment she
+exists. Curse subtracts its level from constitution, maximum life is
+constitution times level plus two, so the pool went negative, current life
+was clamped to it, and the death check "life at or below zero" fired. No
+damage was ever dealt, so the invulnerability guard at the top of the damage
+function, the only place it was checked, never had a say. Vanilla has the
+same hole.
+
+**The fix.** While invulnerable the life pool is held at one or more when
+stats are recomputed, and the death check refuses to fire. Confirmed by the
+user: she casts, the bar collapses to a sliver, you stay standing.
+
+## 54. A face with its own head shape lost its head after the first level
+
+**The problem.** A face from the world edits file that brings its own head
+mesh (Kultar's) looked right on the other player's screen, but on your own
+character sheet and in cutscenes the head was gone, dark, or a smear of
+hair-like garbage, from the first level on.
+
+**Why did it happen?** Textures that come into the game through a mesh are
+flagged as the level's, and the engine frees every level texture when a level
+unloads. Kultar's head texture came in through the head mesh, so the first
+level change freed it while your body, which outlives levels, still pointed
+at it: freed memory drawn as a texture. `TextureContainer::Load` hands back an
+existing texture by name whatever flags it is asked for, so the later face
+paint could not rescue it. The hero's own faces survive only because the game
+loads them at startup inside a keep-forever window. The other player's copy of
+you is rebuilt after every level load, which is why it never showed it.
+Proven by the log: the head's vertices sat exactly where the hero's do, on the
+same mesh before and after the level, and only the texture could differ.
+
+**The fix.** After a body is built, every texture it wears is marked as kept
+(`ARX_PLAYER_KeepBodyTextures`), the way the hero's own are. Applied to the
+player's body, the face head, and the other player's copy. Confirmed by the
+user: Kultar's head stays through the first level, in the book and in the
+cutscene.
+
+## 55. Player two saw clubs, potions and food lying about that player one did not
+
+**The problem.** After joining, the second player found goblins' clubs, wine,
+fish and bread lying on the jail floor, sometimes in a heap, where the host
+saw nothing. They could be picked up.
+
+**Why did it happen?** Each of those items belongs in a goblin's pack. The
+host's live save, which the joining player loads as their world, carried our
+enemy-health tag on every creature, a script variable whose name began with
+the two-byte UTF-8 section sign. The save format types a variable by its
+first byte and knows only the one-byte sign, so the writer wrote that
+variable untyped and the reader, meeting it, gave the whole creature record
+up: `Save file is corrupted, trying to fix goblin_base_0012` in the guest's
+log, once per tagged goblin. A record given up on never has its pack put
+back, and pack items are loaded as in-scene until a pack claims them, so
+they lay where the save last had them. The host never reads its own live
+save, so it never saw it. Proven by the guest's log naming the tag, and by
+the world file the guest received, in which every stray item sits in a
+goblin's pack.
+
+**The fix.** Three parts. The tag's name uses the one-byte section sign the
+script language and the save format share. The save writer leaves out any
+variable it cannot type rather than writing it as garbage. The reader drops
+such a variable and keeps the record, so saves written by the old build load
+whole too. Confirmed by the user: a new game, player two joining with a
+non-official face, nothing on the floor; the guest's log shows every pack
+restored and no record given up.

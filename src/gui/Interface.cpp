@@ -119,6 +119,7 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 #include "math/Vector.h"
 
 #include "net/CoopNet.h"
+#include "net/CoopPlayer.h"
 
 #include "physics/Collisions.h"
 #include "physics/Physics.h"
@@ -1619,6 +1620,10 @@ void ArxGame::manageEntityDescription() {
 	
 	if(BLOCK_PLAYER_CONTROLS || (player.Interface & INTER_COMBATMODE) || g_draggedEntity
 	   || !FlyingOverIO || FlyingOverIO->locname.empty()) {
+		return;
+	}
+	// The target frame already names the creature being fought; saying it twice reads as a glitch
+	if(coop::targetFrameShows(FlyingOverIO)) {
 		return;
 	}
 	

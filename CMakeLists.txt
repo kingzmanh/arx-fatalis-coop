@@ -1058,6 +1058,7 @@ set(GAME_SOURCES
 	src/game/magic/SpellData.cpp
 	src/game/magic/SpellRecognition.cpp
 	src/game/magic/StudioSpells.cpp
+	src/game/magic/StudioWorld.cpp
 	src/game/magic/spells/SpellsLvl01.cpp
 	src/game/magic/spells/SpellsLvl02.cpp
 	src/game/magic/spells/SpellsLvl03.cpp

@@ -43,6 +43,9 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 #include "animation/AnimationRender.h"
 
+#include "game/Inventory.h"
+#include "game/magic/StudioWorld.h"
+
 #include <stddef.h>
 #include <cstdlib>
 #include <cstring>
@@ -365,7 +368,13 @@ void Cedric_ApplyLightingFirstPartRefactor(Entity & io) {
 							}
 						} else {
 							io.sfx_flag &= ~SFX_TYPE_YLSIDE_DEATH;
-							ARX_INTERACTIVE_DestroyIOdelayed(&io);
+							if(studioWorldKeepsBody(io)) {
+								// The mod's world edits asked for this body to stay: a
+								// corpse to open, given its pack and dressed next frame.
+								studioWorldBodyKept(io);
+							} else {
+								ARX_INTERACTIVE_DestroyIOdelayed(&io);
+							}
 						}
 					}
 				}

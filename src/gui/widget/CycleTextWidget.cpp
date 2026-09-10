@@ -64,6 +64,18 @@ void CycleTextWidget::selectLast() {
 	m_value = int(m_entries.size() - 1);
 }
 
+void CycleTextWidget::setSnug(float padding) {
+	
+	m_snug = true;
+	m_pad = padding;
+	
+	// The choice box shrinks to its padding; entries widen it as they come
+	m_content.left = m_content.right - 2.f * padding;
+	m_left->setPosition(Vec2f(m_content.left - m_left->m_rect.width(),
+	                          m_rect.center().y - m_left->m_rect.height() / 2));
+	
+}
+
 void CycleTextWidget::addEntry(std::string_view label) {
 	
 	std::unique_ptr<TextWidget> widget = std::make_unique<TextWidget>(m_font, label);
@@ -81,7 +93,8 @@ void CycleTextWidget::addEntry(std::string_view label) {
 	}
 	m_rect.bottom = m_rect.top + std::max(m_rect.height(), widget->m_rect.height());
 	
-	m_content.left = m_content.right - std::max(m_content.width(), widget->m_rect.width());
+	float wanted = widget->m_rect.width() + (m_snug ? 2.f * m_pad : 0.f);
+	m_content.left = m_content.right - std::max(m_content.width(), wanted);
 	m_content.bottom = m_content.top + m_rect.height();
 	
 	if(!m_label) {
