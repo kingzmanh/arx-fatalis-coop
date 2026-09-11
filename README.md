@@ -250,8 +250,11 @@ While the camera is out:
   key on the right-hand page to empty it. You can also drag a spell onto the
   bar at the bottom of the screen.
 - **Hold Left Alt to give the mouse back to the game**: picking things up off
-  the floor, dragging them, equipping them. A press, a drag and a release is
-  the same gesture as swinging the camera, so a key has to say which you meant.
+  the floor and dragging them is Left Alt and the left button. A press, a drag
+  and a release is the same gesture as swinging the camera, so a key has to say
+  which you meant.
+- **To equip something, hold Left Alt and press F.** F is the cursor, as it
+  always was; Alt keeps the mouse from flying the camera while you use it.
 - **I** opens your bag, which sits beside the bar rather than under it.
 - **Numpad0** draws your weapon, because Tab is targeting now.
 - **Z** is push to talk, because the camera wanted V.
