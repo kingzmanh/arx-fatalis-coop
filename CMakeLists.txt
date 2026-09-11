@@ -1230,6 +1230,7 @@ set(NET_SOURCES
 	src/net/CoopNet.cpp
 	src/net/CoopPortMap.cpp
 	src/net/CoopVoice.cpp
+	src/net/CoopMmo.cpp
 	src/net/CoopPlayer.cpp
 	src/net/CoopWorld.cpp
 )

@@ -138,6 +138,7 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 #include "math/Rectangle.h"
 #include "math/Vector.h"
 
+#include "net/CoopMmo.h"
 #include "net/CoopNet.h"
 #include "game/magic/StudioWorld.h"
 #include "net/CoopPlayer.h"
@@ -1371,13 +1372,24 @@ void ArxGame::updateFirstPersonCamera() {
 	Vec3f targetPos = g_playerCamera.m_pos;
 	Anglef targetAngle = g_playerCamera.angle;
 	
+	/*
+	 * MMO third person borrows the same external-view flag the cutscene camera
+	 * uses - that flag is what puts a body on the player, hides the first
+	 * person arms, moves the sound listener and so on - but not its camera.
+	 * The cutscene boom lags behind on purpose and looks down from a fixed
+	 * angle, which is right for watching a conversation and wrong for playing.
+	 * So while MMO third person is on, the eye is worked out exactly as it is
+	 * in first person and the camera is pushed straight back from it.
+	 */
+	const bool mmoThirdPerson = coop::beginCameraFrame();
+	
 	if(eyeball.isActive()) {
 		
 		targetPos = eyeball.getPosition();
 		targetAngle = eyeball.getAngle();
 		EXTERNALVIEW = true;
 		
-	} else if(EXTERNALVIEW) {
+	} else if(EXTERNALVIEW && !mmoThirdPerson) {
 		
 		for(long l = 0; l < 250; l += 10) {
 			Vec3f tt = player.pos;
@@ -1436,7 +1448,22 @@ void ArxGame::updateFirstPersonCamera() {
 		
 	}
 	
-	if(EXTERNALVIEW) {
+	if(mmoThirdPerson && !eyeball.isActive()) {
+		
+		coop::notePlayerEye(g_playerCamera.m_pos);
+		
+		/*
+		 * The camera's own heading, not the character's. They part company as
+		 * soon as the player swings the view without turning the body, or the
+		 * body is turned for them to aim a spell.
+		 */
+		g_playerCamera.angle = coop::cameraAngle();
+		g_playerCamera.m_pos = coop::thirdPersonCameraPos(g_playerCamera.m_pos, g_playerCamera.angle);
+		g_playerCameraStablePos = g_playerCamera.m_pos;
+		
+		EXTERNALVIEW = true;
+		
+	} else if(EXTERNALVIEW) {
 		g_playerCameraStablePos = g_playerCamera.m_pos = (g_playerCamera.m_pos + targetPos) * 0.5f;
 		g_playerCamera.angle = interpolate(g_playerCamera.angle, targetAngle, 0.1f);
 	}
@@ -1650,23 +1677,32 @@ void ArxGame::updateInput() {
 			EERIEMouseButton &= ~1;
 		}
 		
-		if(GInput->actionNowPressed(CONTROLS_CUST_ACTION)) {
-			if(EERIEMouseButton & 4) {
-				EERIEMouseButton &= ~1;
-			} else {
-				EERIEMouseButton |= 1;
+		/*
+		 * With the camera out behind the body the mouse buttons belong to it
+		 * until they prove otherwise, so they are handed over whole rather
+		 * than fought over one at a time.
+		 */
+		if(!coop::mmoMouseButtons()) {
+			
+			if(GInput->actionNowPressed(CONTROLS_CUST_ACTION)) {
+				if(EERIEMouseButton & 4) {
+					EERIEMouseButton &= ~1;
+				} else {
+					EERIEMouseButton |= 1;
+				}
 			}
-		}
-		if(GInput->actionNowReleased(CONTROLS_CUST_ACTION)) {
-			EERIEMouseButton &= ~1;
-			EERIEMouseButton &= ~4;
-		}
-		
-		if(GInput->actionNowPressed(CONTROLS_CUST_USE)) {
-			EERIEMouseButton |= 2;
-		}
-		if(GInput->actionNowReleased(CONTROLS_CUST_USE)) {
-			EERIEMouseButton &= ~2;
+			if(GInput->actionNowReleased(CONTROLS_CUST_ACTION)) {
+				EERIEMouseButton &= ~1;
+				EERIEMouseButton &= ~4;
+			}
+			
+			if(GInput->actionNowPressed(CONTROLS_CUST_USE)) {
+				EERIEMouseButton |= 2;
+			}
+			if(GInput->actionNowReleased(CONTROLS_CUST_USE)) {
+				EERIEMouseButton &= ~2;
+			}
+			
 		}
 		
 	} else {
@@ -1815,6 +1851,13 @@ void ArxGame::updateLevel() {
 		
 	}
 	
+	/*
+	 * The MMO controls run here, before movement and before the animations:
+	 * auto-attack decides whether the attack button is held this frame and
+	 * the combat animations read that decision a few lines below.
+	 */
+	coop::updateMmo();
+
 	ARX_PLAYER_Manage_Movement();
 
 	ARX_PLAYER_Manage_Visual();
@@ -2115,9 +2158,18 @@ void ArxGame::render() {
 		// A click on a creature under the crosshair puts it in the target frame,
 		// however far it is; the frame would otherwise wait for a blow to land.
 		if(eeMouseDown1() && !BLOCK_PLAYER_CONTROLS && ARXmenu.mode() == Mode_InGame
-		   && !g_cursorOverBook && eMouseState != MOUSE_IN_NOTE) {
+		   && !g_cursorOverBook && !coop::cursorOverActionBar() && eMouseState != MOUSE_IN_NOTE) {
 			bool crosshair = (player.Interface & INTER_COMBATMODE) || PLAYER_MOUSELOOK_ON;
-			coop::targetCreatureAt(crosshair ? Vec2f(g_size.center()) : Vec2f(DANAEMouse));
+			if(!coop::targetCreatureAt(crosshair ? Vec2f(g_size.center()) : Vec2f(DANAEMouse))
+			   && coop::thirdPerson()) {
+				/*
+				 * Clicked on no creature, so nothing is targeted any more.
+				 * MMO mode only: in classic play the frame is a memory of the
+				 * last blow and clearing it on a stray click would be noise,
+				 * but here it is a choice, and a choice has to be undoable.
+				 */
+				coop::clearTarget();
+			}
 		}
 
 		if((player.Interface & INTER_COMBATMODE) || PLAYER_MOUSELOOK_ON) {

@@ -55,6 +55,7 @@
 #include "io/log/Logger.h"
 #include "math/Angle.h"
 #include "net/CoopInterp.h"
+#include "net/CoopMmo.h"
 #include "net/CoopNet.h"
 #include "net/CoopWorld.h"
 #include "physics/Collisions.h"
@@ -1953,6 +1954,48 @@ static std::string plateName(std::string_view name) {
 static EntityHandle g_targetHandle;
 static PlatformInstant g_targetHitAt = 0;
 
+/*!
+ * Whether the frame is still up for the creature it remembers.
+ *
+ * Classic play forgets: the frame is a few seconds of memory of the last blow,
+ * so it clears itself once a fight is over and never nags. MMO mode keeps it,
+ * because there the frame is not a memory but a choice - the thing the bar
+ * casts at and auto-attack swings at - and a target that expired on its own
+ * would leave a spell key doing nothing for no visible reason. A dead one
+ * still fades, in both modes.
+ */
+static bool targetStillUp(bool dead) {
+	
+	if(thirdPerson() && !dead) {
+		return true;
+	}
+	
+	return platform::getTime() - g_targetHitAt <= (dead ? 3000ms : 8000ms);
+}
+
+void clearTarget() {
+	g_targetHandle = EntityHandle();
+	g_targetHitAt = 0;
+}
+
+Entity * targetEntity() {
+	
+	if(g_targetHitAt == PlatformInstant(0)) {
+		return nullptr;
+	}
+	
+	Entity * npc = entities.get(g_targetHandle);
+	if(!npc || !(npc->ioflags & IO_NPC) || !npc->_npcdata) {
+		return nullptr;
+	}
+	
+	if(!targetStillUp(npc->_npcdata->lifePool.current <= 0.f)) {
+		return nullptr;
+	}
+	
+	return npc;
+}
+
 void noteTargetHit(const Entity & npc) {
 	if(!(npc.ioflags & IO_NPC) || isAvatarEntity(&npc)) {
 		return;
@@ -1966,7 +2009,7 @@ bool targetFrameShows(const Entity * entity) {
 	   || entity->index() != g_targetHandle) {
 		return false;
 	}
-	return platform::getTime() - g_targetHitAt <= 8000ms;
+	return targetStillUp(false);
 }
 
 bool targetCreatureAt(const Vec2f & screen) {
@@ -2009,7 +2052,7 @@ float targetFrameRight() {
 		return 0.f;
 	}
 	bool dead = npc->_npcdata->lifePool.current <= 0.f;
-	if(platform::getTime() - g_targetHitAt > (dead ? 3000ms : 8000ms)) {
+	if(!targetStillUp(dead)) {
 		return 0.f;
 	}
 	// The same geometry drawTargetFrame() uses: 5 in from the corner, 161 wide
@@ -2029,8 +2072,7 @@ void drawTargetFrame() {
 	float cur = glm::clamp(npc->_npcdata->lifePool.current, 0.f, max);
 	float fraction = cur / max;
 	bool dead = npc->_npcdata->lifePool.current <= 0.f;
-	PlatformDuration since = platform::getTime() - g_targetHitAt;
-	if(since > (dead ? 3000ms : 8000ms)) {
+	if(!targetStillUp(dead)) {
 		return;
 	}
 	const bool hasMana = npc->_npcdata->manaPool.max > 0.f;

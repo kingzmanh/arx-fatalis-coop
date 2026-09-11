@@ -28,6 +28,7 @@
 #include "core/GameTime.h"
 
 #include "input/Input.h"
+#include "net/CoopMmo.h"
 
 #include "game/Player.h"
 #include "game/Inventory.h"
@@ -496,7 +497,12 @@ void ARX_INTERFACE_RenderCursor(bool flag) {
 			alpha *= std::max(player.m_bowAimRatio - 0.75f, 0.f) / 0.25f;
 		}
 		
-		if(TRUE_PLAYER_MOUSELOOK_ON && config.interface.showCrosshair
+		/*
+		 * No crosshair over the shoulder. In third person the centre of the
+		 * screen is the back of the player's head rather than where a blow
+		 * would land, so the cross sits on their scalp and means nothing.
+		 */
+		if(TRUE_PLAYER_MOUSELOOK_ON && config.interface.showCrosshair && !coop::thirdPerson()
 		   && !(player.Interface & (INTER_PLAYERBOOK)) && !g_note.isOpen() && alpha > 0.f) {
 			
 			cursorAnimatedHand.reset();

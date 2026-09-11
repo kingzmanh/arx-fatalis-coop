@@ -51,6 +51,7 @@
 #include "gui/TextManager.h"
 #include "gui/hud/PlayerInventory.h"
 #include "input/Input.h"
+#include "net/CoopMmo.h"
 #include "scene/GameSound.h"
 #include "scene/Interactive.h"
 #include "script/Script.h"
@@ -1448,6 +1449,14 @@ void SpellsPage::drawSpells() const {
 					}
 					
 					player.SpellToMemorize.lTimeCreation = g_gameTime.now();
+					
+					/*
+					 * The same press also picks the spell up, so it can be
+					 * dropped on the MMO action bar along the bottom of the
+					 * screen. Memorising it still happens either way - let go
+					 * anywhere but on the bar and nothing else has changed.
+					 */
+					coop::beginSpellDrag(spellInfo.spellid);
 				}
 			} else {
 				color = Color(168, 208, 223);

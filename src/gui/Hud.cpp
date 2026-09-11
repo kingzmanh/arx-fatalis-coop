@@ -60,6 +60,7 @@
 
 #include "math/RandomVector.h"
 
+#include "net/CoopMmo.h"
 #include "net/CoopPlayer.h"
 
 #include "scene/GameSound.h"
@@ -1489,6 +1490,8 @@ void HudRoot::draw() {
 		coop::drawPartnerHealthOrb(healthGauge.rect());
 		coop::drawCreatureHealthBars();
 		coop::drawTargetFrame();
+		coop::drawActionBar();
+		coop::drawSpellDrag();
 
 		if(bRenderInCursorMode) {
 			if(!MAGICMODE) {

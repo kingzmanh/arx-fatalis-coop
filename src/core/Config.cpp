@@ -95,6 +95,13 @@ constexpr const int
 const int enemyHealth = 1;
 const bool creatureBars = false;
 const bool targetFrame = true;
+const bool mmoMode = false;
+/*
+ * An empty bar apart from the swing, because the character has not learned
+ * any magic yet at the point this default is first written. Spells arrive on
+ * the bar by being dragged out of the spell book.
+ */
+const std::string_view actionBar = "attack,,,,";
 
 const CutsceneAudience cutscenes = CutscenesForTrigger;
 
@@ -185,8 +192,16 @@ constexpr const ActionKey actions[NUM_ACTION_KEY] = {
 	ActionKey((Keyboard::Key_LeftAlt << 16) | Keyboard::Key_Enter, (Keyboard::Key_RightAlt << 16) | Keyboard::Key_Enter), // TOGGLE_FULLSCREEN
 	ActionKey(Keyboard::Key_Grave), // CONSOLE
 	ActionKey(Keyboard::Key_ScrollLock, Keyboard::Key_Backslash), // DEBUG
-	ActionKey(Keyboard::Key_V), // COOP_TALK - V was unbound, and is where most
-	                            // players already expect push to talk to be
+	// COOP_TALK - was on V, which the third person toggle now wants; Z is free
+	// and still under the left hand, where push to talk needs to be
+	ActionKey(Keyboard::Key_Z),
+	ActionKey(Keyboard::Key_1),      // MMO_SLOT1 - the swing
+	ActionKey(Keyboard::Key_2),      // MMO_SLOT2
+	ActionKey(Keyboard::Key_3),      // MMO_SLOT3
+	ActionKey(Keyboard::Key_4),      // MMO_SLOT4
+	ActionKey(Keyboard::Key_5),      // MMO_SLOT5
+	ActionKey(Keyboard::Key_V),      // MMO_THIRDPERSON - one key, first person to third and back
+	ActionKey(Keyboard::Key_Tab),    // MMO_TARGET - where every MMO player reaches
 };
 
 } // namespace Default
@@ -283,6 +298,8 @@ constexpr const std::string_view
 	enemyHealth = "enemy_health",
 	creatureBars = "creature_health_bars",
 	targetFrame = "target_frame",
+	mmoMode = "mmo_mode",
+	actionBar = "action_bar",
 	allowConsole = "allow_console";
 
 // Input key options
@@ -332,6 +349,13 @@ constexpr const std::string_view actions[NUM_ACTION_KEY] = {
 	"console",
 	"debug",
 	"coop_talk",
+	"mmo_slot_1",
+	"mmo_slot_2",
+	"mmo_slot_3",
+	"mmo_slot_4",
+	"mmo_slot_5",
+	"mmo_third_person",
+	"mmo_target",
 };
 
 // Misc options
@@ -551,6 +575,8 @@ bool Config::save() {
 	writer.writeKey(Key::enemyHealth, input.enemyHealth);
 	writer.writeKey(Key::creatureBars, input.creatureBars);
 	writer.writeKey(Key::targetFrame, input.targetFrame);
+	writer.writeKey(Key::mmoMode, input.mmoMode);
+	writer.writeKey(Key::actionBar, input.actionBar);
 	if(input.allowConsole) {
 		// Only write this if true so that switching from release to debug builds enables the console
 		writer.writeKey(Key::allowConsole, input.allowConsole);
@@ -695,6 +721,8 @@ bool Config::init(const fs::path & file) {
 	input.enemyHealth = glm::clamp(reader.getKey(Section::Input, Key::enemyHealth, Default::enemyHealth), 1, 3);
 	input.creatureBars = reader.getKey(Section::Input, Key::creatureBars, Default::creatureBars);
 	input.targetFrame = reader.getKey(Section::Input, Key::targetFrame, Default::targetFrame);
+	input.mmoMode = reader.getKey(Section::Input, Key::mmoMode, Default::mmoMode);
+	input.actionBar = reader.getKey(Section::Input, Key::actionBar, Default::actionBar);
 	input.allowConsole = reader.getKey(Section::Input, Key::allowConsole, Default::allowConsole);
 	
 	// Get action key settings

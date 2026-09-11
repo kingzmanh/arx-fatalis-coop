@@ -22,8 +22,10 @@
 
 #include <array>
 #include <string>
+#include <string_view>
 
 #include "game/magic/Rune.h"
+#include "game/magic/Spell.h"
 
 const size_t MAX_SPELL_SYMBOLS = 6;
 extern std::array<Rune, MAX_SPELL_SYMBOLS> SpellSymbol;
@@ -44,5 +46,8 @@ void ARX_SPELLS_AnalyseSYMBOL();
 bool ARX_SPELLS_AnalyseSPELL();
 
 void ARX_SPELLS_Analyse_Alt();
+
+//! The name a spell is written down as, the exact string GetSpellId() reads back.
+[[nodiscard]] std::string_view spellName(SpellType spell);
 
 #endif // ARX_GAME_MAGIC_SPELLRECOGNITION_H

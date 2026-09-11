@@ -82,6 +82,23 @@ enum ControlAction {
 	CONTROLS_CUST_DEBUG,
 	//! Hold to speak to the other player. Added last so no existing binding moves.
 	CONTROLS_CUST_COOP_TALK,
+	/*
+	 * The MMO action bar and its camera, added after everything else for the
+	 * same reason: a config written by an older build is read back by index,
+	 * so anything inserted above here would silently move a player's keys.
+	 *
+	 * The five slots default to 1 2 3 4 5, and the original game already
+	 * spends four of those on precast and cancel-spell. Nothing is taken
+	 * away: those keys only change hands while MMO mode is on, and
+	 * mmoTakesOver() in CoopMmo.cpp is the single place that decides it.
+	 */
+	CONTROLS_CUST_MMO_SLOT1,
+	CONTROLS_CUST_MMO_SLOT2,
+	CONTROLS_CUST_MMO_SLOT3,
+	CONTROLS_CUST_MMO_SLOT4,
+	CONTROLS_CUST_MMO_SLOT5,
+	CONTROLS_CUST_MMO_THIRDPERSON,
+	CONTROLS_CUST_MMO_TARGET,
 	NUM_ACTION_KEY
 };
 
@@ -236,6 +253,9 @@ public:
 		int enemyHealth; //!< how much life creatures get: 1 normal, 2 double, 3 triple
 		bool creatureBars; //!< health bars with names over creatures in view
 		bool targetFrame; //!< the top-left frame for the creature being fought
+		bool mmoMode; //!< third-person camera, a sticky target and the action bar
+		//! The five bar slots, as spell names, comma separated. "attack" is auto-attack, "" is empty.
+		std::string actionBar;
 		QuickLevelTransition quickLevelTransition;
 		bool allowConsole;
 		

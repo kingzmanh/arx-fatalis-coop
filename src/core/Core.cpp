@@ -163,6 +163,8 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 #include "scene/Light.h"
 #include "scene/Object.h"
 
+#include "net/CoopMmo.h"
+
 #include "script/Script.h"
 
 #include "window/RenderWindow.h"
@@ -511,6 +513,19 @@ static void strikeSpeak(Entity * io) {
 	ARX_SPEECH_AddSpeech(*io, speech, ANIM_TALK_NEUTRAL, ARX_SPEECH_FLAG_NOTEXT);
 }
 
+/*
+ * Whether the attack button counts as held, for the animations below.
+ *
+ * A swing in Arx is not a call, it is a state: hold the button and the arm
+ * winds up, let go and the blow lands. Auto-attack therefore does not
+ * simulate a strike - it holds and releases this same button on the player's
+ * behalf, and everything after this line runs exactly as it does under a
+ * human hand. See CoopMmo.cpp.
+ */
+static bool attackHeld() {
+	return eeMousePressed1() || coop::autoAttackHeld();
+}
+
 void ManageCombatModeAnimations() {
 	
 	arx_assert(entities.player());
@@ -537,7 +552,7 @@ void ManageCombatModeAnimations() {
 		case WEAPON_BARE: { // BARE HANDS PLAYER MANAGEMENT
 			if(layer1.cur_anim == alist[ANIM_BARE_WAIT]) {
 				player.m_aimTime = 0;
-				if(eeMousePressed1()) {
+				if(attackHeld()) {
 					changeAnimation(io, 1, alist[ANIM_BARE_STRIKE_LEFT_START + player.m_strikeDirection * 3]);
 					io->isHit = false;
 				}
@@ -548,7 +563,7 @@ void ManageCombatModeAnimations() {
 				if(layer1.cur_anim == alist[ANIM_BARE_STRIKE_LEFT_START + j * 3] && (layer1.flags & EA_ANIMEND)) {
 					changeAnimation(io, 1, alist[ANIM_BARE_STRIKE_LEFT_CYCLE + j * 3], EA_LOOP);
 					player.m_aimTime = PlatformDuration::ofRaw(1);
-				} else if(layer1.cur_anim == alist[ANIM_BARE_STRIKE_LEFT_CYCLE + j * 3] && !eeMousePressed1()) {
+				} else if(layer1.cur_anim == alist[ANIM_BARE_STRIKE_LEFT_CYCLE + j * 3] && !attackHeld()) {
 					changeAnimation(io, 1, alist[ANIM_BARE_STRIKE_LEFT + j * 3]);
 					strikeSpeak(io);
 					SendIOScriptEvent(nullptr, io, SM_STRIKE, "bare");
@@ -604,7 +619,7 @@ void ManageCombatModeAnimations() {
 			// Waiting and receiving Strike Impulse
 			if(layer1.cur_anim == alist[ANIM_DAGGER_WAIT]) {
 				player.m_aimTime = 0;
-				if(eeMousePressed1()) {
+				if(attackHeld()) {
 					changeAnimation(io, 1, alist[ANIM_DAGGER_STRIKE_LEFT_START + player.m_strikeDirection * 3]);
 					io->isHit = false;
 				}
@@ -615,7 +630,7 @@ void ManageCombatModeAnimations() {
 				if(layer1.cur_anim == alist[ANIM_DAGGER_STRIKE_LEFT_START + j * 3] && (layer1.flags & EA_ANIMEND)) {
 					changeAnimation(io, 1, alist[ANIM_DAGGER_STRIKE_LEFT_CYCLE + j * 3], EA_LOOP);
 					player.m_aimTime = PlatformDuration::ofRaw(1);
-				} else if(layer1.cur_anim == alist[ANIM_DAGGER_STRIKE_LEFT_CYCLE + j * 3] && !eeMousePressed1()) {
+				} else if(layer1.cur_anim == alist[ANIM_DAGGER_STRIKE_LEFT_CYCLE + j * 3] && !attackHeld()) {
 					changeAnimation(io, 1, alist[ANIM_DAGGER_STRIKE_LEFT + j * 3]);
 					strikeSpeak(io);
 					SendIOScriptEvent(nullptr, io, SM_STRIKE, "dagger");
@@ -656,7 +671,7 @@ void ManageCombatModeAnimations() {
 			// Waiting and Received Strike Impulse
 			if(layer1.cur_anim == alist[ANIM_1H_WAIT]) {
 				player.m_aimTime = 0;
-				if(eeMousePressed1()) {
+				if(attackHeld()) {
 					changeAnimation(io, 1, alist[ANIM_1H_STRIKE_LEFT_START + player.m_strikeDirection * 3]);
 					io->isHit = false;
 				}
@@ -667,7 +682,7 @@ void ManageCombatModeAnimations() {
 				if(layer1.cur_anim == alist[ANIM_1H_STRIKE_LEFT_START + j * 3] && (layer1.flags & EA_ANIMEND)) {
 					changeAnimation(io, 1, alist[ANIM_1H_STRIKE_LEFT_CYCLE + j * 3], EA_LOOP);
 					player.m_aimTime = PlatformDuration::ofRaw(1);
-				} else if(layer1.cur_anim == alist[ANIM_1H_STRIKE_LEFT_CYCLE + j * 3] && !eeMousePressed1()) {
+				} else if(layer1.cur_anim == alist[ANIM_1H_STRIKE_LEFT_CYCLE + j * 3] && !attackHeld()) {
 					changeAnimation(io, 1, alist[ANIM_1H_STRIKE_LEFT + j * 3]);
 					strikeSpeak(io);
 					SendIOScriptEvent(nullptr, io, SM_STRIKE, "1h");
@@ -708,7 +723,7 @@ void ManageCombatModeAnimations() {
 			// Waiting and Receiving Strike Impulse
 			if(layer1.cur_anim == alist[ANIM_2H_WAIT]) {
 				player.m_aimTime = 0;
-				if(eeMousePressed1()) {
+				if(attackHeld()) {
 					changeAnimation(io, 1, alist[ANIM_2H_STRIKE_LEFT_START + player.m_strikeDirection * 3]);
 					io->isHit = false;
 				}
@@ -719,7 +734,7 @@ void ManageCombatModeAnimations() {
 				if(layer1.cur_anim == alist[ANIM_2H_STRIKE_LEFT_START + j * 3] && (layer1.flags & EA_ANIMEND)) {
 					changeAnimation(io, 1, alist[ANIM_2H_STRIKE_LEFT_CYCLE + j * 3], EA_LOOP);
 					player.m_aimTime = PlatformDuration::ofRaw(1);
-				} else if(layer1.cur_anim == alist[ANIM_2H_STRIKE_LEFT_CYCLE + j * 3] && !eeMousePressed1()) {
+				} else if(layer1.cur_anim == alist[ANIM_2H_STRIKE_LEFT_CYCLE + j * 3] && !attackHeld()) {
 					changeAnimation(io, 1, alist[ANIM_2H_STRIKE_LEFT + j * 3]);
 					strikeSpeak(io);
 					SendIOScriptEvent(nullptr, io, SM_STRIKE, "2h");
@@ -770,7 +785,7 @@ void ManageCombatModeAnimations() {
 			if(layer1.cur_anim == alist[ANIM_MISSILE_WAIT]) {
 				player.m_aimTime = PlatformDuration::ofRaw(1);
 				
-				if(eeMousePressed1() && getInventoryItemWithLowestDurability("arrows", 1.f) != nullptr) {
+				if(attackHeld() && getInventoryItemWithLowestDurability("arrows", 1.f) != nullptr) {
 					changeAnimation(io, 1, alist[ANIM_MISSILE_STRIKE_PART_1]);
 					io->isHit = false;
 				}
@@ -842,11 +857,14 @@ void ManageCombatModeAnimations() {
 					
 					PolyType ignored = POLY_HIDE | POLY_TRANS | POLY_NODRAW | POLY_NOCOL;
 					RaycastFlags flags = RaycastIgnorePlayer;
-					Vec3f dest = g_playerCamera.m_pos + angleToVector(player.angle) * 100000.f;
-					if(RaycastResult result = raycastScene(g_playerCamera.m_pos, dest, ignored, flags)) {
+					// From the eye, not the camera: in third person the camera is
+					// a couple of hundred units behind the head.
+					Vec3f from = coop::eyePos();
+					Vec3f dest = from + angleToVector(player.angle) * 100000.f;
+					if(RaycastResult result = raycastScene(from, dest, ignored, flags)) {
 						dest = result.pos;
 					}
-					if(EntityRaycastResult result = raycastEntities(g_playerCamera.m_pos, dest, ignored, flags)) {
+					if(EntityRaycastResult result = raycastEntities(from, dest, ignored, flags)) {
 						dest = result.pos;
 					}
 					
@@ -862,7 +880,7 @@ void ManageCombatModeAnimations() {
 					
 				}
 				
-				if(eeMousePressed1()) {
+				if(attackHeld()) {
 					break;
 				}
 				

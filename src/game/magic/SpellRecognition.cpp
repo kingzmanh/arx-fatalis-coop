@@ -684,6 +684,23 @@ SpellType GetSpellId(std::string_view spell) {
 	return (it == spellNames.end()) ? SPELL_NONE : it->second;
 }
 
+/*
+ * The other way round, for anything that has to write a spell down and read
+ * it back later - the MMO action bar saves its twelve keys into the config
+ * this way. The same table both directions, so a name that can be saved is
+ * always a name GetSpellId will take back.
+ */
+std::string_view spellName(SpellType spell) {
+	
+	for(const RawSpellDefinition & definition : allSpells) {
+		if(definition.spell == spell) {
+			return definition.name;
+		}
+	}
+	
+	return std::string_view();
+}
+
 enum ARX_SPELLS_RuneDirection
 {
 	AUP,

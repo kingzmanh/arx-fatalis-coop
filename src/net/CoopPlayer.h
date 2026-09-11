@@ -368,6 +368,19 @@ void drawCreatureHealthBars();
 //! The local player just landed a blow on this creature: it becomes the target frame's subject.
 void noteTargetHit(const Entity & npc);
 
+/*!
+ * The creature the frame is currently about, or nothing.
+ *
+ * In MMO mode this is the target in the ordinary sense - what the action bar
+ * casts at and what auto-attack swings at - and it stays picked until it dies
+ * or another is chosen. In classic play it is still only a few seconds of
+ * memory of the last blow, and goes quiet on its own.
+ */
+[[nodiscard]] Entity * targetEntity();
+
+//! Nothing is picked any more: a click that landed on no creature, the way an MMO drops a target.
+void clearTarget();
+
 //! Top-left target frame: name, health with numbers and percent, mana if any; fades a few seconds after the last blow.
 void drawTargetFrame();
 

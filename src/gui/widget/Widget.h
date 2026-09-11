@@ -44,6 +44,8 @@ enum MENUSTATE {
 	Page_OptionsInput,
 	Page_OptionsInputCustomizeKeys1,
 	Page_OptionsInputCustomizeKeys2,
+	//! The MMO action bar's twelve keys, its camera and its targeting.
+	Page_OptionsInputCustomizeKeys3,
 	Page_QuitConfirm,
 	Page_Localization,
 	Page_Coop,

@@ -30,6 +30,7 @@
 #include "game/Player.h"
 #include "graphics/Draw.h"
 #include "graphics/data/TextureContainer.h"
+#include "net/CoopMmo.h"
 #include "gui/Cursor.h"
 #include "gui/Dragging.h"
 #include "gui/Hud.h"
@@ -67,8 +68,22 @@ void PlayerInventoryHud::init() {
 
 Vec2f PlayerInventoryHud::anchorPosition() {
 	
-	return Vec2f(g_size.center().x - (320 * m_scale) + (35 * m_scale) ,
-	g_size.height() - (101 * m_scale) + (m_inventoryY * m_scale));
+	float x = g_size.center().x - (320 * m_scale) + (35 * m_scale);
+	
+	/*
+	 * Beside the MMO action bar rather than underneath it.
+	 *
+	 * The bag is drawn along the bottom middle of the screen and so is the
+	 * bar, so without this the bar simply sits on top of it. Measured off
+	 * the bar rather than given a number of its own, so it keeps its place
+	 * if the bar is resized or repainted, and clamped to the screen edge
+	 * for the day somebody plays where the two will not both fit.
+	 */
+	if(float barLeft = coop::actionBarLeft()) {
+		x = std::max(4.f, std::min(x, barLeft - (m_bagSize.x * m_scale) - (8 * m_scale)));
+	}
+	
+	return Vec2f(x, g_size.height() - (101 * m_scale) + (m_inventoryY * m_scale));
 }
 
 void PlayerInventoryHud::updateRect() {

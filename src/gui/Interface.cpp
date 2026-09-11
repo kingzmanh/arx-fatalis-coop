@@ -118,6 +118,7 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 #include "math/Rectangle.h"
 #include "math/Vector.h"
 
+#include "net/CoopMmo.h"
 #include "net/CoopNet.h"
 #include "net/CoopPlayer.h"
 
@@ -814,6 +815,16 @@ void ArxGame::managePlayerControls() {
 			}
 		}
 		
+		/*
+		 * With the camera out and the right button not held, A and D turn the
+		 * character instead of stepping sideways; the turn itself is done
+		 * further down where the turn keys are read. See coop::strafeIsTurn().
+		 */
+		if(coop::strafeIsTurn()) {
+			left = false;
+			right = false;
+		}
+		
 		Vec3f tm(0.f);
 		
 		// Checks WALK_BACKWARD Key Status.
@@ -843,7 +854,8 @@ void ArxGame::managePlayerControls() {
 		}
 		
 		// Checks WALK_FORWARD Key Status.
-		if(GInput->actionPressed(CONTROLS_CUST_WALKFORWARD) && !NOMOREMOVES) {
+		if((GInput->actionPressed(CONTROLS_CUST_WALKFORWARD) || coop::mouseRunForward())
+		   && !NOMOREMOVES) {
 			
 			player.m_strikeDirection = 2;
 			
@@ -972,7 +984,7 @@ void ArxGame::managePlayerControls() {
 		SHOW_INGAME_MINIMAP = !SHOW_INGAME_MINIMAP;
 	}
 
-	if(GInput->actionNowPressed(CONTROLS_CUST_PREVIOUS)) {
+	if(GInput->actionNowPressed(CONTROLS_CUST_PREVIOUS) && !coop::mmoTakesOver(CONTROLS_CUST_PREVIOUS)) {
 		if(eMouseState == MOUSE_IN_BOOK) {
 			if(player.Interface & INTER_PLAYERBOOK) {
 				g_playerBook.openPrevPage();
@@ -986,7 +998,7 @@ void ArxGame::managePlayerControls() {
 		}
 	}
 
-	if(GInput->actionNowPressed(CONTROLS_CUST_NEXT)) {
+	if(GInput->actionNowPressed(CONTROLS_CUST_NEXT) && !coop::mmoTakesOver(CONTROLS_CUST_NEXT)) {
 		if(eMouseState == MOUSE_IN_BOOK) {
 			if(player.Interface & INTER_PLAYERBOOK) {
 				g_playerBook.openNextPage();
@@ -1016,7 +1028,8 @@ void ArxGame::managePlayerControls() {
 		g_playerBook.openPage(BOOKMODE_QUESTS, true);
 	}
 	
-	if(GInput->actionNowPressed(CONTROLS_CUST_CANCELCURSPELL)) {
+	if(GInput->actionNowPressed(CONTROLS_CUST_CANCELCURSPELL)
+	   && !coop::mmoTakesOver(CONTROLS_CUST_CANCELCURSPELL)) {
 		Spell * lastSpell = nullptr;
 		for(Spell & spell : spells.byCaster(EntityHandle_Player)) {
 			if(!spellicons[spell.m_type].m_hasDuration) {
@@ -1032,21 +1045,32 @@ void ArxGame::managePlayerControls() {
 		}
 	}
 	
+	/*
+	 * Precast, cancel-spell, page turning and drawing the weapon all sit on
+	 * keys the MMO action bar wants for itself - 1 2 3 4, minus, equals, Tab.
+	 * Rather than move anybody's bindings, each of them stands down for as
+	 * long as MMO mode is on and the key is genuinely shared; see
+	 * coop::mmoTakesOver.
+	 */
 	if(((player.Interface & INTER_COMBATMODE) && !player.isAiming()) || !player.doingmagic) {
-		if(GInput->actionNowPressed(CONTROLS_CUST_PRECAST1)) {
+		if(GInput->actionNowPressed(CONTROLS_CUST_PRECAST1)
+		   && !coop::mmoTakesOver(CONTROLS_CUST_PRECAST1)) {
 			ARX_SPELLS_Precast_Launch(PrecastHandle(0));
 		}
 	
-		if(GInput->actionNowPressed(CONTROLS_CUST_PRECAST2)) {
+		if(GInput->actionNowPressed(CONTROLS_CUST_PRECAST2)
+		   && !coop::mmoTakesOver(CONTROLS_CUST_PRECAST2)) {
 			ARX_SPELLS_Precast_Launch(PrecastHandle(1));
 		}
 	
-		if(GInput->actionNowPressed(CONTROLS_CUST_PRECAST3)) {
+		if(GInput->actionNowPressed(CONTROLS_CUST_PRECAST3)
+		   && !coop::mmoTakesOver(CONTROLS_CUST_PRECAST3)) {
 			ARX_SPELLS_Precast_Launch(PrecastHandle(2));
 		}
 	}
 
-	if(GInput->actionNowPressed(CONTROLS_CUST_WEAPON) || lChangeWeapon) {
+	if((GInput->actionNowPressed(CONTROLS_CUST_WEAPON) && !coop::mmoTakesOver(CONTROLS_CUST_WEAPON))
+	   || lChangeWeapon) {
 		
 		bool bGo = true;
 		
@@ -1129,11 +1153,23 @@ void ArxGame::managePlayerControls() {
 			ARX_INTERFACE_setCombatMode(COMBAT_MODE_OFF);
 		}
 		
-		bInverseInventory = !bInverseInventory;
-		lOldTruePlayerMouseLook = TRUE_PLAYER_MOUSELOOK_ON;
-		
-		if(!config.input.mouseLookToggle) {
-			bForceEscapeFreeLook = true;
+		if(coop::thirdPerson()) {
+			/*
+			 * In third person the bag is opened and closed by this key and
+			 * nothing else. The vanilla path below works by flipping the
+			 * mouse-look mode, which here is owned by whether a mouse button
+			 * is held - so it would have fought the camera every press.
+			 */
+			InventoryOpenClose((player.Interface & INTER_INVENTORY) ? 2 : 1);
+		} else {
+			
+			bInverseInventory = !bInverseInventory;
+			lOldTruePlayerMouseLook = TRUE_PLAYER_MOUSELOOK_ON;
+			
+			if(!config.input.mouseLookToggle) {
+				bForceEscapeFreeLook = true;
+			}
+			
 		}
 		
 	}
@@ -1213,6 +1249,17 @@ void ArxGame::managePlayerControls() {
 				
 			}
 		}
+	} else if(coop::thirdPerson()) {
+		
+		/*
+		 * The bag does not follow the mouse mode here. Cursor mode is the
+		 * normal state of third person, and Arx would take that as a standing
+		 * request to hold the inventory open - which is why it was permanently
+		 * on screen under the action bar.
+		 */
+		bRenderInCursorMode = true;
+		spells.endByCaster(EntityHandle_Player, SPELL_FLYING_EYE);
+		
 	} else {
 		if(bInverseInventory) {
 			if(!g_playerInventoryHud.isClosing()) {
@@ -1385,6 +1432,26 @@ void ArxGame::manageKeyMouse() {
 		}
 		
 		PLAYER_MOUSELOOK_ON = TRUE_PLAYER_MOUSELOOK_ON;
+	
+	/*
+	 * In MMO third person the mouse is a cursor, and the view only moves while
+	 * a button is held. Saying it here rather than anywhere else lets the
+	 * engine's own grab and release of the pointer do the work: it vanishes
+	 * for the drag and comes back where it was left.
+	 */
+	if(coop::thirdPerson()) {
+		/*
+		 * Two flags, and it is this one that decides whether there is a
+		 * pointer. Left on - and the mouse-look toggle keeps switching it
+		 * back on - the cursor is drawn frozen at MemoMouse (Cursor.cpp) and
+		 * the HUD stays in look mode, which is exactly "the mouse is not
+		 * free". The pointer is still taken for the length of a drag, because
+		 * the grab runs off PLAYER_MOUSELOOK_ON below: hidden while you drag
+		 * and back where you left it after, which is what WoW does too.
+		 */
+		TRUE_PLAYER_MOUSELOOK_ON = false;
+		PLAYER_MOUSELOOK_ON = coop::cameraDragging();
+	}
 		
 		if(player.doingmagic == 2 && config.input.mouseLookToggle)
 			PLAYER_MOUSELOOK_ON = false;
@@ -1409,7 +1476,18 @@ void ArxGame::manageKeyMouse() {
 		GInput->setMouseMode(Mouse::Absolute);
 		DANAEMouse = MemoMouse;
 		
-		if(mainApp->getWindow()->isFullScreen()) {
+		/*
+		 * Put the pointer back where it was picked up.
+		 *
+		 * Input::setMouseMode warps the cursor to the middle of the window on
+		 * its way back to absolute, and Arx only undoes that in fullscreen -
+		 * windowed, the next frame reads the centred position and the cursor
+		 * has jumped. Harmless when a drag is the whole interface, unbearable
+		 * when the drag is one of the things the mouse does, so the MMO camera
+		 * always restores it: the pointer is exactly where it was let go, the
+		 * way it is in the games this borrows from.
+		 */
+		if(mainApp->getWindow()->isFullScreen() || coop::thirdPerson()) {
 			GInput->setMousePosAbs(DANAEMouse);
 		}
 		
@@ -1443,7 +1521,9 @@ void ArxGame::manageKeyMouse() {
 		
 		if(!GInput->actionPressed(CONTROLS_CUST_STRAFE)) {
 			const PlatformInstant now = g_platformTime.frameStart();
-			if(GInput->actionPressed(CONTROLS_CUST_TURNLEFT)) {
+			bool strafeTurns = coop::strafeIsTurn();
+			if(GInput->actionPressed(CONTROLS_CUST_TURNLEFT)
+			   || (strafeTurns && GInput->actionPressed(CONTROLS_CUST_STRAFELEFT))) {
 				if(pushTime.turnLeft == 0) {
 					pushTime.turnLeft = now;
 				}
@@ -1451,7 +1531,8 @@ void ArxGame::manageKeyMouse() {
 			} else {
 				pushTime.turnLeft = 0;
 			}
-			if(GInput->actionPressed(CONTROLS_CUST_TURNRIGHT)) {
+			if(GInput->actionPressed(CONTROLS_CUST_TURNRIGHT)
+			   || (strafeTurns && GInput->actionPressed(CONTROLS_CUST_STRAFERIGHT))) {
 				if(pushTime.turnRight == 0) {
 					pushTime.turnRight = now;
 				}
@@ -1497,7 +1578,15 @@ void ArxGame::manageKeyMouse() {
 			rotation *= (float(config.input.mouseSensitivity) + 1.f) * 0.02f;
 			rotation *= toMsf(g_platformTime.lastFrameDuration());
 			
-		} else if(config.input.borderTurning) {
+		} else if(config.input.borderTurning && !coop::thirdPerson()) {
+			
+			/*
+			 * Not while the MMO camera is out. Turning because the pointer
+			 * drifted near an edge belongs to a game where the pointer is the
+			 * view; here it is a cursor, and this branch rewrites the mouse
+			 * movement on its way past - scaling it, and sometimes zeroing it
+			 * outright - before the camera ever sees it.
+			 */
 			
 			// Turn the player if the cursor is close to the edges
 			
@@ -1577,7 +1666,14 @@ void ArxGame::manageKeyMouse() {
 			player.angle.setRoll(0);
 		}
 		
-		if(PLAYER_MOUSELOOK_ON || bKeySpecialMove) {
+		/*
+		 * The camera gets first refusal on every turn: all of a left drag, and
+		 * a share of a right drag or the turn keys, which the engine's own
+		 * code below then applies to the character as it always has.
+		 */
+		bool mmoTookTurn = coop::mmoTurn(rotation, bKeySpecialMove);
+		
+		if(!mmoTookTurn && (PLAYER_MOUSELOOK_ON || bKeySpecialMove)) {
 
 			if(eyeball.isActive()) {
 				float eyePitch = eyeball.getAngle().getPitch();

@@ -1776,6 +1776,69 @@ public:
 			addCorner(std::move(txt), BottomCenter);
 		}
 		
+		{
+			auto cb = std::make_unique<ButtonWidget>(buttonSize(16, 16), "graph/interface/menus/next");
+			cb->setTargetPage(Page_OptionsInputCustomizeKeys3);
+			addCorner(std::move(cb), BottomRight);
+		}
+		
+		reinitActionKeys();
+		
+	}
+	
+};
+
+/*!
+ * The MMO controls, on a page of their own.
+ *
+ * A page rather than a few more rows on the last one because the other two
+ * are already full, and because these keys are a set: a player who is not
+ * using MMO mode has no reason to read past the arrow, and one who is finds
+ * the whole thing in one place.
+ * Every label here carries its English fallback - the original game never had
+ * a word for any of this in any language.
+ */
+class ControlOptionsMenuPage3 final : public ControlOptionsPage {
+	
+public:
+	
+	ControlOptionsMenuPage3()
+		: ControlOptionsPage(Page_OptionsInputCustomizeKeys3)
+	{ }
+	
+	void init() override {
+		
+		reserveBottom();
+		
+		addControlRow(CONTROLS_CUST_MMO_THIRDPERSON,
+		              "system_menus_options_input_customize_controls_mmo_third_person",
+		              "Third person view");
+		addControlRow(CONTROLS_CUST_MMO_TARGET,
+		              "system_menus_options_input_customize_controls_mmo_target",
+		              "Target next enemy");
+		
+		addControlRow(CONTROLS_CUST_MMO_SLOT1,
+		              "system_menus_options_input_customize_controls_mmo_slot_1", "Action bar 1");
+		addControlRow(CONTROLS_CUST_MMO_SLOT2,
+		              "system_menus_options_input_customize_controls_mmo_slot_2", "Action bar 2");
+		addControlRow(CONTROLS_CUST_MMO_SLOT3,
+		              "system_menus_options_input_customize_controls_mmo_slot_3", "Action bar 3");
+		addControlRow(CONTROLS_CUST_MMO_SLOT4,
+		              "system_menus_options_input_customize_controls_mmo_slot_4", "Action bar 4");
+		addControlRow(CONTROLS_CUST_MMO_SLOT5,
+		              "system_menus_options_input_customize_controls_mmo_slot_5", "Action bar 5");
+		
+		addBackButton(Page_OptionsInputCustomizeKeys2);
+		
+		{
+			std::string_view label = getLocalised("system_menus_options_input_customize_default");
+			auto txt = std::make_unique<TextWidget>(hFontMenu, label);
+			txt->clicked = [this](Widget * /* widget */) {
+				resetActionKeys();
+			};
+			addCorner(std::move(txt), BottomCenter);
+		}
+		
 		reinitActionKeys();
 		
 	}
@@ -2085,6 +2148,26 @@ public:
 		}
 
 		{
+			/*
+			 * MMO controls: the camera behind the shoulder, a target that stays
+			 * picked, and the bar of twelve keys along the bottom. Off by
+			 * default, and off means off - with this unset not one line of it
+			 * runs and the game plays exactly as Arkane shipped it.
+			 */
+			auto slider = std::make_unique<CycleTextWidget>(sliderSize(), hFontMenu,
+			                                               "MMO controls", hFontControls);
+			slider->setSnug(sliderSize().y * 0.4f);
+			slider->valueChanged = [](int pos, std::string_view /* string */) {
+				config.input.mmoMode = (pos == 1);
+				config.save();
+			};
+			slider->addEntry("off");
+			slider->addEntry("on");
+			slider->setValue(config.input.mmoMode ? 1 : 0);
+			addCenter(std::move(slider));
+		}
+
+		{
 			auto txt = std::make_unique<TextWidget>(hFontMenu, "HOST GAME");
 			txt->clicked = [this](Widget * /* widget */) {
 				if(m_port) {
@@ -2308,6 +2391,7 @@ void MainMenu::initWindowPages() {
 	m_window->add(std::make_unique<InputOptionsMenuPage>());
 	m_window->add(std::make_unique<ControlOptionsMenuPage1>());
 	m_window->add(std::make_unique<ControlOptionsMenuPage2>());
+	m_window->add(std::make_unique<ControlOptionsMenuPage3>());
 	
 	m_window->add(std::make_unique<CoopMenuPage>());
 

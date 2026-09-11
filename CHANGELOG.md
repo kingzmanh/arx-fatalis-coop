@@ -8,6 +8,64 @@ seen working, **known issues** are broken and understood, and **needs testing**
 was built with care but has not yet been proven in a live game - if you try
 one of those and it misbehaves, that report is exactly what we need.
 
+## 0.20 - EXPERIMENTAL: MMO controls
+
+An experimental build. The whole of it is off by default and lives behind one
+switch - **MMO controls** in the co-op menu - and even with that on, the game
+still starts in first person and plays exactly as it always has until you ask
+for the other camera. Press **V**.
+
+Both players do NOT need 0.20. Nothing here crosses the wire: the protocol is
+unchanged at 34, so a 0.20 player and a 0.19 player can still play together.
+
+### What works
+
+- Third person: the camera sits behind the character, the mouse wheel pulls it
+  in and out, and all the way in is first person again.
+- **V** switches between the two. First person is the old game entire - no bar,
+  no sticky target, the number keys back on precast, the mouse back on Arx's
+  own look and rune drawing.
+- The camera stops at walls instead of going through them, and stands aside
+  for cutscenes and anything the game wants to show you.
+- A bar of five keys along the bottom, painted: iron and brass, with a socket
+  for each of 1 to 5.
+- Spells cast off the bar. The character plays the casting gesture and turns to
+  face the target as the arm comes up, and the spell leaves the hand at the
+  target - the camera does not move while it happens.
+- A spell the character has not learned draws dark and will not fire; the bar
+  is not a way around learning runes.
+
+### Needs testing
+
+- Left drag to swing the camera, right drag to turn the character, both
+  buttons to run - and A and D turning rather than strafing while the right
+  button is up.
+- Auto-attack on slot 1: it draws the weapon, faces the target and swings for
+  as long as the target lives and is in reach.
+- Filling the bar: open the spell book and drag a spell down onto a slot;
+  right-click a slot to clear it. The bar is only editable while the book is
+  open, so it can never eat a click during play.
+- Tab picks the next creature in front and keeps it picked until it dies or
+  another is chosen; clicking empty ground drops it.
+- The bag sits to the left of the bar in third person and opens with **I**.
+- Whether a spell cast off the bar shows up properly on the other player's
+  screen. It goes down the same road a hand-drawn spell does, but that has not
+  been watched in a two player game.
+
+### Known issues
+
+- **Dragging things off the floor needs Left Alt held.** A press, a drag and a
+  release is the same shape as swinging the camera, and nothing can tell the
+  two apart on its own, so a key has to say which was meant.
+- **Push to talk moved from V to Z**, because the camera wanted V.
+- **Draw your weapon with Numpad0.** Tab is targeting now, and both were bound
+  to draw-weapon. Rebindable, like everything else, on the third page of the
+  controls.
+- Placing a dragged item precisely is awkward with the camera far back.
+- This build writes a line to the log every second, and more while the mouse is
+  dragging. That is deliberate for now - if something misbehaves, the log is
+  what will say why - and it comes out before this stops being experimental.
+
 ## 0.19
 
 - The target frame is painted now: parchment and iron, name strip, red health and blue mana bars with numbers.
