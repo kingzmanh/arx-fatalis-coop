@@ -226,6 +226,40 @@ level loads: it can show hidden things, put items into bodies and chests, and
 say how a piece of armour looks. The Mega and Vista runes, hidden since the
 demo, lie in the first level again because of two lines in it.
 
+## MMO controls (experimental)
+
+In the **experimental** builds only, and off until you ask for it: turn on
+**MMO controls** in the co-op menu. Even then the game starts in first person
+and plays exactly as it always has until you press **V**.
+
+**V** switches between the camera behind your shoulder and your own eyes, and
+the mouse wheel moves it in and out; all the way in is first person again.
+First person is the old game entire - no bar, no sticky target, the number keys
+back on precast, the mouse back on Arx's own look and rune drawing.
+
+While the camera is out:
+
+- **Tab** picks the creature in front of you and keeps it picked. Press it
+  again for the next one; click bare ground to let go.
+- **1 is your swing.** With something picked, press 1 and walk up to it: your
+  character draws, faces it and keeps swinging while it lives and is in reach.
+  Key 1 is always the swing and cannot be given away.
+- **2 to 5 are your spells.** Open the book and take its **first bookmark**,
+  the one beside the character sheet: it holds every spell you know. Hold the
+  cursor over one and press 2, 3, 4 or 5 to put it on that key. Right-click a
+  key on the right-hand page to empty it. You can also drag a spell onto the
+  bar at the bottom of the screen.
+- **Hold Left Alt to give the mouse back to the game**: picking things up off
+  the floor, dragging them, equipping them. A press, a drag and a release is
+  the same gesture as swinging the camera, so a key has to say which you meant.
+- **I** opens your bag, which sits beside the bar rather than under it.
+- **Numpad0** draws your weapon, because Tab is targeting now.
+- **Z** is push to talk, because the camera wanted V.
+
+Everything here is rebindable in the options, on the third page of the
+controls, and none of it crosses the wire: a player on an experimental build
+and a player on 0.19 can play together.
+
 ## Voice chat
 
 Turn on VOICE CHAT in the co-op menu and hold **V** to speak.
