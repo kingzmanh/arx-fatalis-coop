@@ -32,7 +32,8 @@ enum ARX_INTERFACE_BOOK_MODE
 	BOOKMODE_STATS = 0,
 	BOOKMODE_SPELLS,
 	BOOKMODE_MINIMAP,
-	BOOKMODE_QUESTS
+	BOOKMODE_QUESTS,
+	BOOKMODE_ACTIONS //!< the MMO action bar; only reachable with MMO controls on
 };
 
 class PlayerBookPage {
@@ -88,6 +89,25 @@ private:
 	
 };
 
+/*!
+ * The action page: the spells you know, drawn as the bar draws them, and the
+ * five keys along the right. Hold the cursor over a spell and press a key to
+ * put it there, or drag it onto the bar on screen.
+ *
+ * The game's own spell page is left exactly as it was, because a click there
+ * memorises a spell and that is not a thing to change under a player.
+ */
+class ActionsPage : public PlayerBookPage {
+public:
+	ActionsPage();
+	void manage();
+private:
+	long m_currentTab;
+	void drawLeftTabs();
+	void drawSpells();
+	void drawBar();
+};
+
 class MapPage : public PlayerBookPage {
 	
 public:
@@ -121,6 +141,7 @@ public:
 	SpellsPage spells;
 	MapPage map;
 	QuestBookPage questBook;
+	ActionsPage actions;
 
 	ARX_INTERFACE_BOOK_MODE m_currentPage;
 

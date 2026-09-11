@@ -24,6 +24,7 @@
 #include "game/GameTypes.h"
 #include "game/magic/Spell.h"
 #include "math/Angle.h"
+#include "math/Rectangle.h"
 #include "math/Vector.h"
 
 class Entity;
@@ -163,6 +164,48 @@ void beginSpellDrag(SpellType spell);
 
 //! Drawn last of all, following the cursor.
 void drawSpellDrag();
+
+// -- filling the bar from the book -----------------------------------------
+
+/*!
+ * A new character: back to first person, and a bar with nothing on it but
+ * the swing.
+ *
+ * The bar otherwise lives in the config and outlives a character, which is
+ * right for a habit and wrong for a new game - nobody wants to begin with
+ * spells they have not learned sitting on their keys.
+ */
+void newGame();
+
+//! How many keys the bar has.
+[[nodiscard]] size_t barSlots();
+
+//! Which key holds this spell, or -1; SPELL_NONE asks after the swing.
+[[nodiscard]] int barSlotOf(SpellType spell);
+
+//! Put a spell on a key, or the swing when the spell is SPELL_NONE.
+void putOnBar(size_t index, SpellType spell);
+
+//! Take whatever is on a key off it.
+void clearBarSlot(size_t index);
+
+/*!
+ * Which bar key went down this frame, or -1.
+ *
+ * The book's action page asks while it draws, so a key pressed with the
+ * cursor on a spell puts that spell there. With the book open the keys only
+ * fill the bar; they never fire it.
+ */
+[[nodiscard]] int barKeyPressed();
+
+//! Draw a spell the way the bar draws it: our painted icon when there is one.
+void drawBarSpell(const Rectf & rect, SpellType spell, bool castable);
+
+//! Draw the swing the way the bar draws it.
+void drawBarAttack(const Rectf & rect, bool lit);
+
+//! Draw one of the bar's keys as it stands: its socket, and whatever is on it.
+void drawBarSocket(const Rectf & rect, size_t index);
 
 //! True while the cursor sits on the bar: a click there is about the bar, not about the world behind it.
 [[nodiscard]] bool cursorOverActionBar();

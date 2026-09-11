@@ -78,9 +78,10 @@ static const size_t BAR_SLOTS = 5;
 /*!
  * One key's worth of bar.
  *
- * Slot one is the swing by default, and any slot can be made the swing,
- * because a player who has rebound everything else still needs somewhere to
- * put it.
+ * Key one is the swing and stays the swing: it is the one thing a character
+ * can always do, it costs nothing, and a player who had filled every key
+ * with spells and then met something in a corridor would have nothing to
+ * hit it with. The other four are theirs to fill.
  */
 struct Slot {
 
@@ -140,6 +141,10 @@ static void loadBar() {
 		slot++;
 		start = end + 1;
 	}
+
+	// Whatever an older file or a hand-edited one says, key one is the swing
+	g_bar[0].kind = Slot::AutoAttack;
+	g_bar[0].spell = SPELL_NONE;
 
 }
 
@@ -989,9 +994,16 @@ void updateMmo() {
 			cycleTarget();
 		}
 
-		for(size_t i = 0; i < BAR_SLOTS; i++) {
-			if(GInput->actionNowPressed(MMO_ACTIONS[i])) {
-				pressSlot(i);
+		/*
+		 * With the book open the same keys fill the bar instead of firing it:
+		 * the action page puts whatever the cursor is on onto the key pressed.
+		 * Casting with the book in your hands was never possible anyway.
+		 */
+		if(!(player.Interface & INTER_PLAYERBOOK)) {
+			for(size_t i = 0; i < BAR_SLOTS; i++) {
+				if(GInput->actionNowPressed(MMO_ACTIONS[i])) {
+					pressSlot(i);
+				}
 			}
 		}
 
@@ -1199,8 +1211,12 @@ static std::string slotKeyName(size_t index) {
 /*
  * The spell book's icons are ink, not pictures: they are multiplied into the
  * page rather than laid on top of it, so every slot has to give one a pale
- * ground to be ink on, exactly as the parchment does. A painted icon of our
- * own is a picture, and is laid on normally instead.
+ * ground to be ink on, exactly as the parchment does.
+ *
+ * The icons themselves are the game's own, for every spell. Painted ones of
+ * ours were tried and put away again: the game has an icon for every spell
+ * already, drawn by the people who drew the book, and three of ours beside
+ * forty of theirs only made the bar look half finished.
  */
 static const Color SLOT_PARCHMENT = Color(190, 172, 140);
 static const Color SLOT_PARCHMENT_DIM = Color(96, 88, 74);
@@ -1210,40 +1226,11 @@ static const Color SLOT_EDGE_LIVE = Color(226, 188, 92);
 
 
 /*!
- * A painted icon for this spell, if one was provided.
- *
- * Looked for once per spell and remembered either way, the misses included:
- * most spells will never have one, and asking the file system about them
- * every frame would be a waste.
- */
-static TextureContainer * paintedIcon(SpellType spell) {
-
-	static std::map<SpellType, TextureContainer *> looked;
-
-	std::map<SpellType, TextureContainer *>::const_iterator it = looked.find(spell);
-	if(it != looked.end()) {
-		return it->second;
-	}
-
-	TextureContainer * tc = loadIfPresent("graph/interface/coop/spell_"
-	                                      + std::string(spellName(spell)));
-	looked[spell] = tc;
-
-	return tc;
-}
-
-/*!
  * \param castable the character knows this spell and can pay for it. A spell
  *                 they cannot cast is dimmed rather than hidden, so the bar
  *                 still reads as the same five things in the same five places.
  */
 static void drawSlotIcon(const Rectf & rect, SpellType spell, bool castable) {
-
-	if(TextureContainer * painted = paintedIcon(spell)) {
-		UseRenderState state(render2D().alphaCutout());
-		EERIEDrawBitmap(rect, 0.0007f, painted, castable ? Color::white : Color::gray(0.45f));
-		return;
-	}
 
 	if(!spellicons[spell].tc) {
 		return;
@@ -1416,7 +1403,7 @@ static void updateBarEditing() {
 
 	if(g_dragged != SPELL_NONE && !eeMousePressed1()) {
 
-		for(size_t i = 0; i < BAR_SLOTS; i++) {
+		for(size_t i = 1; i < BAR_SLOTS; i++) { // key one is the swing
 			if(slotRect(i).contains(Vec2f(DANAEMouse))) {
 				g_bar[i].kind = Slot::Cast;
 				g_bar[i].spell = g_dragged;
@@ -1430,7 +1417,7 @@ static void updateBarEditing() {
 	}
 
 	if((player.Interface & INTER_PLAYERBOOK) && eeMouseDown2()) {
-		for(size_t i = 0; i < BAR_SLOTS; i++) {
+		for(size_t i = 1; i < BAR_SLOTS; i++) {
 			if(slotRect(i).contains(Vec2f(DANAEMouse)) && g_bar[i].kind != Slot::Empty) {
 				g_bar[i] = Slot();
 				saveBar();
@@ -1439,6 +1426,117 @@ static void updateBarEditing() {
 		}
 	}
 
+}
+
+void newGame() {
+	g_camDistance = 0.f;
+	stopAutoAttack();
+	g_casting = SPELL_NONE;
+	cancelSpellDrag();
+	g_bar.fill(Slot());
+	g_bar[0].kind = Slot::AutoAttack;
+	g_barLoaded = true;
+	saveBar();
+}
+
+size_t barSlots() {
+	return BAR_SLOTS;
+}
+
+int barSlotOf(SpellType spell) {
+	for(size_t i = 0; i < BAR_SLOTS; i++) {
+		bool here = (spell == SPELL_NONE) ? (g_bar[i].kind == Slot::AutoAttack)
+		                                  : (g_bar[i].kind == Slot::Cast && g_bar[i].spell == spell);
+		if(here) {
+			return int(i);
+		}
+	}
+	return -1;
+}
+
+void putOnBar(size_t index, SpellType spell) {
+	
+	if(index == 0 || index >= BAR_SLOTS) {
+		return; // key one is the swing, and is not given away
+	}
+	
+	/*
+	 * One thing does not sit on two keys. Pressing a second key for a spell
+	 * already on the bar means moving it there; leaving the old copy behind
+	 * would quietly fill the bar with duplicates of one spell.
+	 */
+	int had = barSlotOf(spell);
+	if(had >= 0) {
+		g_bar[size_t(had)] = Slot();
+	}
+	
+	g_bar[index].kind = (spell == SPELL_NONE) ? Slot::AutoAttack : Slot::Cast;
+	g_bar[index].spell = spell;
+	saveBar();
+	
+}
+
+void clearBarSlot(size_t index) {
+	if(index > 0 && index < BAR_SLOTS) {
+		g_bar[index] = Slot();
+		saveBar();
+	}
+}
+
+int barKeyPressed() {
+	if(!thirdPerson()) {
+		return -1;
+	}
+	for(size_t i = 0; i < BAR_SLOTS; i++) {
+		if(GInput->actionNowPressed(MMO_ACTIONS[i])) {
+			return int(i);
+		}
+	}
+	return -1;
+}
+
+void drawBarSpell(const Rectf & rect, SpellType spell, bool castable) {
+	lookForBarArt();
+	drawSlotIcon(rect, spell, castable);
+}
+
+void drawBarAttack(const Rectf & rect, bool lit) {
+	lookForBarArt();
+	if(g_attackArt) {
+		UseRenderState state(render2D().alphaCutout());
+		EERIEDrawBitmap(rect, 0.0007f, g_attackArt, lit ? Color::white : Color::gray(0.55f));
+	} else {
+		drawSwingMark(rect, lit ? Color(232, 198, 120) : Color(120, 112, 98));
+	}
+}
+
+void drawBarSocket(const Rectf & rect, size_t index) {
+	
+	if(index >= BAR_SLOTS) {
+		return;
+	}
+	
+	lookForBarArt();
+	
+	if(g_slotArt) {
+		UseRenderState state(render2D().alphaCutout());
+		EERIEDrawBitmap(rect, 0.0009f, g_slotArt, Color::white);
+	} else {
+		EERIEDrawBitmap(rect, 0.0009f, nullptr, SLOT_STONE);
+	}
+	
+	const Slot & slot = g_bar[index];
+	switch(slot.kind) {
+		case Slot::Empty:
+			break;
+		case Slot::AutoAttack:
+			drawBarAttack(rect, true);
+			break;
+		case Slot::Cast:
+			drawSlotIcon(rect, slot.spell, true);
+			break;
+	}
+	
 }
 
 void drawSpellDrag() {

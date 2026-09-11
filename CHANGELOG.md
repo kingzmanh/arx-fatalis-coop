@@ -8,6 +8,46 @@ seen working, **known issues** are broken and understood, and **needs testing**
 was built with care but has not yet been proven in a live game - if you try
 one of those and it misbehaves, that report is exactly what we need.
 
+## 0.21 - EXPERIMENTAL
+
+Still experimental, and still behind the one switch: **MMO controls** in the
+co-op menu, off by default. Both players do NOT need 0.21 - nothing here
+crosses the wire, the protocol is unchanged at 34, and a 0.21 player and a
+0.19 player can play together.
+
+This one is about filling the action bar, which 0.20 gave you no honest way
+to do.
+
+### What works
+
+- A page of its own in the book, on a fifth bookmark that sits first in the
+  row, next to the character sheet. It is there only while MMO controls are on.
+- The left page holds the spells you know, on the same tabs by level the spell
+  page uses, drawn with the game's own icons.
+- Hold the cursor over a spell and press **2**, **3**, **4** or **5**: it goes
+  on that key. A spell already on the bar carries its key's number in the
+  corner, and moving it to another key takes it off the first.
+- The right page shows the five keys as they stand. Right-click one to empty it.
+- Dragging still works: press on a spell and drop it on the bar on screen.
+- **Key 1 is the swing, always.** It cannot be overwritten, cleared or dropped
+  on, so there is no way to end up with no way to hit anything.
+- A new game starts at your own eyes, in first person, with a bar holding
+  nothing but that swing. The bar otherwise stays as you left it between
+  characters.
+
+### Changed since 0.20
+
+- The three painted spell icons of ours are gone. The game has an icon for
+  every spell, drawn by the people who drew the book, and three of ours beside
+  forty of theirs only made the bar look half finished. The bar keeps our
+  painted frame, sockets and sword.
+
+### Needs testing
+
+- Everything 0.20 listed under this heading is still where it was.
+- The five keys drawn on the right page are placed by hand, so they may sit
+  badly at an unusual resolution.
+
 ## 0.20 - EXPERIMENTAL: MMO controls
 
 An experimental build. The whole of it is off by default and lives behind one

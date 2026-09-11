@@ -120,6 +120,7 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 #include "math/Vector.h"
 
 #include "net/CoopNet.h"
+#include "net/CoopMmo.h"
 #include "net/CoopPlayer.h"
 
 #include "physics/Collisions.h"
@@ -2757,6 +2758,7 @@ void ARX_PLAYER_Start_New_Quest() {
 	LogInfo << "Starting a new playthrough";
 	
 	coop::clearStoryLedger();
+	coop::newGame();
 	
 	DanaeClearLevel();
 	SetEditMode();
