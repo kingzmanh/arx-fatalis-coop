@@ -349,8 +349,14 @@ void resetNpcBehavior(Entity & npc) {
 	
 }
 
+//! Forget every grudge against a summoned creature; defined further down.
+static void clearSummonGrudges();
+
 //! Reset all Behaviours from all NPCs
 void resetAllNpcBehaviors() {
+	// Who was angry with which summon goes too: the creatures it named are
+	// about to be destroyed, and their places will be handed to other things.
+	clearSummonGrudges();
 	for(Entity & npc : entities(IO_NPC)) {
 		resetNpcBehavior(npc);
 	}
@@ -945,6 +951,10 @@ void ARX_PHYSICS_Apply() {
 		// Decide which of the two players this creature is actually after,
 		// before any of the logic that acts on that decision runs.
 		ARX_NPC_CoopRetarget(io);
+
+		// And a called-up creature looks for its own fight, so that nobody has
+		// to point one out to it.
+		ARX_NPC_SummonHunt(io);
 
 		if((io->ioflags & IO_NPC) && io->_npcdata->poisonned > 0.f) {
 			ARX_NPC_ManagePoison(*io);
@@ -3047,6 +3057,290 @@ bool isEnemy(const Entity * entity) {
 	return (entity->ioflags & IO_NPC)
 	       && !(entity->_npcdata->behavior & BEHAVIOUR_FRIENDLY)
 	       && (entity->_npcdata->behavior & BEHAVIOUR_FIGHT);
+}
+
+/*
+ * Who has been hurting whom.
+ *
+ * Every creature script in the game answers one question when it is hurt:
+ * was that the player? A goblin struck by anything else shrugs and carries
+ * on after whoever it was already following, so a summoned fighter could
+ * kill it without ever being looked at. The engine makes that worse on a
+ * summon's behalf, answering "the player" for it (see damageNpc), which
+ * sends the goblin after the person who called the summon up.
+ *
+ * No script can be taught a different answer - they are Arkane's and there
+ * are two hundred of them - so it is given here: a creature stays on the
+ * summon that is hurting it for as long as the hurting is recent.
+ */
+namespace {
+
+struct Grudge {
+	EntityHandle summon;
+	GameInstant until;
+};
+
+//! How long a creature goes on caring, if it is not hurt again.
+constexpr GameDuration GRUDGE_TIME = 8s;
+
+std::map<long, Grudge> g_grudges;
+
+//! What each summoned creature was told to start fights with.
+std::map<long, std::vector<std::string>> g_hunts;
+
+} // anonymous namespace
+
+static void clearSummonGrudges() {
+	g_grudges.clear();
+	g_hunts.clear();
+}
+
+void ARX_NPC_SetSummonHunts(Entity & summon, const std::vector<std::string> & words) {
+	g_hunts[summon.index().handleData()] = words;
+}
+
+void ARX_NPC_NoteSummonHurt(Entity & victim, Entity & summon) {
+	
+	if(!(victim.ioflags & IO_NPC) || !(summon.ioflags & IO_NPC) || victim == summon) {
+		return;
+	}
+	
+	g_grudges[victim.index().handleData()] = { summon.index(),
+	                                           g_gameTime.now() + GRUDGE_TIME };
+	LogInfo << "summon grudge: " << victim.idString() << " hurt by " << summon.idString()
+	        << " | behaviour " << long(victim._npcdata->behavior)
+	        << " target " << ::idString(entities.get(victim.targetinfo));
+	
+}
+
+/*
+ * What this creature is owed a blow by, if anything.
+ *
+ * Asked by SETTARGET rather than applied behind the script's back. Writing the
+ * target every frame was tried and it does not work: the creature's own ON OUCH
+ * says "target player" on every hit, so the two of us traded the target twice a
+ * second, and since every change asks the pathfinder for a fresh route - and
+ * the pathfinder answers a frame or two later - it never finished working one
+ * out and simply stood still. Answering the question the script actually asks
+ * costs one route and holds.
+ */
+Entity * ARX_NPC_SummonGrudge(const Entity & io) {
+
+	auto held = g_grudges.find(io.index().handleData());
+	if(held == g_grudges.end()) {
+		return nullptr;
+	}
+
+	/*
+	 * A summon still standing, and still a summon. Places in the entity list
+	 * are handed out again, so a name kept for eight seconds can come back
+	 * pointing at something else entirely; nothing but a summoned creature
+	 * carries a summoner, which is enough to tell them apart.
+	 */
+	Entity * summon = entities.get(held->second.summon);
+	if(g_gameTime.now() > held->second.until || !summon || IsDeadNPC(*summon)
+	   || summon->_npcdata->summoner == EntityHandle()) {
+		g_grudges.erase(held);
+		return nullptr;
+	}
+
+	return summon;
+
+}
+
+/*
+ * Can this creature see that one?
+ *
+ * The same question getFirstNpcInSight asks: a hundred and ten degrees in
+ * front, and a clear line from one head to the other, with anything within
+ * two hundred units taken as seen whichever way it is looking. Without it a
+ * summon starts fights through walls and with things behind its back.
+ */
+static bool canSee(const Entity & watcher, const Entity & other) {
+	
+	if(!watcher.obj || !other.obj) {
+		return false;
+	}
+	
+	float away = arx::distance2(other.pos, watcher.pos);
+	if(away < square(200.f)) {
+		return true;
+	}
+	
+	Vec3f orgn = watcher.pos + Vec3f(0.f, -90.f, 0.f);
+	if(VertexId head = watcher.obj->fastaccess.head_group_origin) {
+		orgn = watcher.obj->vertexWorldPositions[head].v;
+	}
+	
+	Vec3f dest = other.pos + Vec3f(0.f, -90.f, 0.f);
+	if(VertexId head = other.obj->fastaccess.head_group_origin) {
+		dest = other.obj->vertexWorldPositions[head].v;
+	}
+	
+	float facing = MAKEANGLE(glm::degrees(getAngle(orgn.x, orgn.z, dest.x, dest.z)));
+	if(glm::abs(AngularDifference(facing, MAKEANGLE(watcher.angle.getYaw()))) >= 110.f) {
+		return false;
+	}
+	
+	Vec3f hit;
+	return IO_Visible(orgn, dest, &hit);
+	
+}
+
+//! Is this creature one the summon was told to start fights with?
+static bool isHunted(const Entity & summon, const Entity & other) {
+	
+	auto told = g_hunts.find(summon.index().handleData());
+	if(told == g_hunts.end()) {
+		return false;
+	}
+	
+	const std::string & name = other.className();
+	for(const std::string & word : told->second) {
+		if(name.find(word) != std::string::npos) {
+			return true;
+		}
+	}
+	
+	return false;
+	
+}
+
+//! A body somebody is playing, or the hero.
+static bool isPlayerBody(const Entity * entity) {
+	return entity && (entity == entities.player() || coop::isAvatarEntity(entity));
+}
+
+/*
+ * Is this creature worth a summon's attention?
+ *
+ * Only if it is in a fight, and only if the fight is ours: it is after the
+ * person who called the summon up, after one of their other summons, or
+ * after this one. A rat crossing the room is in nobody's fight and is left
+ * alone; a rat biting the player is in ours and is not. This is also what
+ * keeps a summon off shopkeepers, guards and everything else alive and
+ * minding its own business, all of which the nearest-creature question it
+ * used to ask would happily have named.
+ */
+static bool isWorthFighting(const Entity & summon, const Entity & other,
+                            EntityHandle summoner) {
+	
+	if(&other == &summon || !(other.ioflags & IO_NPC) || IsDeadNPC(other)) {
+		return false;
+	}
+	
+	if(isPlayerBody(&other)) {
+		return false;
+	}
+	
+	// Never another of the same summoner's creatures
+	if(other._npcdata->summoner == summoner) {
+		return false;
+	}
+	
+	if(other._npcdata->behavior & BEHAVIOUR_FRIENDLY) {
+		return false;
+	}
+	
+	/*
+	 * The first rule: it is already in a fight, and the fight is ours. This
+	 * holds for anything at all - a guard that has turned on the player, a
+	 * dog the player hit first - because a creature swinging at us is an
+	 * enemy whatever its class says.
+	 */
+	if(other._npcdata->behavior & (BEHAVIOUR_FIGHT | BEHAVIOUR_MAGIC
+	                               | BEHAVIOUR_DISTANT)) {
+		
+		if(other.targetinfo == summon.index()) {
+			return true;
+		}
+		
+		/*
+		 * After a player. Either player: a script says "target player" and
+		 * the engine has one name for that, so a creature chasing the second
+		 * one is still recorded as chasing the first, and both are our side.
+		 */
+		Entity * quarry = entities.get(other.targetinfo);
+		if(isPlayerBody(quarry)) {
+			return true;
+		}
+		
+		// Or after one of the summoner's other creatures
+		if(quarry && (quarry->ioflags & IO_NPC)
+		   && quarry->_npcdata->summoner == summoner) {
+			return true;
+		}
+		
+	}
+	
+	/*
+	 * The second rule: a fight of its own.
+	 *
+	 * The game keeps no record of who is hostile - there are no factions, and
+	 * the guards, the shopkeepers and the townsfolk share one class - so the
+	 * spell's own entry says which classes are worth starting on, and only
+	 * what the creature can actually see counts. The animals the target frame
+	 * will not name are left alone here too; if the player hits one first and
+	 * it fights back, the rule above picks it up.
+	 */
+	if(coop::isVermin(other)) {
+		return false;
+	}
+	
+	return isHunted(summon, other) && canSee(summon, other);
+	
+}
+
+void ARX_NPC_SummonHunt(Entity * io) {
+	
+	if(!io || !(io->ioflags & IO_NPC) || IsDeadNPC(*io)) {
+		return;
+	}
+	
+	EntityHandle summoner = io->_npcdata->summoner;
+	if(summoner == EntityHandle()) {
+		return; // not a called-up creature; it is somebody's own business
+	}
+	
+	/*
+	 * A quarry already worth having is kept, so that it does not change its
+	 * mind every frame between two goblins standing side by side. Anything
+	 * else - a corpse, something that has stopped fighting, the summoner
+	 * itself, nothing at all - is replaced.
+	 */
+	Entity * held = entities.get(io->targetinfo);
+	if(held && isWorthFighting(*io, *held, summoner)) {
+		return;
+	}
+	
+	const float LOOK = 2200.f;
+	Entity * pick = nullptr;
+	float nearest = square(LOOK);
+	for(Entity & other : entities.inScene(IO_NPC)) {
+		if(!isWorthFighting(*io, other, summoner)) {
+			continue;
+		}
+		float away = arx::distance2(other.pos, io->pos);
+		if(away < nearest) {
+			nearest = away;
+			pick = &other;
+		}
+	}
+	
+	// Nothing to fight: back to the one who called it up, and let its script
+	// decide what standing about looks like.
+	EntityHandle wanted = pick ? pick->index() : summoner;
+	if(wanted == io->targetinfo) {
+		return;
+	}
+	
+	io->targetinfo = wanted;
+	io->_npcdata->reachedtarget = 0;
+	io->_npcdata->pathfind.truetarget = wanted;
+	// A route to it as well; see the note in ARX_NPC_SummonRetarget.
+	GetTargetPos(io);
+	ARX_NPC_LaunchPathfind(io, wanted);
+	
 }
 
 void ARX_NPC_CoopRetarget(Entity * io) {

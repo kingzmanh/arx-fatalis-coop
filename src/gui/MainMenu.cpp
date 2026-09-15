@@ -77,6 +77,7 @@
 #include "io/log/Logger.h"
 
 #include "net/CoopNet.h"
+#include "net/CoopMmo.h"
 #include "net/CoopVoice.h"
 #include "net/CoopProtocol.h"
 
@@ -1241,6 +1242,67 @@ public:
 			addCenter(std::move(cb));
 		}
 		
+		/*
+		 * The camera settings live here rather than with the co-op ones.
+		 *
+		 * They went on the co-op page first because that is where the mod's
+		 * other switches are, and four more rows pushed HOST, JOIN and LEAVE
+		 * SESSION off the bottom of the panel - a page has a height and
+		 * nothing warns you when you pass it. They belong here anyway: this
+		 * is the page for what the view looks like, next to the crosshair and
+		 * the HUD scale, and none of it has anything to do with co-op.
+		 */
+		{
+			auto slider = std::make_unique<CycleTextWidget>(sliderSize(), hFontMenu,
+			                                               "Third person", hFontControls);
+			slider->setSnug(sliderSize().y * 0.4f);
+			slider->valueChanged = [](int pos, std::string_view /* string */) {
+				config.input.thirdPerson = (pos == 1);
+				config.save();
+			};
+			slider->addEntry("off");
+			slider->addEntry("on");
+			slider->setValue(config.input.thirdPerson ? 1 : 0);
+			addCenter(std::move(slider));
+		}
+		
+		{
+			// Ten notches over 60..420 units, and the wheel moves it in play.
+			auto sld = std::make_unique<SliderWidget>(sliderSize(), hFontMenu, "Camera distance");
+			sld->valueChanged = [](int value) {
+				config.input.camDistance = 60 + glm::clamp(value, 0, 10) * 36;
+				config.save();
+			};
+			sld->setValue(glm::clamp((config.input.camDistance - 60) / 36, 0, 10));
+			addCenter(std::move(sld));
+		}
+		
+		{
+			auto sld = std::make_unique<SliderWidget>(sliderSize(), hFontMenu, "Camera height");
+			sld->valueChanged = [](int value) {
+				config.input.camHeight = glm::clamp(value, 0, 10) * 8;
+				config.save();
+			};
+			sld->setValue(glm::clamp(config.input.camHeight / 8, 0, 10));
+			addCenter(std::move(sld));
+		}
+		
+		{
+			/*
+			 * Centre notch is dead behind the head; either way from there
+			 * pushes the camera round a shoulder so the body stops standing
+			 * in front of whatever you are looking at. Which shoulder is a
+			 * taste, so both are offered rather than one being chosen here.
+			 */
+			auto sld = std::make_unique<SliderWidget>(sliderSize(), hFontMenu, "Camera shoulder");
+			sld->valueChanged = [](int value) {
+				config.input.camSide = (glm::clamp(value, 0, 10) - 5) * 16;
+				config.save();
+			};
+			sld->setValue(glm::clamp(config.input.camSide / 16 + 5, 0, 10));
+			addCenter(std::move(sld));
+		}
+		
 		addBackButton(Page_Options);
 		
 	}
@@ -2147,12 +2209,12 @@ public:
 			addCenter(std::move(slider));
 		}
 
-		{
+		if(coop::MmoControlsOffered) {
 			/*
 			 * MMO controls: the camera behind the shoulder, a target that stays
-			 * picked, and the bar of twelve keys along the bottom. Off by
-			 * default, and off means off - with this unset not one line of it
-			 * runs and the game plays exactly as Arkane shipped it.
+			 * picked, and the bar of twelve keys along the bottom. Not offered
+			 * at the moment - see MmoControlsOffered in CoopMmo.h. Third person
+			 * used to come with all of this and now has its own row below.
 			 */
 			auto slider = std::make_unique<CycleTextWidget>(sliderSize(), hFontMenu,
 			                                               "MMO controls", hFontControls);

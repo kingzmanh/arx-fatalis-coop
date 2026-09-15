@@ -27,14 +27,21 @@
 #include "game/Entity.h"
 #include "game/EntityManager.h"
 #include "game/NPC.h"
+#include "net/CoopPlayer.h"
+#include "graphics/particle/ParticleEffects.h"
+#include "scene/Interactive.h"
 #include "game/Player.h"
 #include "game/Spells.h"
 #include "game/effect/ParticleSystems.h"
 #include "graphics/Math.h"
 #include "graphics/particle/ParticleParams.h"
+#include "util/String.h"
 #include "io/log/Logger.h"
+#include "math/RandomVector.h"
+#include "physics/Collisions.h"
 #include "io/resource/PakReader.h"
 #include "io/resource/ResourcePath.h"
+#include "scene/Object.h"
 #include "scene/GameSound.h"
 #include "net/CoopNet.h"
 #include "net/CoopWorld.h"
@@ -195,6 +202,19 @@ void studioSpellsLoad() {
 			current->level = std::max(1L, std::min(10L, long(std::atol(std::string(value).c_str()))));
 		} else if(key == "kind") {
 			current->kind = value;
+		} else if(key == "reach") {
+			current->reach = float(std::atof(std::string(value).c_str()));
+		} else if(key == "secret") {
+			current->secret = (value == "yes" || value == "true" || value == "1");
+		} else if(key == "hunts") {
+			current->hunts.clear();
+			for(std::string_view word : util::splitIgnoreEmpty(value, ' ')) {
+				current->hunts.emplace_back(word);
+			}
+		} else if(key == "creature") {
+			current->creature = value;
+		} else if(key == "seconds") {
+			current->seconds = float(std::atof(std::string(value).c_str()));
 		} else if(key == "amount") {
 			current->amount = float(std::atof(std::string(value).c_str()));
 		} else if(key == "mana") {
@@ -292,6 +312,55 @@ float studioSpellManaCost(SpellType type) {
 
 // ---------------------------------------------------------------- casting --
 
+/*
+ * How long the ground stands open before anything comes out of it. Raise Dead
+ * waits three seconds for its own, and a creature that appears the instant the
+ * words are said reads as having nothing to do with the picture.
+ */
+static const GameDuration SUMMON_DELAY = 3s;
+
+/*
+ * The arc has to be told which spell owns it when it is made, because that
+ * is how it finds the caster to leave the damage under.
+ */
+StudioSpell::StudioSpell()
+	: m_bolt(this)
+{ }
+
+//! Where a creature's heart is, for a bolt to be thrown from or at.
+static Vec3f chestOf(Entity * entity) {
+	
+	if(!entity) {
+		return Vec3f(0.f);
+	}
+	
+	if(entity == entities.player()) {
+		return player.pos + Vec3f(0.f, 70.f, 0.f);
+	}
+	
+	if(VertexGroupId chest = EERIE_OBJECT_GetGroup(entity->obj, "chest")) {
+		return entity->obj->vertexWorldPositions[entity->obj->grouplist[chest].origin].v;
+	}
+	
+	return entity->pos + Vec3f(0.f, -120.f, 0.f);
+	
+}
+
+//! What this spell is being thrown at: what it was cast on, or what the
+//! caster is fighting.
+Entity * StudioSpell::quarry() const {
+	
+	Entity * caster = entities.get(m_caster);
+	Entity * mark = entities.get(m_target);
+	
+	if((!mark || mark == caster) && caster && (caster->ioflags & IO_NPC)) {
+		mark = entities.get(caster->targetinfo);
+	}
+	
+	return (mark == caster) ? nullptr : mark;
+	
+}
+
 void StudioSpell::Launch() {
 
 	const StudioSpellDef & spell = def();
@@ -331,13 +400,70 @@ void StudioSpell::Launch() {
 	m_pos += angleToVectorXZ(facing) * 300.f;
 
 	m_useRift = (spell.visual == "SummonRift");
-	m_duration = m_useRift ? 2s : 1s;
+	m_useGrave = (spell.visual == "RaiseDead");
+	m_useBolt = (spell.kind == "lightning");
+	m_duration = (m_useRift || m_useGrave) ? 2s : 1s;
+	
+	/*
+	 * A summoning lasts as long as its creature does, because the spell
+	 * ending is what takes the creature away again. Everything else is as
+	 * long as its picture.
+	 */
+	if(spell.kind == "summon" && spell.seconds > 0.f) {
+		m_duration = std::chrono::milliseconds(long(spell.seconds * 1000.f));
+		/*
+		 * The creature is not here yet. The seconds the file asks for are
+		 * seconds on its feet, so the time the ground stands open is added on
+		 * top of them rather than taken out of them.
+		 */
+		if(m_useRift || m_useGrave) {
+			m_duration += SUMMON_DELAY;
+		}
+	}
 	if(m_useRift) {
 		m_rift.Create(m_pos, MAKEANGLE(facing));
 		m_rift.SetDuration(2s, 500ms, 1500ms);
 		m_rift.SetColorBorder(Color3f::red);
 		m_rift.SetColorRays1(Color3f::red);
 		m_rift.SetColorRays2(Color3f::yellow * 0.5f);
+	} else if(m_useGrave) {
+		// The same tear in the ground Raise Dead makes, in the same colours
+		m_grave.Create(m_pos, MAKEANGLE(facing));
+		m_grave.SetDuration(2s, 500ms, 1800ms);
+		m_grave.SetColorBorder(Color3f::gray(0.5f));
+		m_grave.SetColorRays1(Color3f::gray(0.5f));
+		m_grave.SetColorRays2(Color3f::red);
+		// ... and the same black light under it, which Update turns red
+		if(EERIE_LIGHT * light = dynLightCreate(m_light)) {
+			light->intensity = 1.3f;
+			light->fallend = 450.f;
+			light->fallstart = 380.f;
+			light->rgb = Color3f::black;
+			light->pos = m_pos - Vec3f(0.f, 100.f, 0.f);
+			light->duration = 200ms;
+			light->creationTime = g_gameTime.now();
+		}
+	} else if(m_useBolt) {
+		
+		/*
+		 * Built the way Lightning Strike builds its own: an arc five hundred
+		 * units long pointing straight ahead, which Update then turns towards
+		 * whatever is being fought.
+		 */
+		m_bolt.setReach(spell.reach);
+		m_bolt.Create(Vec3f(0.f), Vec3f(0.f, 0.f, -500.f));
+		m_bolt.SetDuration(spell.seconds > 0.f
+		                   ? std::chrono::milliseconds(long(spell.seconds * 1000.f))
+		                   : GameDuration(2s));
+		m_bolt.m_isMassLightning = false;
+		m_duration = m_bolt.m_duration;
+		{
+			Entity * mark = quarry();
+			LogInfo << "studio spells: " << spell.key << " thrown by "
+			        << ::idString(entities.get(m_caster)) << " at " << ::idString(mark)
+			        << " reach " << spell.reach << " for " << spell.amount << "/s";
+		}
+		
 	} else {
 		ParticleParam look = ParticleParam_Heal;
 		if(!spell.visual.empty() && !particleByName(spell.visual, look)) {
@@ -348,7 +474,20 @@ void StudioSpell::Launch() {
 		m_particles.SetParams(g_particleParameters[look]);
 	}
 
-	if(spell.kind == "damage" && spell.amount > 0.f) {
+	if(spell.kind == "summon" && !spell.creature.empty()) {
+		
+		/*
+		 * If there is an opening in the ground, the creature waits for it and
+		 * Update brings it up. If the spell has no such picture there is
+		 * nothing to wait for, so it arrives at once.
+		 */
+		if(m_useRift || m_useGrave) {
+			m_summonPending = true;
+		} else {
+			callUpCreature();
+		}
+		
+	} else if(spell.kind == "damage" && spell.amount > 0.f) {
 		DamageParameters damage;
 		damage.pos = m_pos;
 		damage.radius = (spell.radius > 0.f) ? spell.radius : 120.f;
@@ -432,11 +571,102 @@ void StudioSpell::Launch() {
 
 }
 
+/*
+ * Step for step what RaiseDeadSpell::Update does when its fissure is at its
+ * widest: make sure there is room, put the creature there with a teleport
+ * rather than by writing its position - a written position leaves the engine
+ * thinking the creature is still in the room it was built in, and it will not
+ * walk out of that - tell it who called it, and tell its script it was
+ * summoned.
+ */
+void StudioSpell::callUpCreature() {
+	
+	const StudioSpellDef & spell = def();
+	
+	/*
+	 * Only the machine that owns this area brings a creature into it. The other
+	 * one runs a copy of every spell its partner casts so the picture matches,
+	 * and a creature invented by that copy would stand on one screen only. The
+	 * real one arrives through entity replication a beat later. The game's own
+	 * summoning is guarded the same way.
+	 */
+	if(coop::isReplica()) {
+		return;
+	}
+	
+	Cylinder phys = Cylinder(m_pos, 50.f, -200.f);
+	if(glm::abs(CheckAnythingInCylinder(phys, nullptr, CFLAG_JUST_TEST)) >= 30.f) {
+		ARX_SOUND_PlaySFX(g_snd.MAGIC_FIZZLE);
+		LogInfo << "studio spells: " << spell.key << " found nowhere to put "
+		        << spell.creature;
+		return;
+	}
+	
+	Entity * called = AddNPC(res::path::load(spell.creature), -1, IO_IMMEDIATELOAD);
+	if(!called) {
+		LogWarning << "studio spells: " << spell.key << " could not call up "
+		           << spell.creature;
+		return;
+	}
+	
+	ARX_INTERACTIVE_HideGore(called);
+	RestoreInitialIOStatusOfIO(called);
+	called->_npcdata->summoner = m_caster;
+	called->ioflags |= IO_NOSAVE;
+	called->scriptload = 1;
+	m_summoned = called->index();
+	ARX_INTERACTIVE_Teleport(called, phys.origin);
+	SendInitScriptEvent(called);
+	ARX_NPC_SetSummonHunts(*called, spell.hunts);
+	SendIOScriptEvent(entities.get(m_caster), called, SM_SUMMONED);
+	
+	MakeCoolFx(m_pos + arx::randomVec3f() * 100.f + Vec3f(-50.f, 50.f, -50.f));
+	
+	/*
+	 * It arrives knowing what to fight: whatever the caster has picked. Left
+	 * to choose for itself it asks for the nearest creature in sight, and the
+	 * nearest creature to a summoner is the summoner - the player carries the
+	 * same mark as any other living thing here.
+	 *
+	 * Magic and distance, and no fighting flag: that is the behaviour the game
+	 * gives its own casters. With the fighting flag it walks up and swings its
+	 * fists, which is not what a summoned mage is for.
+	 */
+	if(Entity * quarry = coop::targetEntity(); quarry && quarry->_npcdata) {
+		called->targetinfo = quarry->index();
+		called->_npcdata->movemode = RUNMODE;
+		ARX_NPC_Behaviour_Change(called, BEHAVIOUR_MAGIC | BEHAVIOUR_DISTANT, 0);
+		LogInfo << "studio spells: it goes for " << quarry->idString();
+	}
+	
+	LogInfo << "studio spells: " << spell.key << " called up " << called->idString()
+	        << " for " << spell.seconds << "s";
+	
+}
+
 void StudioSpell::End() {
+	
 	endLightDelayed(m_light, 500ms);
+	
+	// Whatever was called up goes back, in its own smoke, as the game's own does
+	if(Entity * called = entities.get(m_summoned)) {
+		ARX_SOUND_PlaySFX(g_snd.SPELL_ELECTRIC, &called->pos);
+		AddRandomSmoke(*called, 100);
+		MakeCoolFx(called->pos - Vec3f(0.f, 100.f, 0.f));
+		called->destroyOne();
+		m_summoned = EntityHandle();
+	}
+	
 }
 
 void StudioSpell::Update() {
+	
+	// The opening is at its widest: whatever was called climbs out of it now
+	if(m_summonPending && m_elapsed >= SUMMON_DELAY) {
+		m_summonPending = false;
+		m_light = { };
+		callUpCreature();
+	}
 	
 	// halfway: the rift is open, and where you were looking is where it opened
 	if(m_askPending && m_elapsed >= m_duration / 2) {
@@ -447,6 +677,64 @@ void StudioSpell::Update() {
 	if(m_useRift) {
 		m_rift.Update(g_gameTime.lastFrameDuration());
 		m_rift.Render();
+	} else if(m_useBolt) {
+		
+		/*
+		 * Both angles, not one.
+		 *
+		 * The game's own bolt takes its left-and-right angle from the caster's
+		 * body and only works out the up-and-down one. A creature turns towards
+		 * what it is fighting at a third of a degree a millisecond, so one that
+		 * casts the moment it decides to is still side-on, and its bolt goes
+		 * past. Ours is aimed at where the thing actually is.
+		 */
+		Entity * caster = entities.get(m_caster);
+		Vec3f from = caster ? chestOf(caster) : m_caster_pos;
+		
+		if(Entity * mark = quarry()) {
+			Vec3f to = chestOf(mark);
+			float flat = glm::distance(getXZ(to), getXZ(from));
+			m_bolt.m_beta = MAKEANGLE(180.f + glm::degrees(getAngle(to.x, to.z, from.x, from.z)));
+			/*
+			 * The up-and-down angle is the height between the two chests over
+			 * the flat run between them, and nothing else.
+			 *
+			 * Arkane's own bolt puts the difference in z into that run as well
+			 * - getAngle(from.y, from.z, to.y, to.z + flat) - which is only
+			 * right when the target happens to lie along x. Along -z the two
+			 * terms cancel exactly and the angle snaps to ninety degrees; close
+			 * up, both are small enough that which way the remainder points
+			 * changes from frame to frame, and the bolt whips about.
+			 */
+			if(flat > 20.f) {
+				m_bolt.m_alpha = MAKEANGLE(glm::degrees(getAngle(0.f, 0.f, to.y - from.y, flat)));
+			} else {
+				// Standing on top of each other: there is no run to speak of,
+				// so any angle is as good as another. Level is the calm one.
+				m_bolt.m_alpha = 0.f;
+			}
+		} else {
+			m_bolt.m_beta = caster ? caster->angle.getYaw() : 0.f;
+			m_bolt.m_alpha = 0.f;
+		}
+		
+		m_bolt.m_pos = from;
+		m_bolt.m_fDamage = (def().amount > 0.f) ? def().amount : 4.f;
+		m_bolt.Update(g_gameTime.lastFrameDuration());
+		m_bolt.Render();
+		
+	} else if(m_useGrave) {
+		m_grave.Update(g_gameTime.lastFrameDuration());
+		m_grave.Render();
+		// Raise Dead's light: black at first, then the red of what is coming up
+		if(EERIE_LIGHT * light = lightHandleGet(m_light)) {
+			light->intensity = 3.f;
+			light->fallend = 500.f;
+			light->fallstart = 400.f;
+			light->rgb = Color3f(0.8f, 0.2f, 0.2f);
+			light->duration = 800ms;
+			light->creationTime = g_gameTime.now();
+		}
 	} else {
 		m_particles.Update(g_gameTime.lastFrameDuration());
 		m_particles.Render();

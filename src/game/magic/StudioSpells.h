@@ -51,6 +51,7 @@
 #define ARX_GAME_MAGIC_STUDIOSPELLS_H
 
 #include <array>
+#include <vector>
 #include <string>
 #include <string_view>
 
@@ -60,6 +61,7 @@
 #include "game/magic/Spell.h"
 #include "game/magic/SpellRecognition.h"
 #include "graphics/effects/Fissure.h"
+#include "graphics/effects/Lightning.h"
 #include "graphics/particle/ParticleSystem.h"
 
 //! How many spells can be written down without building the game.
@@ -79,10 +81,19 @@ struct StudioSpellDef {
 	                                                RUNE_NONE, RUNE_NONE,
 	                                                RUNE_NONE, RUNE_NONE };
 	long level = 1;
-	std::string kind = "custom";     //!< damage, heal, summon or custom
+	std::string kind = "custom";     //!< damage, heal, summon, lightning or custom
+	//! Kept out of the book and off the bar: a spell for one creature only.
+	bool secret = false;
+	//! For "summon": the creature, as a class path, and how long it stays.
+	std::string creature;
+	float seconds = 0.f;
+	//! What it starts fights with, as words matched against a class name.
+	std::vector<std::string> hunts;
 	DamageType damageTypes = 0;
 	float amount = 0.f;
 	float radius = 0.f;
+	//! For "lightning": how far the arc carries, in world units.
+	float reach = 0.f;
 	std::string visual;              //!< a particle preset, or SummonRift
 	std::string sound;               //!< a wav in sfx/
 	std::string icon;                //!< a texture for the book
@@ -114,6 +125,8 @@ class StudioSpell final : public Spell {
 
 public:
 
+	StudioSpell();
+
 	void Launch() override;
 	void End() override;
 	void Update() override;
@@ -122,13 +135,29 @@ private:
 
 	[[nodiscard]] const StudioSpellDef & def() const { return studioSpell(m_type); }
 
+	//! What this spell is aimed at: what it was cast on, or what the caster fights.
+	[[nodiscard]] Entity * quarry() const;
+
 	Vec3f m_pos;
+	//! What this spell called up, if it is a summoning; taken away at the end.
+	EntityHandle m_summoned;
 	ParticleSystem m_particles;
 	CSummonCreature m_rift;
+	//! The other opening: what Raise Dead tears in the ground.
+	CRiseDead m_grave;
+	//! The arc, for "kind lightning".
+	CLightning m_bolt;
 	LightHandle m_light;
 	bool m_useRift = false;
+	bool m_useGrave = false;
+	bool m_useBolt = false;
 	//! A partner to pull, once the rift has opened.
 	bool m_askPending = false;
+	//! A creature still to step out of the opening in the ground.
+	bool m_summonPending = false;
+
+	//! Bring the creature into the world, the way Raise Dead brings up its own.
+	void callUpCreature();
 
 };
 

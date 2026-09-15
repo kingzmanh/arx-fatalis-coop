@@ -96,6 +96,10 @@ const int enemyHealth = 1;
 const bool creatureBars = false;
 const bool targetFrame = true;
 const bool mmoMode = false;
+const bool thirdPerson = false;
+const int camDistance = 200;
+const int camHeight = 20;
+const int camSide = 48;
 /*
  * An empty bar apart from the swing, because the character has not learned
  * any magic yet at the point this default is first written. Spells arrive on
@@ -299,6 +303,10 @@ constexpr const std::string_view
 	creatureBars = "creature_health_bars",
 	targetFrame = "target_frame",
 	mmoMode = "mmo_mode",
+	thirdPerson = "third_person",
+	camDistance = "cam_distance",
+	camHeight = "cam_height",
+	camSide = "cam_side",
 	actionBar = "action_bar",
 	allowConsole = "allow_console";
 
@@ -576,6 +584,10 @@ bool Config::save() {
 	writer.writeKey(Key::creatureBars, input.creatureBars);
 	writer.writeKey(Key::targetFrame, input.targetFrame);
 	writer.writeKey(Key::mmoMode, input.mmoMode);
+	writer.writeKey(Key::thirdPerson, input.thirdPerson);
+	writer.writeKey(Key::camDistance, input.camDistance);
+	writer.writeKey(Key::camHeight, input.camHeight);
+	writer.writeKey(Key::camSide, input.camSide);
 	writer.writeKey(Key::actionBar, input.actionBar);
 	if(input.allowConsole) {
 		// Only write this if true so that switching from release to debug builds enables the console
@@ -722,6 +734,13 @@ bool Config::init(const fs::path & file) {
 	input.creatureBars = reader.getKey(Section::Input, Key::creatureBars, Default::creatureBars);
 	input.targetFrame = reader.getKey(Section::Input, Key::targetFrame, Default::targetFrame);
 	input.mmoMode = reader.getKey(Section::Input, Key::mmoMode, Default::mmoMode);
+	input.thirdPerson = reader.getKey(Section::Input, Key::thirdPerson, Default::thirdPerson);
+	input.camDistance = glm::clamp(reader.getKey(Section::Input, Key::camDistance,
+	                                             Default::camDistance), 60, 420);
+	input.camHeight = glm::clamp(reader.getKey(Section::Input, Key::camHeight,
+	                                           Default::camHeight), 0, 80);
+	input.camSide = glm::clamp(reader.getKey(Section::Input, Key::camSide,
+	                                         Default::camSide), -80, 80);
 	input.actionBar = reader.getKey(Section::Input, Key::actionBar, Default::actionBar);
 	input.allowConsole = reader.getKey(Section::Input, Key::allowConsole, Default::allowConsole);
 	

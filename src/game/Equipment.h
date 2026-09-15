@@ -130,9 +130,14 @@ void ARX_EQUIPMENT_RecreatePlayerMesh();
  * Put a piece of armour on a body - swapping the mesh part and repainting the
  * skin, which is how Arx wears armour. Any body, not only the player's, so the
  * other player can be seen wearing theirs.
+ *
+ * \param bodyKind which body is being dressed, because a shape cut for one is
+ *                 not a shape for another. Passed in rather than read from the
+ *                 local player: the other player's avatar comes through here
+ *                 too, and they may be wearing a different body entirely.
  */
 void ARX_EQUIPMENT_ApplyTweak(Entity * io, Entity * item, TweakType tw,
-                              std::string_view selection);
+                              std::string_view selection, unsigned char bodyKind);
 Entity * getWeapon(Entity & entity) noexcept;
 std::string_view getWeaponMaterial(Entity & entity) noexcept;
 DamageType getDamageTypeFromWeaponMaterial(std::string_view material) noexcept;

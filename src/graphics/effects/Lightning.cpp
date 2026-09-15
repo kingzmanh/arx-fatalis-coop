@@ -237,6 +237,21 @@ void CLightning::BuildS(LIGHTNING * lightingInfo) {
 	
 }
 
+void CLightning::setReach(float units) {
+	
+	// What the forty steps add up to when left as Arkane set them.
+	const float ownReach = 559.f;
+	
+	if(units <= 0.f) {
+		return;
+	}
+	
+	float scale = units / ownReach;
+	m_fLengthMin = 5.f * scale;
+	m_fLengthMax = 40.f * scale;
+	
+}
+
 void CLightning::Create(Vec3f aeFrom, Vec3f aeTo) {
 	
 	SetDuration(m_duration);

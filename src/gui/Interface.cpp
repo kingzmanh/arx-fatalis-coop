@@ -1153,7 +1153,7 @@ void ArxGame::managePlayerControls() {
 			ARX_INTERFACE_setCombatMode(COMBAT_MODE_OFF);
 		}
 		
-		if(coop::thirdPerson()) {
+		if(coop::mmoThird()) {
 			/*
 			 * In third person the bag is opened and closed by this key and
 			 * nothing else. The vanilla path below works by flipping the
@@ -1249,7 +1249,7 @@ void ArxGame::managePlayerControls() {
 				
 			}
 		}
-	} else if(coop::thirdPerson()) {
+	} else if(coop::mmoThird()) {
 		
 		/*
 		 * The bag does not follow the mouse mode here. Cursor mode is the
@@ -1439,7 +1439,7 @@ void ArxGame::manageKeyMouse() {
 	 * engine's own grab and release of the pointer do the work: it vanishes
 	 * for the drag and comes back where it was left.
 	 */
-	if(coop::thirdPerson()) {
+	if(coop::mmoThird()) {
 		/*
 		 * Two flags, and it is this one that decides whether there is a
 		 * pointer. Left on - and the mouse-look toggle keeps switching it
@@ -1487,7 +1487,7 @@ void ArxGame::manageKeyMouse() {
 		 * always restores it: the pointer is exactly where it was let go, the
 		 * way it is in the games this borrows from.
 		 */
-		if(mainApp->getWindow()->isFullScreen() || coop::thirdPerson()) {
+		if(mainApp->getWindow()->isFullScreen() || coop::mmoThird()) {
 			GInput->setMousePosAbs(DANAEMouse);
 		}
 		
@@ -1578,7 +1578,7 @@ void ArxGame::manageKeyMouse() {
 			rotation *= (float(config.input.mouseSensitivity) + 1.f) * 0.02f;
 			rotation *= toMsf(g_platformTime.lastFrameDuration());
 			
-		} else if(config.input.borderTurning && !coop::thirdPerson()) {
+		} else if(config.input.borderTurning && !coop::mmoThird()) {
 			
 			/*
 			 * Not while the MMO camera is out. Turning because the pointer

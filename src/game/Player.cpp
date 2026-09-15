@@ -128,6 +128,7 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 #include "physics/Projectile.h"
 
 #include "platform/Platform.h"
+#include "platform/Time.h"
 #include "platform/profiler/Profiler.h"
 
 #include "scene/ChangeLevel.h"
@@ -1235,6 +1236,12 @@ void ARX_PLAYER_BodyAnimations(Entity * io, unsigned char kind) {
 	 * other slot keeps the hero's: the goblin's script does the same for its
 	 * attacks. The plain strafes get the goblin's fighting strafes, the only
 	 * ones it has.
+	 *
+	 * The fourth column is the bone warden, and its two entries were not made
+	 * by Arkane or by us: they were generated, and fitted to this rig by
+	 * scratchpad/make_tea.py. Every other slot in that column is the hero's,
+	 * which is what a column is for - a body can have as few animations of its
+	 * own as it likes and still move.
 	 */
 	struct Swap {
 		AnimationNumber slot;
@@ -1244,6 +1251,9 @@ void ARX_PLAYER_BodyAnimations(Entity * io, unsigned char kind) {
 		{ ANIM_WAIT, { "player_wait_short", "goblin_normal_wait", "goblinlord_normal_wait" } },
 		{ ANIM_WAIT_SHORT, { "player_wait_1st", "goblin_normal_wait", "goblinlord_normal_wait" } },
 		{ ANIM_WALK, { "human_normal_walk", "goblin_normal_walk", "goblinlord_normal_walk" } },
+		// Walking forward without sneaking asks for RUN, not WALK - WALK is the
+		// sneak. A body with one walking animation therefore has to put it in
+		// both, or it only ever shows when the player is creeping.
 		{ ANIM_RUN, { "player_normal_run_test", "goblin_normal_run", "goblinlord_normal_run" } },
 		{ ANIM_STRAFE_LEFT, { "human_normal_strafe_left", "goblin_strafe_left", "goblinlord_strafe_left" } },
 		{ ANIM_STRAFE_RIGHT, { "human_normal_strafe_right", "goblin_strafe_right", "goblinlord_strafe_right" } },

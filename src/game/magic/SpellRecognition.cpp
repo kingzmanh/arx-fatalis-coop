@@ -618,14 +618,21 @@ void spellRecognitionInit() {
 	studioSpellsLoad();
 	for(size_t i = 0; i < g_studioSpells.size(); i++) {
 		const StudioSpellDef & made = g_studioSpells[i];
-		if(!made.defined || made.symbols[0] == RUNE_NONE) {
+		if(!made.defined) {
 			continue;
 		}
-		if(SpellType taken = spellForSymbols(made.symbols.data()); taken != SPELL_NONE) {
-			LogWarning << "studio spells: " << made.key << " draws the runes of "
-			           << spellNameOf(taken) << " - give it a different sequence "
-			              "in game/studio-spells.txt and it will work";
-			continue;
+		/*
+		 * A spell with no runes written for it still gets its name, because a
+		 * script can name a spell the player has no way to draw - which is
+		 * what makes a spell belong to one creature and to nobody else.
+		 */
+		if(made.symbols[0] != RUNE_NONE) {
+			if(SpellType taken = spellForSymbols(made.symbols.data()); taken != SPELL_NONE) {
+				LogWarning << "studio spells: " << made.key << " draws the runes of "
+				           << spellNameOf(taken) << " - give it a different sequence "
+				              "in game/studio-spells.txt and it will work";
+				continue;
+			}
 		}
 		if(spellNames.find(made.key) != spellNames.end()) {
 			LogWarning << "studio spells: " << made.key

@@ -8,6 +8,55 @@ seen working, **known issues** are broken and understood, and **needs testing**
 was built with care but has not yet been proven in a live game - if you try
 one of those and it misbehaves, that report is exactly what we need.
 
+## 0.22
+
+Third person is its own thing now, and building a body no longer stops the
+game for a second. Nothing here crosses the wire: the protocol is unchanged
+at 34, and a 0.22 player and a 0.19 player can still play together.
+
+### What works
+
+- **Third person**, on its own switch, under Options -> Interface. The camera
+  comes out from behind your eyes and **nothing else changes** - mouselook
+  still turns you, the cursor and its tooltips still work, a click still uses
+  what is under it. It is Arx, from behind.
+- **V** flips between first and third person, and the mouse wheel runs the
+  whole way between them.
+- **Camera distance, height and shoulder** are sliders beside the switch. The
+  shoulder offset puts the body to one side so it is not standing in front of
+  what you are looking at, and it grows with the distance, so the character
+  stays where you put it in the frame however far back you wind.
+- **Putting on armour and changing body no longer freeze the game.** Three
+  scans in the engine were checking every vertex against every vertex; on
+  Arkane's own bodies that is nothing, and on anything larger it was a second
+  of silence. See FIXES.md 57.
+
+### Changed since 0.21
+
+- **The MMO controls are hidden.** They were one switch carrying a camera, a
+  sticky target, an action bar and a mouse that steered only while a button
+  was held - and what people actually asked for was the camera. Third person
+  is now that camera on its own, and the rest is behind a single constant in
+  the source rather than deleted. Nothing of it runs, whatever a config file
+  written by 0.21 says.
+- The action bar and its book page go with it, for now.
+
+### Needs testing
+
+- The three speed fixes touch how every body in the game is built, Arkane's
+  NPCs included. The new lookups are checked against the code they replaced
+  every time a small body puts on armour - the hero is 703 vertices, so it
+  costs nothing - and the old answer wins if they ever disagree. It has not
+  reported a disagreement yet, but nobody has played a long session on it.
+- Third person with a weapon drawn, in a fight, and during a cutscene.
+- Third person in co-op: each player chooses their own, so one of you can be
+  in first person and the other behind their own shoulder.
+
+### Known issues
+
+- A character saved in 0.21 as a Bone warden or a Goblin will load as the
+  hero if that body is no longer in the list.
+
 ## 0.21 - EXPERIMENTAL
 
 Still experimental, and still behind the one switch: **MMO controls** in the

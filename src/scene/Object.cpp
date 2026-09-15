@@ -299,9 +299,22 @@ void EERIE_CreateCedricData(EERIE_3DOBJ * eobj) {
 			
 		}
 		
-		// Assign vertices that are not in any group to the root bone
+		/*
+		 * Assign vertices that are not in any group to the root bone.
+		 *
+		 * This asked getGroupForVertex, which walks every group's whole index
+		 * list looking for the vertex - so the loop was every vertex against
+		 * every vertex. Arkane's bodies are a few hundred vertices and never
+		 * felt it; a generated one of 43,000 spent about 1.8 BILLION
+		 * comparisons here, which is the second the game stopped for whenever
+		 * a body was built.
+		 *
+		 * Nothing needed asking. The loop above has just been round every
+		 * group marking exactly this, and a vertex is in no group precisely
+		 * when it was never marked.
+		 */
 		for(VertexId vertex : eobj->vertexlist.handles()) {
-			if(!getGroupForVertex(eobj, vertex)) {
+			if(!vertexAssigned[vertex]) {
 				eobj->m_boneVertices.front().push_back(vertex);
 			}
 		}

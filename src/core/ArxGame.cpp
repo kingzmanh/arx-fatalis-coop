@@ -1194,6 +1194,22 @@ void ArxGame::doFrame() {
 	 * below sit outside every mode branch, so the host sees a partner standing
 	 * still rather than one who has stopped answering.
 	 */
+	/*
+	 * The body's own animations, held against everything that would take them.
+	 *
+	 * A race that brings animations of its own is given them when its body is
+	 * built. That is not enough: loading a level runs player.asl again, and
+	 * that script LOADANIMs the hero's set straight into the same slots, so a
+	 * bone warden walked like the hero from the first frame anybody could see
+	 * it. There is no one moment to put them back - the script runs after the
+	 * level load returns - so they are simply asserted every frame. It is not
+	 * as wasteful as it reads: ARX_PLAYER_BodyAnimations compares each slot
+	 * against what it wants and does nothing at all when they already agree.
+	 */
+	if(ARXmenu.mode() == Mode_InGame && entities.player()) {
+		ARX_PLAYER_BodyAnimations(entities.player(), ARX_PLAYER_LocalBodyKind());
+	}
+	
 	if(ARXmenu.mode() == Mode_InGame && coop::takeCharacterCreationRequest()) {
 		g_characterCreation.loadData();
 		g_playerBook.forcePage(BOOKMODE_STATS);
@@ -2161,7 +2177,7 @@ void ArxGame::render() {
 		   && !g_cursorOverBook && !coop::cursorOverActionBar() && eMouseState != MOUSE_IN_NOTE) {
 			bool crosshair = (player.Interface & INTER_COMBATMODE) || PLAYER_MOUSELOOK_ON;
 			if(!coop::targetCreatureAt(crosshair ? Vec2f(g_size.center()) : Vec2f(DANAEMouse))
-			   && coop::thirdPerson()) {
+			   && coop::mmoThird()) {
 				/*
 				 * Clicked on no creature, so nothing is targeted any more.
 				 * MMO mode only: in classic play the frame is a memory of the

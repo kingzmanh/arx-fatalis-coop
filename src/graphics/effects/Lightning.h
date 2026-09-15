@@ -69,6 +69,16 @@ public:
 	CLightning & operator=(const CLightning &) = delete;
 	
 	void Create(Vec3f aeFrom, Vec3f aeTo);
+	
+	/*!
+	 * How far the arc should carry, in world units.
+	 *
+	 * The vector given to Create only says which way the bolt points - the
+	 * distance is the sum of forty steps of random length, which is why the
+	 * game's own bolt always carries about five hundred and sixty whatever
+	 * it is aimed at. This scales those steps. Call it before Create.
+	 */
+	void setReach(float units);
 	void Update(ShortGameDuration timeDelta) override;
 	void Render() override;
 	

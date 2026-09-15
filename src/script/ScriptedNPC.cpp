@@ -509,6 +509,38 @@ public:
 			t = coop::chooseTargetPlayer(io);
 		}
 
+		/*
+		 * And if something a player called up has been hurting this creature,
+		 * that is what "player" means to it now.
+		 *
+		 * Every script Arkane wrote answers one question when it is hurt - was
+		 * that the player? - so the engine says yes on a summon's behalf, and
+		 * the creature then comes after the person who did the summoning while
+		 * ignoring the thing actually burning it. The lie has to be told, or
+		 * the creature shrugs the blow off entirely; this is where it is taken
+		 * back. Asked here rather than written over the top of the script, so
+		 * that one route is worked out and the creature keeps to it.
+		 */
+		if(t && (t == entities.player() || coop::isAvatarEntity(t))
+		   && (io->ioflags & IO_NPC)
+		   && (io->_npcdata->behavior & (BEHAVIOUR_FIGHT | BEHAVIOUR_MAGIC
+		                                 | BEHAVIOUR_DISTANT))) {
+			/*
+			 * Only a target it is going to FIGHT. A creature also names the
+			 * player when it is searching for them (BEHAVIOR LOOK_FOR) and
+			 * when it is running away (BEHAVIOR FLEE), and those are its own
+			 * business: goblin_base decides it has found the player by asking
+			 * whether its target IS the player, so swapping the name in there
+			 * leaves it searching for ever. The behaviour is always set before
+			 * the target in these scripts, so by here it says which this is.
+			 */
+			if(Entity * owed = ARX_NPC_SummonGrudge(*io)) {
+				LogInfo << "summon grudge: " << io->idString()
+				        << " asked for the player, given " << owed->idString();
+				t = owed;
+			}
+		}
+
 		DebugScript(' ' << options << ' ' << target);
 		
 		if(io->ioflags & IO_CAMERA) {

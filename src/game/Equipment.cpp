@@ -172,7 +172,7 @@ extern long EXITING;
  * standing here.
  */
 void ARX_EQUIPMENT_ApplyTweak(Entity * io, Entity * item, TweakType tw,
-                              std::string_view selection) {
+                              std::string_view selection, unsigned char bodyKind) {
 
 	if(!io || !io->obj || !item) {
 		return;
@@ -198,7 +198,21 @@ void ARX_EQUIPMENT_ApplyTweak(Entity * io, Entity * item, TweakType tw,
 	const IO_TWEAKER_INFO & tweak = *info;
 	
 	if(!tweak.filename.empty()) {
-		res::path mesh = "graph/obj3d/interactive/npc/human_base/tweaks" / tweak.filename;
+		
+		/*
+		 * A shape cut for THIS body first, the hero's if there is none.
+		 *
+		 * Every piece of armour names a whole body wearing it - the leather
+		 * chest names a complete hero in leather, and the tweak takes only its
+		 * chest. That folder was written here as human_base, so a body that is
+		 * not the hero got the hero's torso grafted onto it: a human chest and
+		 * human arms on a skeleton. A body can now carry shapes of its own in
+		 * a tweaks folder beside it, and anything it has no shape for still
+		 * falls back to the hero's, which is what every stock body did before.
+		 */
+		const res::path hero = "graph/obj3d/interactive/npc/human_base/tweaks";
+		res::path home = res::path(ARX_PLAYER_BodyMesh(bodyKind)).parent() / "tweaks";
+		res::path mesh = home / tweak.filename;
 		/*
 		 * A piece naming a body shape that was never made. The "cm" plate set
 		 * names human_plate_cm, and no such mesh exists in any pak, so wearing it
@@ -209,11 +223,16 @@ void ARX_EQUIPMENT_ApplyTweak(Entity * io, Entity * item, TweakType tw,
 		auto exists = [](const res::path & file) {
 			return g_resources->getFile(("game" / file).set_ext("ftl")) || g_resources->getFile(file);
 		};
+		
+		if(!exists(mesh) && home != hero) {
+			mesh = hero / tweak.filename;
+		}
+		
 		if(!exists(mesh)) {
 			std::string stem(tweak.filename.basename());
 			size_t cut = stem.rfind('_');
 			if(cut != std::string::npos) {
-				res::path family = res::path("graph/obj3d/interactive/npc/human_base/tweaks")
+				res::path family = mesh.parent()
 				                   / (stem.substr(0, cut) + std::string(tweak.filename.ext()));
 				if(exists(family)) {
 					LogInfo << "body shape " << tweak.filename << " does not exist; wearing " << family.filename();
@@ -267,11 +286,12 @@ void ARX_EQUIPMENT_ApplyTweak(Entity * io, Entity * item, TweakType tw,
 }
 
 //! The player's own body, dressed from whatever they have equipped.
-static void applyTweak(EquipmentSlot equip, TweakType tw, std::string_view selection) {
+static void applyTweak(EquipmentSlot equip, TweakType tw, std::string_view selection,
+                       unsigned char kind) {
 	Entity * item = entities.get(player.equiped[equip]);
 	if(item) {
 		arx_assert(item->tweakerinfo != nullptr);
-		ARX_EQUIPMENT_ApplyTweak(entities.player(), item, tw, selection);
+		ARX_EQUIPMENT_ApplyTweak(entities.player(), item, tw, selection, kind);
 	}
 }
 
@@ -294,9 +314,9 @@ void ARX_EQUIPMENT_RecreatePlayerMesh() {
 	}
 	
 	if(ARX_PLAYER_BodyWearsArmour(kind)) {
-		applyTweak(EQUIP_SLOT_HELMET, TWEAK_HEAD, "head");
-		applyTweak(EQUIP_SLOT_ARMOR, TWEAK_TORSO, "chest");
-		applyTweak(EQUIP_SLOT_LEGGINGS, TWEAK_LEGS, "leggings");
+		applyTweak(EQUIP_SLOT_HELMET, TWEAK_HEAD, "head", kind);
+		applyTweak(EQUIP_SLOT_ARMOR, TWEAK_TORSO, "chest", kind);
+		applyTweak(EQUIP_SLOT_LEGGINGS, TWEAK_LEGS, "leggings", kind);
 	}
 	
 	for(EntityHandle equipment : player.equiped) {

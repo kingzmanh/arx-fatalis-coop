@@ -47,6 +47,7 @@
 #include "platform/profiler/Profiler.h"
 #include "scene/GameSound.h"
 #include "scene/Interactive.h"
+#include "net/CoopMmo.h"
 
 EntityDragStatus g_dragStatus = EntityDragStatus_Invalid;
 Entity * g_draggedEntity = nullptr;
@@ -276,6 +277,15 @@ void updateDraggedEntity() {
 	
 	// Snap entities to the ground up to a threshold
 	float threshold = std::min(result.height, 12.0f);
+	if(coop::thirdPerson()) {
+		/*
+		 * From behind the shoulder the cursor is a long way from the hand, and
+		 * the ray meets the floor further out than the twelve units the snap
+		 * allows, so anything set down hung in the air where it was pointed.
+		 * Out here the ground always wins: whatever is put down goes down to it.
+		 */
+		threshold = result.offsetY;
+	}
 	if(result.offsetY <= threshold) {
 		pos += Vec3f(0.f, result.offsetY, 0.f);
 	} else {

@@ -1084,6 +1084,7 @@ set(GRAPHICS_SOURCES
 	src/graphics/Renderer.cpp
 	src/graphics/RenderBatcher.cpp
 	src/graphics/data/FTL.cpp
+	src/graphics/data/AttachTurn.cpp
 	src/graphics/data/Mesh.cpp
 	src/graphics/data/MeshManipulation.cpp
 	src/graphics/data/TextureContainer.cpp

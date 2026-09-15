@@ -254,6 +254,19 @@ public:
 		bool creatureBars; //!< health bars with names over creatures in view
 		bool targetFrame; //!< the top-left frame for the creature being fought
 		bool mmoMode; //!< third-person camera, a sticky target and the action bar
+		/*
+		 * The plain camera, without any of the rest of it.
+		 *
+		 * People asked to see the character and keep playing Arx: mouselook,
+		 * click to use, the cursor and its tooltips, all exactly as shipped.
+		 * mmoMode brings its own camera AND its own controls; this brings only
+		 * the camera, so the two are separate switches. Either one puts the
+		 * view behind the body; only mmoMode changes what the keys do.
+		 */
+		bool thirdPerson;
+		int camDistance; //!< how far behind the body the plain camera sits
+		int camHeight;   //!< and how far above the eyes
+		int camSide;     //!< and how far to the side, so the body is not in the way
 		//! The five bar slots, as spell names, comma separated. "attack" is auto-attack, "" is empty.
 		std::string actionBar;
 		QuickLevelTransition quickLevelTransition;

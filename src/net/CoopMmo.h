@@ -41,8 +41,35 @@ class Entity;
  */
 namespace coop {
 
+/*!
+ * \brief Whether MMO controls are offered at all.
+ *
+ * Off: the row is not drawn in the menu, and mmoMode() is false whatever a
+ * config file left behind says - so not one line of the bar, the sticky
+ * target or the key stealing runs, and a player who had it switched on is not
+ * stranded in a mode with no row left to switch off.
+ *
+ * Nothing is deleted. Third person came out of it and is on its own switch
+ * now; the rest is kept whole behind this one word, because "hidden" and
+ * "gone" are different things and only the first can be undone in a second.
+ */
+constexpr bool MmoControlsOffered = false;
+
 //! The whole of this file does nothing unless this is true.
 [[nodiscard]] bool mmoMode();
+
+/*!
+ * \brief MMO's own third person - the mode its CONTROLS answer to.
+ *
+ * Anything that changes what a key or a mouse button DOES asks this, never
+ * thirdPerson(). The plain camera puts the view behind the body and changes
+ * nothing else, so a gate on the wrong one of these is the difference between
+ * playing Arx from behind and not being able to turn around.
+ */
+[[nodiscard]] bool mmoThird();
+
+//! Step the plain camera in or out, as the third person key does.
+void togglePlainThirdPerson();
 
 /*!
  * True when MMO mode has taken this action's key for itself.

@@ -368,6 +368,9 @@ void drawCreatureHealthBars();
 //! The local player just landed a blow on this creature: it becomes the target frame's subject.
 void noteTargetHit(const Entity & npc);
 
+//! Scenery with legs: a creature no target frame should be spent on.
+[[nodiscard]] bool isVermin(const Entity & npc);
+
 /*!
  * The creature the frame is currently about, or nothing.
  *

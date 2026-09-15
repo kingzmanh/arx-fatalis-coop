@@ -256,9 +256,31 @@ void ARX_INTERACTIVE_Show_Hide_1st(Entity * io, bool hide1st) {
 		selection = EERIE_OBJECT_GetSelection(io->obj, "head");
 	}
 	if(selection) {
+		
+		/*
+		 * Which vertices are in the selection, asked once instead of per face.
+		 *
+		 * IsInSelection is a linear search through the selection's list, and
+		 * this called it for all three corners of every face. Arkane's hero is
+		 * 1,305 faces against a 237-vertex selection - a million comparisons,
+		 * never felt. A body of 31,327 faces against a selection of 28,544 is
+		 * about 2.7 BILLION, which is the second the game stopped for whenever
+		 * a race was picked or a body rebuilt.
+		 *
+		 * The selection does not change while the loop runs, so it is turned
+		 * into a flag per vertex first and the loop just reads it.
+		 */
+		const EERIE_SELECTIONS & selected = io->obj->selections[selection];
+		util::HandleVector<VertexId, bool> inSelection(io->obj->vertexlist.size(), false);
+		for(VertexId vertex : selected.selected) {
+			if(size_t(vertex) < inSelection.size()) {
+				inSelection[vertex] = true;
+			}
+		}
+		
 		for(EERIE_FACE & face : io->obj->facelist) {
 			for(VertexId vertex : face.vid) {
-				if(IsInSelection(io->obj, vertex, selection)) {
+				if(inSelection[vertex]) {
 					if(hide1st) {
 						face.facetype |= POLY_HIDE;
 					} else {
@@ -268,6 +290,7 @@ void ARX_INTERACTIVE_Show_Hide_1st(Entity * io, bool hide1st) {
 				}
 			}
 		}
+		
 	}
 	
 	ARX_INTERACTIVE_HideGore(entities.player(), false);

@@ -48,6 +48,9 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 #ifndef ARX_GAME_NPC_H
 #define ARX_GAME_NPC_H
 
+#include <string>
+#include <vector>
+
 #include <array>
 #include <string_view>
 
@@ -312,5 +315,17 @@ bool isEnemy(const Entity * entity);
  * even while being cut down by them.
  */
 void ARX_NPC_CoopRetarget(Entity * io);
+
+//! Remember that a summoned creature hurt this one, so that it turns on it.
+void ARX_NPC_NoteSummonHurt(Entity & victim, Entity & summon);
+
+//! The summoned creature that has been hurting this one, if one has, or nothing.
+Entity * ARX_NPC_SummonGrudge(const Entity & io);
+
+//! Let a summoned creature find something worth fighting for its summoner.
+void ARX_NPC_SummonHunt(Entity * io);
+
+//! Tell a summoned creature which classes it may start a fight with.
+void ARX_NPC_SetSummonHunts(Entity & summon, const std::vector<std::string> & words);
 
 #endif // ARX_GAME_NPC_H

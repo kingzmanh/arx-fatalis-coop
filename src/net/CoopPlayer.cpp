@@ -438,7 +438,7 @@ void updateAvatarArmour(Entity * body) {
 				LogWarning << "[coop] " << piece.path << " says nothing about how it is worn";
 			}
 
-			ARX_EQUIPMENT_ApplyTweak(body, item, piece.type, piece.selection);
+			ARX_EQUIPMENT_ApplyTweak(body, item, piece.type, piece.selection, kind);
 			item->destroy();
 
 		} else {
@@ -2012,28 +2012,95 @@ bool targetFrameShows(const Entity * entity) {
 	return targetStillUp(false);
 }
 
-bool targetCreatureAt(const Vec2f & screen) {
+/*
+ * Vermin: what a target frame should not be spent on.
+ *
+ * Mice and chickens are scenery with legs, and both ways of picking a target
+ * were offering them on equal terms with a troll. Rather than keep a list of
+ * names, which says nothing about whatever a mod adds, this reads what the
+ * creature is made of. The game's own numbers leave a clear gap: a mouse is
+ * life 1 damage 1 and a chicken 2 and 1, while the next thing up - a rat - is
+ * 5 and 2, and a spider 8 and 4. Rats stay targetable, as they should: they
+ * fight back.
+ *
+ * Anything actually fighting one of the players is never vermin, whatever it
+ * is made of. Note that it has to be *fighting*: mice name the player as their
+ * target while running away from them, so naming a player is not enough.
+ */
+bool isVermin(const Entity & npc) {
+
+	if(!npc._npcdata) {
+		return false;
+	}
+
 	/*
+	 * Named, because the numbers run out. A mouse is life 1 damage 1 and a
+	 * chicken 2 and 1, so a threshold catches them; but a dog is 15 and 3 and
+	 * a pig 18 and 5, against a goblin at 12 and 3, and there is no number
+	 * that separates the animals from the enemies. So the animals are listed.
+	 *
+	 * Two deliberate absences. Rats fight back. And so do bats, for all that
+	 * they look like scenery: the bat carries DAMAGER 10 and does the player
+	 * eight damage the moment it touches them.
+	 */
+	static const char * const ANIMALS[] = { "mice", "chicken_base", "pig", "dog", "frog" };
+	
+	bool named = false;
+	for(const char * animal : ANIMALS) {
+		if(npc.className() == animal) {
+			named = true;
+			break;
+		}
+	}
+
+	if(!named && (npc._npcdata->lifePool.max > 2.f || npc._npcdata->damages > 1.f)) {
+		return false;
+	}
+
+	if(npc._npcdata->behavior & BEHAVIOUR_FIGHT) {
+		Entity * quarry = entities.get(npc.targetinfo);
+		if(quarry == entities.player() || isAvatarEntity(quarry)) {
+			return false;
+		}
+	}
+
+	return true;
+
+}
+
+bool targetCreatureAt(const Vec2f & screen) {	/*
 	 * The game's own pick refuses creatures beyond a few hundred units, which
 	 * is right for using and talking and wrong for looking. This one takes
 	 * any living creature whose drawn box is under the point, nearest first.
 	 */
+	/*
+	 * Looked at twice: once past the vermin, and again including them if that
+	 * turned nothing up. This is the one way in for a mouse - Tab will not
+	 * name one - so clicking on it has to work; it just never takes the frame
+	 * from something standing behind it.
+	 */
 	Entity * best = nullptr;
-	float bestDist = 0.f;
-	for(Entity & npc : entities.inScene(IO_NPC)) {
-		if(npc == *entities.player() || !npc._npcdata || isAvatarEntity(&npc)
-		   || npc._npcdata->lifePool.current <= 0.f) {
-			continue;
-		}
-		const EERIE_2D_BBOX & box = npc.bbox2D;
-		if(box.min.x > box.max.x || screen.x < box.min.x || screen.x > box.max.x
-		   || screen.y < box.min.y || screen.y > box.max.y) {
-			continue;
-		}
-		float dist = glm::distance(npc.pos, entities.player()->pos);
-		if(!best || dist < bestDist) {
-			best = &npc;
-			bestDist = dist;
+	for(int pass = 0; pass < 2 && !best; pass++) {
+		bool anything = (pass == 1);
+		float bestDist = 0.f;
+		for(Entity & npc : entities.inScene(IO_NPC)) {
+			if(npc == *entities.player() || !npc._npcdata || isAvatarEntity(&npc)
+			   || npc._npcdata->lifePool.current <= 0.f) {
+				continue;
+			}
+			if(!anything && isVermin(npc)) {
+				continue;
+			}
+			const EERIE_2D_BBOX & box = npc.bbox2D;
+			if(box.min.x > box.max.x || screen.x < box.min.x || screen.x > box.max.x
+			   || screen.y < box.min.y || screen.y > box.max.y) {
+				continue;
+			}
+			float dist = glm::distance(npc.pos, entities.player()->pos);
+			if(!best || dist < bestDist) {
+				best = &npc;
+				bestDist = dist;
+			}
 		}
 	}
 	if(!best) {

@@ -46,6 +46,13 @@ void spellDataInit() {
 		s.spellid = type;
 		s.m_hasDuration = false;
 		s.bAudibleAtStart = true;
+		/*
+		 * A secret spell is still a spell the engine will cast - a script
+		 * naming it works - but it is left out of the book, off the action
+		 * bar and out of the list of spells the player is held to know. That
+		 * is how a spell can belong to one creature and to nobody else.
+		 */
+		s.bSecret = made.secret;
 		s.tc = TextureContainer::LoadUI(made.icon.empty()
 		       ? res::path("graph/interface/icons/spell_magic_missile")
 		       : res::path(made.icon));

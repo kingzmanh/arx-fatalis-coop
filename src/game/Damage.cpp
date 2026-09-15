@@ -896,7 +896,30 @@ float damageNpc(Entity & npc, float dmg, Entity * source, Spell * spell, DamageT
 		npc.ouch_time = g_gameTime.now();
 		ScriptParameters parameters = getOuchEventParameter(&npc);
 		Entity * sender = source;
-		if(sender && (sender->ioflags & IO_NPC) && sender->_npcdata->summoner == EntityHandle_Player) {
+		if(sender && (sender->ioflags & IO_NPC)
+		   && sender->_npcdata->summoner != EntityHandle()) {
+			/*
+			 * The scripts are told the player did this, because that is the
+			 * only attacker any of them knows how to answer. The engine is
+			 * told the truth, so that the creature actually turns on the
+			 * thing in front of it rather than on whoever sent it.
+			 */
+			ARX_NPC_NoteSummonHurt(npc, *sender);
+			/*
+			 * And that it can see them.
+			 *
+			 * Every creature script asks a second question after "was that the
+			 * player?": was the player in sight? If not it does not fight at
+			 * all - it sets off looking for them (goblin_base >>LOOK_FOR) - so
+			 * a summon could burn one to the ground while it wandered the room
+			 * hunting for somebody standing behind a wall. That is why it only
+			 * ever fought back once the player had been seen first. Having
+			 * already told it the player struck the blow, telling it the
+			 * player is visible is the same lie finished properly, and it is
+			 * sent as the engine's own event rather than by reaching into the
+			 * script's variables.
+			 */
+			SendIOScriptEvent(entities.player(), &npc, SM_DETECTPLAYER);
 			parameters.push_back("summoned");
 			parameters.push_back(sender->idString());
 			sender = entities.player();

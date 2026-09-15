@@ -68,8 +68,11 @@ extern bool EXTERNALVIEW;
 namespace coop {
 
 bool mmoMode() {
-	return config.input.mmoMode;
+	return MmoControlsOffered && config.input.mmoMode;
 }
+
+//! Told apart below, where the camera is. Needed up here by the key gates.
+static bool plainThird();
 
 // -- the bar's contents ----------------------------------------------------
 
@@ -177,7 +180,7 @@ static const ControlAction MMO_ACTIONS[] = {
 
 bool mmoTakesOver(ControlAction action) {
 
-	if(!thirdPerson()) {
+	if(!mmoThird()) {
 		return false;
 	}
 
@@ -242,8 +245,64 @@ static const float DEFAULT_CAM_DISTANCE = 200.f;
 static const float MAX_CAM_DISTANCE = 420.f;
 static const float ZOOM_STEP = 35.f;
 
-bool thirdPerson() {
+/*!
+ * The plain camera: behind the body, and nothing else changed.
+ *
+ * Arx's own controls stay exactly as they are - mouselook turns the player,
+ * the cursor and its tooltips work, a click uses what is under it. The
+ * distance comes from the menu rather than the wheel, because the wheel and
+ * the keys that drive MMO's zoom belong to MMO.
+ */
+/*
+ * The plain camera is a thing you flip during play, not a thing you set once.
+ *
+ * A menu switch alone meant going back to the menu every time you wanted to
+ * look at a doorway down your own nose, which is no good: first person is
+ * still how you read a room. So the menu sets where it STARTS and the third
+ * person key moves it from there, exactly as MMO's zoom key does.
+ */
+//! The menu switch: third person is available at all.
+static bool plainEnabled() {
+	return config.input.thirdPerson && !mmoMode();
+}
+
+/*
+ * ...and the camera is actually out there.
+ *
+ * The distance is the whole of the state, the same way it always has been for
+ * MMO. A separate on/off flag beside it meant the wheel and the key could
+ * disagree - wound all the way in, the flag still said third person, so the
+ * camera sat at the eyes while everything downstream believed it was behind
+ * the body. One number cannot contradict itself.
+ */
+static bool plainThird() {
+	return plainEnabled() && g_camDistance > 1.f;
+}
+
+void togglePlainThirdPerson() {
+	g_camDistance = (g_camDistance > 1.f) ? 0.f : float(config.input.camDistance);
+}
+
+/*!
+ * MMO's own third person, which is the mode its CONTROLS answer to.
+ *
+ * This is what thirdPerson() used to mean, and everything that changes what a
+ * key or a mouse button does still asks this - not the camera question below.
+ * That is the whole of the split: the camera moved out, the controls stayed.
+ */
+bool mmoThird() {
 	return mmoMode() && g_camDistance > 1.f;
+}
+
+//! The camera is out behind the body - by either route.
+bool thirdPerson() {
+	return plainThird() || mmoThird();
+}
+
+//! How far back the boom reaches. One number, whichever switch put it there,
+//! so the wheel zooms the plain camera exactly as it zooms MMO's.
+static float cameraReach() {
+	return g_camDistance;
 }
 
 /*!
@@ -283,9 +342,21 @@ bool beginCameraFrame() {
 
 void notePlayerEye(const Vec3f & eye) {
 	g_eye = eye;
+	if(plainThird()) {
+		g_eye.y -= float(config.input.camHeight);   // y counts downwards: up is less
+	}
 }
 
 Anglef cameraAngle() {
+	/*
+	 * MMO's camera has a heading of its own, because its mouse swings the view
+	 * without turning the body. The plain one has no business doing that: the
+	 * player is still steering with the mouse exactly as they always did, so
+	 * the camera looks where they look and simply stands further back.
+	 */
+	if(plainThird()) {
+		return player.angle;
+	}
 	return Anglef(g_camPitch, g_camYaw, 0.f);
 }
 
@@ -307,7 +378,7 @@ static bool handModifier() {
 
 bool cameraDragging() {
 
-	if(!thirdPerson() || BLOCK_PLAYER_CONTROLS || handModifier()) {
+	if(!mmoThird() || BLOCK_PLAYER_CONTROLS || handModifier()) {
 		return false;
 	}
 
@@ -321,13 +392,13 @@ bool cameraDragging() {
 }
 
 bool strafeIsTurn() {
-	return thirdPerson() && !BLOCK_PLAYER_CONTROLS
+	return mmoThird() && !BLOCK_PLAYER_CONTROLS
 	       && !GInput->getMouseButtonRepeat(Mouse::Button_1);
 }
 
 bool mouseRunForward() {
 
-	if(!thirdPerson() || BLOCK_PLAYER_CONTROLS || (player.Interface & INTER_PLAYERBOOK)) {
+	if(!mmoThird() || BLOCK_PLAYER_CONTROLS || (player.Interface & INTER_PLAYERBOOK)) {
 		return false;
 	}
 
@@ -337,7 +408,7 @@ bool mouseRunForward() {
 
 bool mmoTurn(const Vec2f & rotation, bool keyTurn) {
 
-	if(!thirdPerson()) {
+	if(!mmoThird()) {
 		return false;
 	}
 
@@ -448,7 +519,7 @@ bool mmoMouseButtons() {
 	 * item needs. Any half-finished camera press is dropped rather than
 	 * replayed later as a click nobody asked for.
 	 */
-	if(!thirdPerson() || handModifier()) {
+	if(!mmoThird() || handModifier()) {
 		g_left = HeldButton();
 		g_right = HeldButton();
 		return false;
@@ -499,27 +570,57 @@ static const float CAM_WALL_MARGIN = 24.f;
  */
 Vec3f thirdPersonCameraPos(const Vec3f & eye, const Anglef & angle) {
 
-	Vec3f back = -angleToFrontUpVec(angle).first;
-	Vec3f wanted = eye + back * g_camDistance;
+	auto [front, up] = angleToFrontUpVec(angle);
+	Vec3f back = -front;
+
+	/*
+	 * Over the shoulder, not down the spine.
+	 *
+	 * Dead behind the head the body stands in the middle of the screen and
+	 * covers the one place you are trying to look - which is why every game
+	 * that does this pushes the camera off to one side and lets the character
+	 * sit against the edge of the frame instead.
+	 */
+	Vec3f side = -glm::normalize(glm::cross(front, up));
+
+	/*
+	 * ...and it has to grow with the boom.
+	 *
+	 * A fixed number of units sideways covers less and less of the screen the
+	 * further back the camera goes, so wound all the way out the body drifted
+	 * back into the middle of the frame and it looked like the offset had been
+	 * dropped. What should stay put is where the character sits IN THE VIEW,
+	 * and that means the step sideways has to grow in step with the distance.
+	 */
+	float reach = cameraReach();
+	float lean = float(config.input.camSide) * (reach / DEFAULT_CAM_DISTANCE);
+
+	Vec3f wanted = eye + back * reach + side * lean;
 
 	RaycastResult blocked = raycastScene(eye, wanted, POLY_TRANS, RaycastIgnorePlayer);
 	if(!blocked) {
 		return wanted;
 	}
 
-	float reach = glm::distance(blocked.pos, eye) - CAM_WALL_MARGIN;
+	// Pulled in by a wall: the lean comes in with it, in the same proportion,
+	// or the camera would swing sideways into the masonry it just avoided.
+	float stopped = std::max(0.f, glm::distance(blocked.pos, eye) - CAM_WALL_MARGIN);
+	float shrink = (reach > 1.f) ? (stopped / reach) : 0.f;
 
-	return eye + back * std::max(0.f, reach);
+	return eye + back * stopped + side * (lean * shrink);
 }
 
-static void updateCameraZoom() {
+/*
+ * The wheel, shared by both modes, and it reaches all the way in.
+ *
+ * Wound fully in the camera is at the eyes, which IS first person - so the
+ * wheel changes the mode as well as the distance, in both. The key does the
+ * same thing in one step.
+ */
+static void updateCameraWheel() {
 
 	if(ARXmenu.mode() != Mode_InGame) {
 		return;
-	}
-
-	if(GInput->actionNowPressed(CONTROLS_CUST_MMO_THIRDPERSON)) {
-		g_camDistance = (g_camDistance > 1.f) ? 0.f : DEFAULT_CAM_DISTANCE;
 	}
 
 	/*
@@ -536,11 +637,33 @@ static void updateCameraZoom() {
 	}
 
 	int wheel = GInput->getMouseWheelDir();
+	if(wheel == 0) {
+		return;
+	}
+
 	if(wheel > 0) {
 		g_camDistance = std::max(0.f, g_camDistance - ZOOM_STEP);
-	} else if(wheel < 0) {
+	} else {
 		g_camDistance = std::min(MAX_CAM_DISTANCE, g_camDistance + ZOOM_STEP);
 	}
+
+	// All the way in is first person - the wheel changes the mode as well as
+	// the distance, which is what people expect of a wheel. What it lands on
+	// is remembered, so the key brings the camera back where it was left.
+	if(g_camDistance > 1.f) {
+		config.input.camDistance = int(g_camDistance);
+	}
+
+}
+
+static void updateCameraZoom() {
+
+	if(ARXmenu.mode() == Mode_InGame
+	   && GInput->actionNowPressed(CONTROLS_CUST_MMO_THIRDPERSON)) {
+		g_camDistance = (g_camDistance > 1.f) ? 0.f : DEFAULT_CAM_DISTANCE;
+	}
+
+	updateCameraWheel();
 
 }
 
@@ -883,20 +1006,43 @@ static void pressSlot(size_t index) {
  * already picked, so repeated presses walk outwards through a room and then
  * come back round to the nearest.
  */
+/*
+ * Vermin: what Tab should walk past.
+ *
+ * Mice and chickens are scenery with legs, and they were being offered as
+ * targets on equal terms with a troll. Rather than keep a list of names, which
+ * says nothing about anything a mod adds, this reads what the creature is made
+ * of. The game's own numbers leave a clear gap: a mouse is life 1 damage 1 and
+ * a chicken 2 and 1, while the next thing up - a rat - is 5 and 2, and a
+ * spider 8 and 4. So rats stay targetable, as they should: they fight back.
+ *
+ * Anything actually attacking one of the players is never vermin, whatever it
+ * is made of. A mouse that has decided to bite you is a target.
+ */
 void cycleTarget() {
 
 	Entity * current = targetEntity();
+	float currentDist = current ? glm::distance(current->pos, entities.player()->pos) : 0.f;
+
+	/*
+	 * Vermin are not here at all - not last, not as a fallback when the room
+	 * is otherwise empty. A mouse is not something anybody means to fight, so
+	 * the key that means "find me something to fight" never names one. Click
+	 * on it and it is targeted; that is the whole of the way in.
+	 */
 	Entity * best = nullptr;
 	Entity * nearest = nullptr;
 	float bestDist = 0.f;
 	float nearestDist = 0.f;
 
-	float currentDist = current ? glm::distance(current->pos, entities.player()->pos) : 0.f;
-
 	for(Entity & npc : entities.inScene(IO_NPC)) {
 
 		if(npc == *entities.player() || !npc._npcdata || isAvatarEntity(&npc)
 		   || npc._npcdata->lifePool.current <= 0.f) {
+			continue;
+		}
+
+		if(isVermin(npc)) {
 			continue;
 		}
 
@@ -944,8 +1090,45 @@ void updateMmo() {
 		loadBar();
 	}
 
+	/*
+	 * The third person key belongs to both modes. With MMO on it is the zoom,
+	 * handled further down with the rest of the camera; with MMO off it steps
+	 * the plain camera in and out, and that has to happen up here because
+	 * everything below this point returns early when MMO is off.
+	 */
 	if(!mmoMode()) {
-		g_camDistance = 0.f;
+
+		/*
+		 * Switching the menu row on should show the camera, not leave it at
+		 * the eyes waiting to be told. Only on the frame it changes, so the
+		 * wheel and the key are free to move it afterwards.
+		 */
+		static bool wasOn = false;
+		if(plainEnabled() != wasOn) {
+			wasOn = plainEnabled();
+			g_camDistance = wasOn ? float(config.input.camDistance) : 0.f;
+		}
+
+		if(ARXmenu.mode() == Mode_InGame && !BLOCK_PLAYER_CONTROLS
+		   && GInput->actionNowPressed(CONTROLS_CUST_MMO_THIRDPERSON)) {
+			togglePlainThirdPerson();
+		}
+
+		/*
+		 * One place decides the distance, and it is this one.
+		 *
+		 * There used to be a bare "g_camDistance = 0" on the way out of here,
+		 * from when MMO was the only thing that moved the camera. Left in, it
+		 * undid this the line after it was set, every frame: the plain camera
+		 * asked for 200 and was put back to nothing before it was ever read,
+		 * so the view never left the eyes and the wheel had nothing to turn.
+		 */
+		if(plainEnabled()) {
+			updateCameraWheel();      // even at the eyes, or it could never come back out
+		} else {
+			g_camDistance = 0.f;
+		}
+
 		stopAutoAttack();
 		return;
 	}
@@ -970,12 +1153,12 @@ void updateMmo() {
 	 *
 	 * Zoomed in at the eyes there is no bar, no sticky target, no auto-attack,
 	 * and the number keys belong to precast again - everything downstream asks
-	 * thirdPerson() rather than mmoMode(), so this one line is the switch.
+	 * mmoThird() rather than mmoMode(), so this one line is the switch.
 	 * Anything already running is put down on the way through, or the player
 	 * would arrive in first person still swinging at something they can no
 	 * longer see a frame for.
 	 */
-	if(!thirdPerson()) {
+	if(!mmoThird()) {
 
 		g_camYaw = player.angle.getYaw();
 		g_camPitch = glm::clamp(signedAngle(player.angle.getPitch()),
@@ -1170,7 +1353,7 @@ static Rectf slotRect(size_t index) {
 
 bool cursorOverActionBar() {
 	
-	if(!thirdPerson()) {
+	if(!mmoThird()) {
 		return false;
 	}
 	
@@ -1185,7 +1368,7 @@ bool cursorOverActionBar() {
 
 float actionBarLeft() {
 
-	if(!thirdPerson()) {
+	if(!mmoThird()) {
 		return 0.f;
 	}
 
@@ -1264,7 +1447,7 @@ static void drawSwingMark(const Rectf & rect, Color color) {
 void drawActionBar() {
 
 	// nor a bar over the top of a cutscene
-	if(!thirdPerson() || cameraBlocked()) {
+	if(!mmoThird() || cameraBlocked()) {
 		return;
 	}
 
@@ -1381,7 +1564,7 @@ static void cancelSpellDrag() {
 }
 
 void beginSpellDrag(SpellType spell) {
-	if(thirdPerson()) {
+	if(mmoThird()) {
 		g_dragged = spell;
 	}
 }
@@ -1396,7 +1579,7 @@ void beginSpellDrag(SpellType spell) {
  */
 static void updateBarEditing() {
 
-	if(!thirdPerson()) {
+	if(!mmoThird()) {
 		g_dragged = SPELL_NONE;
 		return;
 	}
@@ -1484,7 +1667,7 @@ void clearBarSlot(size_t index) {
 }
 
 int barKeyPressed() {
-	if(!thirdPerson()) {
+	if(!mmoThird()) {
 		return -1;
 	}
 	for(size_t i = 0; i < BAR_SLOTS; i++) {

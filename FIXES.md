@@ -1337,3 +1337,67 @@ such a variable and keeps the record, so saves written by the old build load
 whole too. Confirmed by the user: a new game, player two joining with a
 non-official face, nothing on the floor; the guest's log shows every pack
 restored and no record given up.
+
+## 56. Third person could only be had by turning on the MMO controls
+
+Players asked to see their character and go on playing Arx as it is -
+mouselook, the cursor and its tooltips, a click to use what is under it. The
+only way to get the camera out from behind the eyes was the MMO switch, which
+brings a sticky target, an action bar, and a mouse that steers the view only
+while a button is held.
+
+**Why did it happen?** One function answered two questions. `thirdPerson()`
+was `mmoMode() && g_camDistance > 1`, and every gate asked it - the ones that
+place the camera AND the ones that decide what a key or a mouse button does.
+There was no way to have the first without the second because nothing told
+them apart.
+
+**The fix.** Two functions where there was one. `plainThird()` is the new
+menu switch; `mmoThird()` is exactly what `thirdPerson()` used to mean, and
+every gate that changes what an input DOES now asks that one - key stealing,
+strafe-is-turn, mouse-run-forward, camera dragging, the action bar, the
+sticky target. The camera and the body-is-visible behaviour ask the broad
+one. Sorting those gates is the whole job, and getting six of them wrong the
+first time left the player unable to turn around at all: `Interface.cpp` says
+"the mouse is a cursor, and the view only moves while a button is held", and
+that was still running while the MMO input handling was switched off.
+
+The distance is the only state. A separate on/off flag beside it could
+disagree - wound fully in, the flag still said third person while the camera
+sat at the eyes - so the wheel now runs from first person to third and back,
+and the key does the same in one step. Camera distance, height and shoulder
+are settings under Options -> Interface; the shoulder offset grows with the
+boom, because a fixed sideways step covers less of the screen the further
+back the camera goes and the body drifted back to the middle.
+
+## 57. Picking a race, or putting on armour, froze the game for a second
+
+**Why did it happen?** Three separate scans, all the same shape, all fine on
+the bodies Arkane shipped and ruinous on a large one. None of it is wrong
+code; it is code written for a hero of 703 vertices meeting a body of 43,000.
+
+`EERIE_CreateCedricData` assigns any vertex belonging to no bone to the root,
+and asked `getGroupForVertex`, which walks every group's whole index list. Run
+for every vertex that is every vertex against every vertex - about 1.8 billion
+comparisons. `ARX_INTERACTIVE_Show_Hide_1st` decides which faces to hide in
+first person and called `IsInSelection`, a linear search through the
+selection, for all three corners of every face: 31,327 faces against a
+selection of 28,544 is about 2.7 billion. And `CreateIntermediaryMesh`, which
+grafts armour onto a body, looks up every vertex it adds by scanning the ones
+already added, and every face against every face.
+
+Measured, not guessed: timing logs around each stage of building a body
+showed the load itself at 4ms and the pause elsewhere, after two wrong
+guesses at which loop it was.
+
+**The fix.** The first needed nothing but the flag the loop above had just
+built - a vertex is in no group precisely when it was never marked. The
+second turns the selection into one flag per vertex before the loop instead
+of searching it three times per face. The third keeps an index of where each
+vertex is, honouring the three things a lookup table can quietly change: the
+first match wins, ALL matches are returned where the old code took all of
+them, and -0.0 keys the same as 0.0 while NaN matches nothing. The original
+scans are kept, and any object under 4,000 vertices is built both ways and
+the answers compared - so every time the hero or an NPC puts on armour the
+index is checked against the code it replaced, and the scan's answer wins if
+they ever disagree.
