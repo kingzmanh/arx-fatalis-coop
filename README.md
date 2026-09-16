@@ -188,6 +188,24 @@ it, join the same network, and use the address it gives you.
 
 ![Two of you](docs/screenshots/together.png)
 
+## The co-op menu
+
+Everything on this page is the mod's - Arx has no such page.
+
+![The co-op menu](docs/screenshots/coop-settings.png)
+
+- **IP address** and **port** - where to connect. The port is greyed until you
+  turn it on; 27100 is the default and the one the host needs open.
+- **VOICE CHAT**, **OPEN MIC**, **MIC TEST**, **TALK KEY**, **Microphone** -
+  see [Voice chat](#voice-chat) below.
+- **Voice** - whether your own voice comes out of your character (**VOIP**) or
+  arrives like a phone call (**NORMAL**). You decide how you are heard.
+- **Cutscenes** - who a scene plays for when one is triggered.
+- **Enemy health** - a real multiplier on every creature's life.
+- **Enemy health bar** - the target frame, described below.
+- **HOST GAME**, **JOIN GAME**, **LEAVE SESSION** - greyed out during an Iron
+  Man run, which is solo.
+
 ## Enemy health
 
 The **ENEMY HEALTH:** line in the co-op menu gives creatures **NORMAL**,
@@ -198,9 +216,15 @@ a joined player sees it and cannot change it. Switching it with a world
 loaded rescales every creature at once, and a save made on one setting is
 brought to the current one when loaded.
 
-Hit a creature and a **target frame** in the top-left corner shows its name
-and health, with the numbers and the percent, for a few seconds after your
-last blow - the way other games show the thing you are fighting.
+The **ENEMY HEALTH BAR:** line beside it turns on the **target frame** in the
+top-left corner: the creature's name, its health and its mana.
+
+![The target frame, top left](docs/screenshots/target-frame.png)
+
+It appears when there is something to show it for - when **you hit a creature**,
+when **a creature hits you**, or when you **click on one** - and fades a few
+seconds after the last blow. It is not a permanent readout of whatever you are
+looking at; it is the thing you are fighting.
 
 Type `/hp` in chat to also see every creature's name and health over its
 head, and `/hp` again to hide it.
@@ -235,12 +259,17 @@ Arx, from behind.
 
 ![Third person, and two different bodies](docs/screenshots/third-person-and-races.png)
 
-**V** flips between first and third person, and the mouse wheel runs the whole
-way between them - wound all the way in is first person again. A new quest and
-a loaded save both open at your own eyes whatever the switch says; V or the
-wheel takes you out when you want it.
+**V** is the key. It flips between your own eyes and the camera behind your
+shoulder, and the **mouse wheel** moves it in and out - wound all the way in is
+first person again, so the wheel changes the mode as well as the distance.
 
-Three sliders sit beside the switch:
+A new quest and a loaded save both open at your own eyes whatever the switch
+says; V or the wheel takes you out when you want it.
+
+![The camera settings, at the bottom of Options -> Interface](docs/screenshots/camera-settings.png)
+
+Everything above **Third person** on that page is Arx's own. The four at the
+bottom are this mod's:
 
 - **Camera distance** - 60 to 420 units behind you.
 - **Camera height** - how far above your eyes it sits.
@@ -248,6 +277,9 @@ Three sliders sit beside the switch:
   in front of what you are looking at. The middle notch is dead behind your
   head; either way from there swings it round a shoulder, and the offset grows
   with the distance so you stay where you put yourself in the frame.
+
+The sliders move while you are in the menu, so you can see what you are doing:
+alt-tab out, drag one, and come back.
 
 Each player chooses for themselves - one of you can play from behind while the
 other stays at their own eyes.
