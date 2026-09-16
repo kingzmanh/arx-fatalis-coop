@@ -226,42 +226,56 @@ level loads: it can show hidden things, put items into bodies and chests, and
 say how a piece of armour looks. The Mega and Vista runes, hidden since the
 demo, lie in the first level again because of two lines in it.
 
-## MMO controls (experimental)
+## Third person
 
-In the **experimental** builds only, and off until you ask for it: turn on
-**MMO controls** in the co-op menu. Even then the game starts in first person
-and plays exactly as it always has until you press **V**.
+Off by default. **Options -> Interface -> Third person**, and the camera comes
+out from behind your eyes. Nothing else changes: mouselook still turns you, the
+cursor and its tooltips still work, a click still uses what is under it. It is
+Arx, from behind.
 
-**V** switches between the camera behind your shoulder and your own eyes, and
-the mouse wheel moves it in and out; all the way in is first person again.
-First person is the old game entire - no bar, no sticky target, the number keys
-back on precast, the mouse back on Arx's own look and rune drawing.
+![Third person, and two different bodies](docs/screenshots/third-person-and-races.png)
 
-While the camera is out:
+**V** flips between first and third person, and the mouse wheel runs the whole
+way between them - wound all the way in is first person again. A new quest and
+a loaded save both open at your own eyes whatever the switch says; V or the
+wheel takes you out when you want it.
 
-- **Tab** picks the creature in front of you and keeps it picked. Press it
-  again for the next one; click bare ground to let go.
-- **1 is your swing.** With something picked, press 1 and walk up to it: your
-  character draws, faces it and keeps swinging while it lives and is in reach.
-  Key 1 is always the swing and cannot be given away.
-- **2 to 5 are your spells.** Open the book and take its **first bookmark**,
-  the one beside the character sheet: it holds every spell you know. Hold the
-  cursor over one and press 2, 3, 4 or 5 to put it on that key. Right-click a
-  key on the right-hand page to empty it. You can also drag a spell onto the
-  bar at the bottom of the screen.
-- **Hold Left Alt to give the mouse back to the game**: picking things up off
-  the floor and dragging them is Left Alt and the left button. A press, a drag
-  and a release is the same gesture as swinging the camera, so a key has to say
-  which you meant.
-- **To equip something, hold Left Alt and press F.** F is the cursor, as it
-  always was; Alt keeps the mouse from flying the camera while you use it.
-- **I** opens your bag, which sits beside the bar rather than under it.
-- **Numpad0** draws your weapon, because Tab is targeting now.
-- **Z** is push to talk, because the camera wanted V.
+Three sliders sit beside the switch:
 
-Everything here is rebindable in the options, on the third page of the
-controls, and none of it crosses the wire: a player on an experimental build
-and a player on 0.19 can play together.
+- **Camera distance** - 60 to 420 units behind you.
+- **Camera height** - how far above your eyes it sits.
+- **Camera shoulder** - how far to one side, so your own body is not standing
+  in front of what you are looking at. The middle notch is dead behind your
+  head; either way from there swings it round a shoulder, and the offset grows
+  with the distance so you stay where you put yourself in the frame.
+
+Each player chooses for themselves - one of you can play from behind while the
+other stays at their own eyes.
+
+The MMO controls that 0.20 and 0.21 put this behind - a sticky target, an
+action bar, a mouse that steered only while a button was held - are no longer
+offered. What people wanted was the camera, so the camera is its own switch and
+the rest is set aside.
+
+## Iron Man
+
+Chosen when you start: **New quest** now asks **NORMAL** or **IRON MAN**.
+
+One life, one save. The run keeps a single save called *Iron Man* and writes
+over it - you may save whenever you like, but you cannot keep two. It saves
+itself at every level change as well, so a crash costs you a level rather than
+the run.
+
+**Dying deletes it.** The files go; there is nothing left to load.
+
+It is solo. Hosting and joining are greyed out for the length of the run,
+because a partner who can revive you is a second life every time they reach
+your body, and with one world shared between two people it is not clear whose
+run a death should end. That has no answer yet, so the mode does not pretend
+to have one.
+
+The choice rides in the save, so a run cannot be quietly turned back into an
+ordinary one. Saves made before 0.23 are all ordinary and untouched.
 
 ## Voice chat
 

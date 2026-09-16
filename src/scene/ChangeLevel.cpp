@@ -80,6 +80,7 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 #include "gui/Dragging.h"
 #include "gui/LoadLevelScreen.h"
+#include "gui/Menu.h"
 #include "gui/MiniMap.h"
 #include "gui/Hud.h"
 #include "gui/Interface.h"
@@ -408,6 +409,15 @@ void ARX_CHANGELEVEL_Change(AreaId area, std::string_view target, float angle) {
 	// is here too they become the authority (or we do), and either way they can
 	// start drawing us again.
 	coop::onAreaLoaded(area);
+
+	/*
+	 * An iron man run writes itself down here and nowhere else.
+	 *
+	 * A crash or a power cut then costs the level just walked, not the whole
+	 * run - which is a mercy the mode can afford, because it is not what the
+	 * mode is about. Dying is.
+	 */
+	ARX_IronmanSave();
 
 }
 
@@ -832,6 +842,7 @@ static bool ARX_CHANGELEVEL_Push_Player(AreaId area) {
 	asp->Skill_Defense = player.m_skill.defense;
 	asp->skin = s32(player.skin);
 	asp->padding[236] = s32(player.bodyKind); // the body played in; zero, the hero, in every older save
+	asp->padding[235] = g_ironman ? 1 : 0;   // zero, an ordinary run, in every older save
 	
 	asp->xp = player.xp;
 	asp->nb_PlayerQuest = g_playerQuestLogEntries.size();
@@ -1653,6 +1664,7 @@ static bool ARX_CHANGELEVEL_Pop_Player(std::string_view target, float angle) {
 	
 	player.skin = util::to<unsigned char>(asp->skin);
 	player.bodyKind = static_cast<unsigned char>(std::min(std::max(asp->padding[236], s32(0)), s32(BodyKindCount - 1)));
+	g_ironman = (asp->padding[235] != 0);
 	
 	player.xp = asp->xp;
 	GLOBAL_MAGIC_MODE = (asp->Global_Magic_Mode != 0);

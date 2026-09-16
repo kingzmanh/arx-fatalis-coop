@@ -2689,6 +2689,16 @@ void ARX_PLAYER_Manage_Death() {
 	}
 
 	if(ratio >= 1.f) {
+		/*
+		 * The fade has run out and nobody came. In an iron man run that is the
+		 * end of it: the save goes before the menu is raised, so the menu that
+		 * comes up has nothing left to load.
+		 *
+		 * After the fade rather than at the moment of dying, because the fade
+		 * is exactly the window a partner has to reach the body - and in this
+		 * mode there is no partner, so reaching here means it is really over.
+		 */
+		ARX_IronmanDied();
 		ARX_MENU_Launch(false);
 		player.DeadTime = 0;
 	}

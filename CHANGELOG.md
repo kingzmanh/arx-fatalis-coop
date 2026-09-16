@@ -8,6 +8,38 @@ seen working, **known issues** are broken and understood, and **needs testing**
 was built with care but has not yet been proven in a live game - if you try
 one of those and it misbehaves, that report is exactly what we need.
 
+## 0.23
+
+Iron Man, and a summon that works both ways.
+
+### What works
+
+- **Iron Man.** New quest asks NORMAL or IRON MAN. One save, written over;
+  save whenever you like but you cannot keep two; dying deletes it. Solo only -
+  hosting and joining are greyed out for the length of the run. The choice is
+  stored in the save, so it cannot be turned off half way through.
+- **Either player can summon the other across areas.** It used to work one way
+  only: whoever was hosting could pull their partner across the fortress and
+  could never be pulled back.
+- A new quest and a loaded save both open at your own eyes, whatever the third
+  person switch says.
+
+### Changed since 0.22
+
+- The README's third person section is rewritten - it still described the
+  camera as something you got by turning on the MMO controls, which stopped
+  being true in 0.22.
+
+### Needs testing
+
+- **Iron Man deleting the save.** It is the one part of the mode that cannot
+  be checked without dying, and nobody has yet. If it ever fires when it should
+  not, the log says `[ironman] the run is over; deleting Iron Man` - that line
+  is the evidence.
+- **The host being summoned across areas.** The guest has always travelled this
+  way; the host doing it is new, and the host is the one whose world the guest
+  loaded. Worth watching whether the guest still sees them properly afterwards.
+
 ## 0.22
 
 Third person is its own thing now, and building a body no longer stops the

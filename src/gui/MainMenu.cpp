@@ -103,24 +103,48 @@ public:
 		
 		reserveBottom();
 		
-		{
+		if(g_canResumeGame) {
 			auto txt = std::make_unique<TextWidget>(hFontMenu, getLocalised("system_menus_main_editquest_confirm"));
 			txt->setEnabled(false);
 			addCenter(std::move(txt));
 		}
 		
-		{
+		if(g_canResumeGame) {
 			auto txt = std::make_unique<TextWidget>(hFontMenu, getLocalised("system_menus_main_newquest_confirm"));
 			txt->setEnabled(false);
 			addCenter(std::move(txt));
 		}
 		
 		{
-			auto txt = std::make_unique<TextWidget>(hFontMenu, getLocalised("system_yes"));
+			auto txt = std::make_unique<TextWidget>(hFontMenu, "NORMAL");
 			txt->clicked = [](Widget * /* widget */) {
+				g_ironman = false;
 				ARXMenu_NewQuest();
 			};
-			addCorner(std::move(txt), BottomRight);
+			addCenter(std::move(txt));
+		}
+		
+		{
+			auto txt = std::make_unique<TextWidget>(hFontMenu, "IRON MAN");
+			txt->clicked = [](Widget * /* widget */) {
+				g_ironman = true;
+				ARXMenu_NewQuest();
+			};
+			addCenter(std::move(txt));
+		}
+		
+		// Under the choice it describes, and split in two because the panel is
+		// not wide - a sentence running out past its edge reads as a mistake.
+		{
+			auto txt = std::make_unique<TextWidget>(hFontMenu, "IRON MAN: one life, one save.");
+			txt->setEnabled(false);
+			addCenter(std::move(txt));
+		}
+		
+		{
+			auto txt = std::make_unique<TextWidget>(hFontMenu, "Dying deletes it. Solo only.");
+			txt->setEnabled(false);
+			addCenter(std::move(txt));
 		}
 		
 		{
@@ -185,7 +209,18 @@ public:
 			auto txt = std::make_unique<TextWidget>(hFontMenu, getLocalised("system_menus_main_editquest_save"));
 			txt->clicked = [this](Widget * /* widget */) {
 				m_textbox->unfocus();
-				savegames.save(m_textbox->text(), m_savegame, savegame_thumbnail);
+				/*
+				 * An iron man run may be saved whenever the player likes - what
+				 * it may not do is keep two of them. Whatever slot is picked and
+				 * whatever name is typed, the save goes to the one slot the run
+				 * owns, so there is never a second copy to fall back on when it
+				 * is deleted.
+				 */
+				if(g_ironman) {
+					ARX_IronmanSave();
+				} else {
+					savegames.save(m_textbox->text(), m_savegame, savegame_thumbnail);
+				}
 			};
 			txt->setTargetPage(Page_None);
 			addCorner(std::move(txt), BottomRight);
@@ -228,6 +263,30 @@ private:
 	TextWidget * pDeleteButton;
 	
 };
+
+/*
+ * An iron man run is shown its own save and nothing else.
+ *
+ * Not for tidiness: a list of every other save is a list of ways out, and the
+ * whole of the mode is that there is no way out. The other saves are still
+ * there and still load - from an ordinary run, where they belong.
+ */
+static bool listedInSaveMenu(SavegameHandle save) {
+	if(!g_ironman) {
+		return true;
+	}
+	return savegames[save].name == ARX_IRONMAN_SLOT;
+}
+
+//! Whether this run has written its save yet.
+static bool hasIronmanSave() {
+	for(SavegameHandle save : savegames) {
+		if(savegames[save].name == ARX_IRONMAN_SLOT) {
+			return true;
+		}
+	}
+	return false;
+}
 
 class LoadMenuPage final : public MenuPage {
 	
@@ -274,7 +333,7 @@ public:
 		// Show quicksaves.
 		size_t quicksaveNum = 0;
 		for(SavegameHandle save : savegames) {
-			if(savegames[save].quicksave) {
+			if(savegames[save].quicksave && listedInSaveMenu(save)) {
 				auto txt = std::make_unique<SaveSlotWidget>(save, ++quicksaveNum, hFontControls, m_rect);
 				txt->clicked = saveClicked;
 				txt->doubleClicked = saveDoubleClicked;
@@ -284,7 +343,7 @@ public:
 		
 		// Show regular saves.
 		for(SavegameHandle save : savegames) {
-			if(!savegames[save].quicksave) {
+			if(!savegames[save].quicksave && listedInSaveMenu(save)) {
 				auto txt = std::make_unique<SaveSlotWidget>(save, 0, hFontControls, m_rect);
 				txt->clicked = saveClicked;
 				txt->doubleClicked = saveDoubleClicked;
@@ -371,8 +430,20 @@ public:
 			addCenter(std::move(cb));
 		}
 		
+		/*
+		 * In an iron man run the row saves, and that is all it does.
+		 *
+		 * The page it would otherwise open exists to ask what to call the save
+		 * and which slot to put it in, and neither is a question here: there is
+		 * one slot and it has one name. Asking anyway would be theatre.
+		 */
 		std::function<void(Widget * widget)> saveClicked = [](Widget * widget) {
 			arx_assert(widget->type() == WidgetType_SaveSlot);
+			if(g_ironman) {
+				ARX_IronmanSave();
+				g_mainMenu->bReInitAll = true;
+				return;
+			}
 			SavegameHandle savegame = static_cast<SaveSlotWidget *>(widget)->savegame();
 			MenuPage * page = g_mainMenu->m_window->getPage(Page_SaveConfirm);
 			arx_assert(page->id() == Page_SaveConfirm);
@@ -382,10 +453,12 @@ public:
 		// Show quicksaves.
 		size_t quicksaveNum = 0;
 		for(SavegameHandle save : savegames) {
-			if(savegames[save].quicksave) {
+			if(savegames[save].quicksave && listedInSaveMenu(save)) {
 				auto txt = std::make_unique<SaveSlotWidget>(save, ++quicksaveNum, hFontControls, m_rect);
 				txt->clicked = saveClicked;
-				txt->setTargetPage(Page_SaveConfirm);
+				if(!g_ironman) {
+				txt->setTargetPage(Page_SaveConfirm);   // nothing to confirm; see saveClicked
+			}
 				txt->setEnabled(false);
 				addCenter(std::move(txt));
 			}
@@ -393,18 +466,37 @@ public:
 		
 		// Show regular saves.
 		for(SavegameHandle save : savegames) {
-			if(!savegames[save].quicksave) {
+			if(!savegames[save].quicksave && listedInSaveMenu(save)) {
 				auto txt = std::make_unique<SaveSlotWidget>(save, 0, hFontControls, m_rect);
 				txt->clicked = saveClicked;
-				txt->setTargetPage(Page_SaveConfirm);
+				if(!g_ironman) {
+				txt->setTargetPage(Page_SaveConfirm);   // nothing to confirm; see saveClicked
+			}
 				addCenter(std::move(txt));
 			}
 		}
 		
-		for(size_t i = savegames.size(); i <= 15; i++) {
-			auto txt = std::make_unique<SaveSlotWidget>(SavegameHandle(), i, hFontControls, m_rect);
+		/*
+		 * The empty slots below the list are how a NEW save is made.
+		 *
+		 * An iron man run gets exactly one of them, and only until it has
+		 * saved once - after that its own row is up there and the empty slot
+		 * would be a second way to ask for a second save. Hiding them all was
+		 * wrong in the other direction: a run that had not saved yet was shown
+		 * an empty page and could not save at all.
+		 */
+		size_t offered = g_ironman ? (hasIronmanSave() ? 0 : 1) : (16 - savegames.size());
+		for(size_t n = 0; n < offered; n++) {
+			// An ordinary slot is numbered by where it sits in the whole list;
+			// an iron man run has a list of one, so its empty slot is the first
+			// one rather than the eighth of somebody else's saves.
+			size_t number = g_ironman ? 1 : savegames.size() + n;
+			auto txt = std::make_unique<SaveSlotWidget>(SavegameHandle(), number,
+			                                           hFontControls, m_rect);
 			txt->clicked = saveClicked;
-			txt->setTargetPage(Page_SaveConfirm);
+			if(!g_ironman) {
+				txt->setTargetPage(Page_SaveConfirm);   // nothing to confirm; see saveClicked
+			}
 			addCenter(std::move(txt));
 		}
 		
@@ -2231,6 +2323,7 @@ public:
 
 		{
 			auto txt = std::make_unique<TextWidget>(hFontMenu, "HOST GAME");
+			txt->setEnabled(!g_ironman);
 			txt->clicked = [this](Widget * /* widget */) {
 				if(m_port) {
 					m_port->unfocus();
@@ -2246,6 +2339,7 @@ public:
 
 		{
 			auto txt = std::make_unique<TextWidget>(hFontMenu, "JOIN GAME");
+			txt->setEnabled(!g_ironman);
 			txt->clicked = [this](Widget * /* widget */) {
 				if(m_address) {
 					m_address->unfocus();
@@ -2501,13 +2595,17 @@ void MainMenu::init() {
 	{
 		auto txt = std::make_unique<TextWidget>(hFontMainMenu, getLocalised("system_menus_main_newquest"));
 		txt->clicked = [this](Widget * /* widget */) {
-			if(g_canResumeGame) {
-				requestPage(Page_NewQuestConfirm);
-				if(m_window) {
-					m_window->setScroll(0.f);
-				}
-			} else {
-				ARXMenu_NewQuest();
+			/*
+			 * Always the page, even with no game to erase.
+			 *
+			 * It used to go straight in when there was nothing to lose, which
+			 * was fine while the page only asked "are you sure" - but the page
+			 * is where the run's mode is chosen now, and skipping it meant the
+			 * choice only ever appeared to somebody already playing.
+			 */
+			requestPage(Page_NewQuestConfirm);
+			if(m_window) {
+				m_window->setScroll(0.f);
 			}
 		};
 		txt->setPosition(pos);
@@ -2526,6 +2624,7 @@ void MainMenu::init() {
 		// label everyone can read beats a missing-key placeholder.
 		auto txt = std::make_unique<TextWidget>(hFontMainMenu, "CO-OP");
 		txt->setTargetPage(Page_Coop);
+		txt->setEnabled(!g_ironman);   // solo only, on purpose - see g_ironman
 		txt->setPosition(pos);
 		m_widgets.add(std::move(txt));
 	}

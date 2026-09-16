@@ -261,6 +261,10 @@ static const float ZOOM_STEP = 35.f;
  * still how you read a room. So the menu sets where it STARTS and the third
  * person key moves it from there, exactly as MMO's zoom key does.
  */
+//! What plainEnabled() said last time it was looked at, so a new game can
+//! park the camera at the eyes without it springing back.
+static bool g_plainWasOn = false;
+
 //! The menu switch: third person is available at all.
 static bool plainEnabled() {
 	return config.input.thirdPerson && !mmoMode();
@@ -1103,10 +1107,9 @@ void updateMmo() {
 		 * the eyes waiting to be told. Only on the frame it changes, so the
 		 * wheel and the key are free to move it afterwards.
 		 */
-		static bool wasOn = false;
-		if(plainEnabled() != wasOn) {
-			wasOn = plainEnabled();
-			g_camDistance = wasOn ? float(config.input.camDistance) : 0.f;
+		if(plainEnabled() != g_plainWasOn) {
+			g_plainWasOn = plainEnabled();
+			g_camDistance = g_plainWasOn ? float(config.input.camDistance) : 0.f;
 		}
 
 		if(ARXmenu.mode() == Mode_InGame && !BLOCK_PLAYER_CONTROLS
@@ -1611,8 +1614,20 @@ static void updateBarEditing() {
 
 }
 
-void newGame() {
+void enterWorldAtEyes() {
 	g_camDistance = 0.f;
+	/*
+	 * ...and it stays there.
+	 *
+	 * The block that notices the menu switch changing would otherwise put the
+	 * camera straight back out on the next frame, because as far as it knew
+	 * nothing had changed.
+	 */
+	g_plainWasOn = plainEnabled();
+}
+
+void newGame() {
+	enterWorldAtEyes();
 	stopAutoAttack();
 	g_casting = SPELL_NONE;
 	cancelSpellDrag();

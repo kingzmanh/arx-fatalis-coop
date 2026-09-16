@@ -98,12 +98,21 @@ ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 #include "util/Range.h"
 
+#include "io/log/Logger.h"
+#include "net/CoopMmo.h"
 #include "window/RenderWindow.h"
 
 
 void ARX_QuickSave() {
 	
 	if(!g_canResumeGame) {
+		return;
+	}
+	
+	if(g_ironman) {
+		// Quicksaves rotate through several slots, which is the one thing this
+		// mode cannot have. The key still works; it writes the run's own save.
+		ARX_IronmanSave();
 		return;
 	}
 	
@@ -114,7 +123,59 @@ void ARX_QuickSave() {
 	ARX_SOUND_MixerResume(ARX_SOUND_MixerGame);
 }
 
+/*
+ * One life, one save.
+ *
+ * Its own name rather than a quicksave slot, because quicksaves rotate
+ * through several and the whole point here is that there is exactly one thing
+ * to lose. Written over every time, so there is never a second copy to fall
+ * back on.
+ */
+const char * const ARX_IRONMAN_SLOT = "Iron Man";
+
+static SavegameHandle findIronmanSave() {
+	for(SavegameHandle handle : savegames) {
+		if(savegames[handle].name == ARX_IRONMAN_SLOT) {
+			return handle;
+		}
+	}
+	return SavegameHandle();
+}
+
+void ARX_IronmanSave() {
+	
+	if(!g_ironman || !g_canResumeGame) {
+		return;
+	}
+	
+	ARX_SOUND_MixerPause(ARX_SOUND_MixerGame);
+	savegames.save(ARX_IRONMAN_SLOT, findIronmanSave(), savegame_thumbnail);
+	ARX_SOUND_MixerResume(ARX_SOUND_MixerGame);
+}
+
+void ARX_IronmanDied() {
+	
+	if(!g_ironman) {
+		return;
+	}
+	
+	SavegameHandle handle = findIronmanSave();
+	if(handle) {
+		// Said out loud on purpose: if this ever fires when it should not, the
+		// log is the only evidence left that it happened at all.
+		LogInfo << "[ironman] the run is over; deleting " << savegames[handle].name;
+		savegames.remove(handle);
+	} else {
+		LogInfo << "[ironman] the run is over; there was no save to delete";
+	}
+	
+	g_ironman = false;   // the next quest chooses for itself
+}
+
 void ARX_LoadGame(const SaveGame & save) {
+	
+	// However the last session left it, a loaded world opens at the eyes.
+	coop::enterWorldAtEyes();
 	
 	ARXmenu.requestMode(Mode_InGame);
 	

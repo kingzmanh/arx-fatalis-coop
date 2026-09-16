@@ -204,6 +204,17 @@ void drawSpellDrag();
  */
 void newGame();
 
+/*!
+ * rief Put the camera back at the player's own eyes.
+ *
+ * Arriving in a world - a new quest, or a save being loaded - starts in first
+ * person whatever the third person setting says. The setting decides whether
+ * the camera CAN come out, not where it is the moment you get there, and
+ * opening a save already looking at your own back is disorienting in a way
+ * that choosing it deliberately is not. V or the wheel takes you out again.
+ */
+void enterWorldAtEyes();
+
 //! How many keys the bar has.
 [[nodiscard]] size_t barSlots();
 

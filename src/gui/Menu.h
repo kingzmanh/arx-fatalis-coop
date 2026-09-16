@@ -74,6 +74,37 @@ private:
 extern ARX_MENU_DATA ARXmenu;
 extern bool g_canResumeGame;
 
+/*!
+ * rief One life, one save, and no one to call for help.
+ *
+ * Chosen when the quest is started and never afterwards: it rides in the save
+ * so a run cannot be quietly turned back into an ordinary one. While it is on
+ * there is a single slot, Load and Save are not offered, hosting and joining
+ * are refused, and dying deletes the save.
+ *
+ * Co-op is shut out on purpose rather than by oversight. A partner who can
+ * revive you is a second life every time they reach your body, which is a
+ * different game from the one this mode is for; and with one world shared
+ * between two people it is not clear whose run a death should end. Solo only
+ * until that has an answer.
+ */
+extern bool g_ironman;
+
+//! The one slot an iron man run keeps, written over each time.
+//! The name of the single slot an iron man run keeps.
+extern const char * const ARX_IRONMAN_SLOT;
+
+void ARX_IronmanSave();
+
+/*!
+ * rief End an iron man run: the save is deleted, for good.
+ *
+ * Called when the player dies. Nothing is hidden or renamed - the files go,
+ * which is the whole point of the mode and the reason it is chosen once at
+ * the start and cannot be turned off afterwards.
+ */
+void ARX_IronmanDied();
+
 void ARX_Menu_Manage();
 void ARX_Menu_Render();
 void ARX_MENU_Launch(bool allowResume);

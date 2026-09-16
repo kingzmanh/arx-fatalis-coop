@@ -100,6 +100,7 @@ extern bool REQUEST_SPEECH_SKIP;
 
 ARX_MENU_DATA ARXmenu;
 bool g_canResumeGame = true;
+bool g_ironman = false;
 
 void ARX_Menu_Resources_Release() {
 	

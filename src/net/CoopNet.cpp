@@ -130,7 +130,7 @@ struct Session {
 	 * whole point of the rest of the design is that they are then free to walk
 	 * off in different directions.
 	 */
-	bool travelToHost = false;
+	bool travelToPartner = false;
 
 	AreaId remoteArea;
 
@@ -1447,7 +1447,7 @@ void handleMessage(const u8 * data, size_t size) {
 			 * placement: after the world loads, walk to the host's LIVE area
 			 * (streamed thirty times a second) and land on the host exactly.
 			 */
-			g_session.travelToHost = true;
+			g_session.travelToPartner = true;
 			ARX_RequestLoadSaveFile(savefile);
 			setStatus(Status::Playing, "CO-OP: PLAYING WITH " + avatar().name);
 			break;
@@ -1748,8 +1748,18 @@ void handleMessage(const u8 * data, size_t size) {
 				 * take - travel to them and arrive beside them - and if this
 				 * side cannot travel, stay put and say so.
 				 */
-				if(isGuest()) {
+				{
 					/*
+					 * Either side travels, not only the guest.
+					 *
+					 * This asked isGuest() and told the host "called from
+					 * another area" instead, so a summon worked one way and
+					 * not the other: whoever happened to be hosting could pull
+					 * their partner across the fortress and could never be
+					 * pulled back. Nothing below needs a host - it reads the
+					 * OTHER player's area and takes the engine's own level
+					 * change to it, which is the same road a door takes.
+					 *
 					 * Land at the spot itself, not at the doorway.
 					 *
 					 * g_rememberedSpot is what the console's "back" uses to
@@ -1766,15 +1776,13 @@ void handleMessage(const u8 * data, size_t size) {
 					g_rememberedSpot.valid = true;
 					g_rememberedSpot.pending = true;
 
-					g_session.travelToHost = true;
+					g_session.travelToPartner = true;
 					g_session.joinNudge = false;   // the spot decides, not the host
 					g_session.summonArrival = true;
 					g_session.swallowZoneEdge = true;
 					g_session.haveSummonSpot = false;
 					notification_add("summoned by " + avatar().name);
 					LogInfo << "[coop] summoned from another area; arriving at the spot";
-				} else {
-					notification_add(avatar().name + " called from another area");
 				}
 				break;
 			}
@@ -2051,7 +2059,7 @@ void handleMessage(const u8 * data, size_t size) {
 			 * and land beside them, who by now is standing at the marker.
 			 */
 			if(!sharingArea()) {
-				g_session.travelToHost = true;
+				g_session.travelToPartner = true;
 				g_session.joinNudge = true;
 				LogInfo << "[coop] the story moved the party to another area; travelling to them";
 				break;
@@ -2402,12 +2410,14 @@ void poll() {
 	}
 
 	/*
-	 * A guest that has just joined is standing in its own game, which may be
-	 * anywhere. Walk it to the host once, using the engine's own level change
-	 * so that everything a normal transition does still happens. After this the
-	 * two are free to separate again; the flag only ever fires on arrival.
+	 * Walk one player to the other, using the engine's own level change so that
+	 * everything a normal transition does still happens. A guest that has just
+	 * joined is standing in its own game and may be anywhere, which is what
+	 * this was first written for - but a summon from another area uses it too,
+	 * and either side may be the one that travels. After the trip the two are
+	 * free to separate again; the flag only ever fires on arrival.
 	 */
-	if(g_session.travelToHost) {
+	if(g_session.travelToPartner) {
 		static PlatformInstant lastGateLog = 0;
 		PlatformInstant gateNow = platform::getTime();
 		if(gateNow - lastGateLog >= 2000ms) {
@@ -2434,9 +2444,9 @@ void poll() {
 	 * the trip when both are already in the same place, and an area that does
 	 * not exist never compares equal to one that does.
 	 */
-	if(g_session.travelToHost && isPlaying() && ARXmenu.mode() == Mode_InGame
+	if(g_session.travelToPartner && isPlaying() && ARXmenu.mode() == Mode_InGame
 	   && g_session.remoteArea && !g_teleportToArea) {
-		g_session.travelToHost = false;
+		g_session.travelToPartner = false;
 		if(g_session.remoteArea != g_currentArea) {
 			LogInfo << "[coop] travelling to the host's area " << g_session.remoteArea;
 			g_teleportToArea = g_session.remoteArea;
@@ -2509,13 +2519,11 @@ void poll() {
 			player.falling = false;
 			entities.player()->requestRoomUpdate = true;
 			notification_add("Rescued to " + avatar().name);
-		} else if(isGuest()) {
-			// They are in another area: use the same walk-to-them travel that
-			// joining uses.
-			g_session.travelToHost = true;
-			notification_add("Travelling to " + avatar().name);
 		} else {
-			notification_add(avatar().name + " is in another area");
+			// They are in another area: use the same walk-to-them travel that
+			// joining uses. Host or guest - the trip is the same either way.
+			g_session.travelToPartner = true;
+			notification_add("Travelling to " + avatar().name);
 		}
 	}
 
