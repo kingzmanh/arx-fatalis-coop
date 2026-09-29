@@ -69,6 +69,15 @@ cp "$HERE/CHANGELOG.md" "$OUT/WHAT CHANGED.txt"
 
 # Ask the binary what it needs, then follow the chain: the libraries have
 # libraries of their own, and missing one of those fails just as hard.
+#
+# ldd can only report a library it can find. Run from a shell without mingw64
+# on PATH it answers "not found" for nearly everything, those lines match no
+# path, and the packaging carries on perfectly happily with two libraries out
+# of nineteen. That is not a guess: it is how 0.17 through 0.23 all shipped
+# three .dll files and crashed on the first machine that did not already have
+# the rest. So the script puts mingw64 on PATH itself rather than trusting the
+# shell it was started from.
+export PATH="$MINGW:$PATH"
 echo "  collecting libraries..."
 collect() {
 	local target="$1"
@@ -101,6 +110,27 @@ if [ "$COUNT" -eq 0 ]; then
 	exit 1
 fi
 echo "  $COUNT libraries"
+
+# Now prove it, which counting never did.
+#
+# Ask the packaged executable what it still cannot find, with MSYS2's own
+# libraries out of reach - so the only places left to look are this folder and
+# Windows itself. That is the player's machine, near enough. A count above zero
+# says nothing; this says whether it starts.
+echo "  checking the package can start on its own..."
+MISSING=$(cd "$OUT" && PATH="/usr/bin:/c/WINDOWS/System32:/c/WINDOWS" \
+	ldd arx.exe 2>/dev/null | grep -i "not found" || true)
+if [ -n "$MISSING" ]; then
+	echo
+	echo "this package cannot start - it is missing:"
+	echo "$MISSING" | sed 's/^/    /'
+	echo
+	echo "Every one of those has to sit beside arx.exe. Shipping without them"
+	echo "is the 'code execution cannot proceed because X.dll was not found'"
+	echo "box, on every machine that has not installed this mod before."
+	exit 1
+fi
+echo "  nothing missing"
 
 # Arx Libertatis' own data, which is not part of the game and not optional.
 # The fonts here are what the interface draws its icons and text with; without

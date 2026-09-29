@@ -1401,3 +1401,40 @@ scans are kept, and any object under 4,000 vertices is built both ways and
 the answers compared - so every time the hero or an NPC puts on armour the
 index is checked against the code it replaced, and the scan's answer wins if
 they ever disagree.
+
+## 58. Every release since 0.17 crashed on launch for anyone new
+
+A player downloading the mod for the first time got "The code execution
+cannot proceed because libenet-7.dll was not found", then the same for
+libharfbuzz-0.dll, libopus-0.dll, libopenal-1.dll and SDL2.dll. The game
+never reached its first frame.
+
+0.16 shipped 19 libraries. **0.17, 0.18, 0.19, 0.20, 0.21, 0.22 and 0.23 each
+shipped three**: libbrotlicommon, libbrotlidec and libwinpthread-1. Both the
+zip and the installer, which packs the same folder.
+
+Nobody reported it for six releases because an upgrade is unzipped over a
+folder that already has the other sixteen from 0.16 or earlier. Only a first
+install is broken, so every one of us testing it was the one case that works.
+
+**Why did it happen?** `make-release.sh` does the right thing in principle -
+it asks the binary what it needs rather than keeping a hand written list, so
+the list cannot go stale. But `ldd` can only report a library it can find.
+Run from a shell without `/c/msys64/mingw64/bin` on PATH it answers
+`not found` for nearly everything, and a `not found` line contains no path,
+so it matches nothing and is silently skipped. Two libraries resolve anyway,
+a third follows one of them, and the packaging carries on.
+
+The guard that should have caught it asked whether *zero* libraries were
+collected. Three is not zero. A count was never the question.
+
+**The fix.** Two things. The script now puts mingw64 on PATH itself instead
+of trusting the shell it was started from - the environment is part of the
+build, not something to hope for.
+
+And it proves the result rather than counting it: with MSYS2's own libraries
+put out of reach, it asks the packaged executable what it still cannot find,
+so the only places left to look are the release folder and Windows. That is
+the player's machine, near enough. Run against the shipped 0.23 folder the
+new check names all five missing libraries; run against a package built with
+the PATH fix it reports nothing missing, from 19 collected.

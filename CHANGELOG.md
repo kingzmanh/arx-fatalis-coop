@@ -8,6 +8,34 @@ seen working, **known issues** are broken and understood, and **needs testing**
 was built with care but has not yet been proven in a live game - if you try
 one of those and it misbehaves, that report is exactly what we need.
 
+## 0.24
+
+The same game as 0.23. It just starts now.
+
+### What works
+
+- **A first install no longer fails to launch.** 0.17 through 0.23 were each
+  packaged with three of the nineteen libraries the game needs. Installing one
+  of those as your first version gave `The code execution cannot proceed
+  because libenet-7.dll was not found`, then the same for libharfbuzz-0,
+  libopus-0, libopenal-1 and SDL2, and the game never drew a frame.
+
+  If you upgraded from 0.16 or earlier you never saw this: the unzip landed in
+  a folder that already had the other sixteen. Only a fresh install was
+  broken, which is why it took seven releases and somebody else's machine to
+  find it.
+
+### Changed since 0.23
+
+- Nothing in the game. `arx.exe` is byte for byte the one 0.23 shipped - this
+  release is that build, packaged properly.
+- The packaging script now sets up its own environment instead of depending on
+  the shell it is started from, and it proves the result: it asks the packaged
+  executable what it still cannot find with the build libraries put out of
+  reach, so a package that would not start cannot be published. The old check
+  only asked whether *zero* libraries had been collected, and three is not
+  zero.
+
 ## 0.23
 
 Iron Man, and a summon that works both ways.
